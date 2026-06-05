@@ -508,6 +508,10 @@ export default function App() {
 
   // Player 1 = earliest joinedAt in presence list
   const isFirstPlayer = peers.length === 0 || peers[0]?.clientId === clientIdRef.current
+  // The approach track is set up by a single editor (Player 1) during setup, so
+  // the two clients can't fight over it and both stay in sync. Player 2's
+  // controls are hidden; the strip itself (panels/planes) still renders for both.
+  const canEditApproach = !approachLocked && isFirstPlayer
 
   const [myRole, setMyRole] = useState(null)
   const [roles, setRoles] = useState({})
@@ -551,11 +555,16 @@ export default function App() {
         else if (val.orange === cid) setMyRole('orange')
       } else if (key === 'rerollGranted') {
         if (val && val !== cid) setRerollGranted(true)
+      } else if (key === 'approachPos') {
+        if (!val || val._by === cid) return
+        skipSync.current.approachPos = true
+        const { _by, ...rest } = val
+        setApproachPos(rest)
       }
       // 'presence' is intentionally ignored — owned by useFirebaseSync polling.
     }
 
-    const GAME_KEYS = ['gameState', 'values', 'trayDice', 'placed', 'roles', 'rerollGranted']
+    const GAME_KEYS = ['gameState', 'values', 'trayDice', 'placed', 'roles', 'rerollGranted', 'approachPos']
 
     // Firebase SSE payloads are { path, data }. path '/' is a full snapshot of
     // /game; '/gameState' is a single top-level key; '/presence/<id>' is nested.
@@ -612,6 +621,13 @@ export default function App() {
     fbWrite('/placed', { ...placed, _by: clientIdRef.current })
   }, [placed]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Push approachPos → Firebase (vertical position of the approach strip, so
+  // both clients render it identically — panel data already rides in gameState)
+  useEffect(() => {
+    if (skipSync.current.approachPos) { skipSync.current.approachPos = false; return }
+    fbWrite('/approachPos', { ...approachPos, _by: clientIdRef.current })
+  }, [approachPos]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // Reset local turn state when turnCount advances (both clients)
   const prevTurnCount = useRef(gameState.turnCount)
   useEffect(() => {
@@ -655,7 +671,6 @@ export default function App() {
   }
 
   const isMyTurn = myRole === null || gameState.activePlayer === myRole
-  const isCaptain = myRole === null || myRole === 'blue'
   // ── End Multiplayer ────────────────────────────────────────────────────────
   const [savedStrips, setSavedStrips] = useState(() => {
     try { return JSON.parse(localStorage.getItem('approachStrips') || '[]') } catch { return [] }
@@ -959,7 +974,7 @@ export default function App() {
                     return (
                       <>
                         {/* ── right-side controls (save / load dropdown) — setup only ── */}
-                        {!approachLocked && (
+                        {canEditApproach && (
                           <div style={{ position: 'absolute', left: DEST_W + 6, top: 0, display: 'flex', flexDirection: 'column', gap: 4, zIndex: 20 }}>
                             <button
                               onClick={(e) => { e.stopPropagation(); saveStrip() }}
@@ -983,12 +998,12 @@ export default function App() {
                           <div style={{ position: 'absolute', bottom: 4, right: 6, color: '#fff', fontSize: 18, fontWeight: 'bold', fontFamily: 'monospace', pointerEvents: 'none', textShadow: '0 1px 3px #000' }}>{maxDist}</div>
                           {/* destination label — centered */}
                           <input
-                            readOnly={approachLocked || !isCaptain}
+                            readOnly={!canEditApproach}
                             value={gameState.approachHeader}
-                            onChange={e => isCaptain && dispatch({ type: 'SET_APPROACH_HEADER', value: e.target.value })}
+                            onChange={e => canEditApproach && dispatch({ type: 'SET_APPROACH_HEADER', value: e.target.value })}
                             onPointerDown={e => e.stopPropagation()}
                             placeholder="Destination"
-                            style={{ position: 'absolute', top: 12, left: 8, right: 8, width: DEST_W - 16, background: 'transparent', border: 'none', outline: 'none', color: '#fff', fontWeight: 'bold', fontSize: 17, textAlign: 'center', fontFamily: 'sans-serif', textShadow: '0 1px 3px #000', cursor: (approachLocked || !isCaptain) ? 'default' : 'text' }}
+                            style={{ position: 'absolute', top: 12, left: 8, right: 8, width: DEST_W - 16, background: 'transparent', border: 'none', outline: 'none', color: '#fff', fontWeight: 'bold', fontSize: 17, textAlign: 'center', fontFamily: 'sans-serif', textShadow: '0 1px 3px #000', cursor: canEditApproach ? 'text' : 'default' }}
                           />
                           {/* check button — right edge, same row as input */}
                           {(() => {
@@ -998,7 +1013,7 @@ export default function App() {
                                 onClick={(e) => { if (!bothReady) return; e.stopPropagation(); const n = gameState.approachPanels.length; dispatch({ type: 'LOCK_APPROACH_VALUES', values: gameState.approachPanels.map((p, i) => ({ d: n - i, p: p.planes })) }); dispatch({ type: 'SET_GAME_READY', value: 1 }) }}
                                 onPointerDown={e => e.stopPropagation()}
                                 title={bothReady ? 'Start game' : 'Waiting for both players…'}
-                                style={{ position: 'absolute', top: 22, right: 4, width: 16, height: 16, padding: 0, border: 'none', borderRadius: 2, background: bothReady ? '#1a5a1a' : '#555', color: '#fff', fontSize: 11, lineHeight: 1, cursor: bothReady ? 'pointer' : 'not-allowed', display: approachLocked ? 'none' : 'flex', alignItems: 'center', justifyContent: 'center', opacity: bothReady ? 1 : 0.5 }}
+                                style={{ position: 'absolute', top: 22, right: 4, width: 16, height: 16, padding: 0, border: 'none', borderRadius: 2, background: bothReady ? '#1a5a1a' : '#555', color: '#fff', fontSize: 11, lineHeight: 1, cursor: bothReady ? 'pointer' : 'not-allowed', display: (approachLocked || !isFirstPlayer) ? 'none' : 'flex', alignItems: 'center', justifyContent: 'center', opacity: bothReady ? 1 : 0.5 }}
                               >✓</button>
                             )
                           })()}
@@ -1008,7 +1023,7 @@ export default function App() {
                               <img key={ti} src={planeTokenImg} draggable={false} style={{ width: 39, height: 39, userSelect: 'none' }} />
                             ))}
                           </div>
-                          {!approachLocked && (
+                          {canEditApproach && (
                             <div style={{ position: 'absolute', bottom: 26, right: 6, display: 'flex', flexDirection: 'column', gap: 1 }}>
                               <button onClick={(e) => { e.stopPropagation(); dispatch({ type: 'SET_APPROACH_PLANES', index: 0, value: destPlanes + 1 }) }} style={planeBtnStyle}>+</button>
                               <button onClick={(e) => { e.stopPropagation(); dispatch({ type: 'SET_APPROACH_PLANES', index: 0, value: destPlanes - 1 }) }} style={planeBtnStyle}>−</button>
@@ -1025,7 +1040,7 @@ export default function App() {
                               <div style={{ position: 'relative', zIndex: 5, height: PANEL_GAP + 12, marginTop: -6, marginBottom: -6, background: dist === 3
                                 ? `linear-gradient(to bottom, ${PANEL_GAP_COLOR} 9px, #b8ccce 10px, #c2d2d0 11px, #c2d2d0 12px, #b8ccce 13px, ${PANEL_GAP_COLOR} 14px)`
                                 : `linear-gradient(to bottom, ${PANEL_GAP_COLOR} 10px, #b8ccce 10px, #b8ccce 11px, #c2d2d0 11px, #c2d2d0 12px, #b8ccce 12px, #b8ccce 13px, ${PANEL_GAP_COLOR} 13px)` }} />
-                              {!approachLocked && <>
+                              {canEditApproach && <>
                                 <button onClick={(e) => { e.stopPropagation(); dispatch({ type: 'ADD_APPROACH_PANEL' }); setApproachPos(p => ({ ...p, y: p.y - BLANK_H - PANEL_GAP })) }} style={{ ...btnBase, top: -18, borderRadius: '3px 0 0 0' }}>+</button>
                                 <button onClick={(e) => { e.stopPropagation(); if (gameState.approachPanels.length > 2) { dispatch({ type: 'REMOVE_APPROACH_PANEL' }); setApproachPos(p => ({ ...p, y: p.y + BLANK_H + PANEL_GAP })) } }} style={{ ...btnBase, top: 0, borderRadius: '0 0 0 3px', borderTop: 'none' }}>−</button>
                               </>}
@@ -1036,7 +1051,7 @@ export default function App() {
                                   <img key={ti} src={planeTokenImg} draggable={false} style={{ width: 39, height: 39, userSelect: 'none' }} />
                                 ))}
                               </div>
-                              {!approachLocked && (
+                              {canEditApproach && (
                                 <div style={{ position: 'absolute', bottom: 22, right: 6, display: 'flex', flexDirection: 'column', gap: 1 }}>
                                   <button onClick={(e) => { e.stopPropagation(); dispatch({ type: 'SET_APPROACH_PLANES', index: panelIndex, value: planes + 1 }) }} style={planeBtnStyle}>+</button>
                                   <button onClick={(e) => { e.stopPropagation(); dispatch({ type: 'SET_APPROACH_PLANES', index: panelIndex, value: planes - 1 }) }} style={planeBtnStyle}>−</button>
