@@ -670,6 +670,17 @@ export default function App() {
     setRoles(next)
   }
 
+  // Player 2 doesn't pick — it auto-claims whichever colour Player 1 left open,
+  // so role assignment is fully Player-1-controlled.
+  useEffect(() => {
+    if (isFirstPlayer || myRole) return
+    if (peers.length < 2) return
+    const taken = roles.blue ? 'blue' : roles.orange ? 'orange' : null
+    if (!taken) return
+    const other = taken === 'blue' ? 'orange' : 'blue'
+    if (!roles[other]) claimRole(other)
+  }, [isFirstPlayer, myRole, roles, peers.length]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const isMyTurn = myRole === null || gameState.activePlayer === myRole
   // ── End Multiplayer ────────────────────────────────────────────────────────
   const [savedStrips, setSavedStrips] = useState(() => {
@@ -863,12 +874,17 @@ export default function App() {
       <div style={{ background: '#0a0a0a', borderBottom: '1px solid #333', padding: '8px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontFamily: 'sans-serif' }}>
         {/* Player number — based on awareness join order */}
         <div style={{ fontSize: 16, fontWeight: 'bold', color: isFirstPlayer ? '#f1c40f' : '#aaa', display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#27ae60', display: 'inline-block', flexShrink: 0 }} />
+          <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#f1c40f', display: 'inline-block', flexShrink: 0 }} />
           {peers.length <= 1 ? 'Player 1' : isFirstPlayer ? 'Player 1' : 'Player 2'}
         </div>
 
         {/* Role selection or role label */}
-        {myRole === null ? (
+        {myRole !== null ? (
+          <div style={{ fontSize: 15, fontWeight: 'bold', color: myRole === 'blue' ? '#4a9eff' : '#ff8c42' }}>
+            ✈ {myRole === 'blue' ? 'Captain (Blue)' : 'Co-Captain (Orange)'}
+          </div>
+        ) : isFirstPlayer ? (
+          /* Player 1 picks a colour; Player 2 auto-takes the other (effect below) */
           <div style={{ display: 'flex', gap: 10 }}>
             <button
               onClick={() => claimRole('blue')}
@@ -886,16 +902,20 @@ export default function App() {
             </button>
           </div>
         ) : (
-          <div style={{ fontSize: 15, fontWeight: 'bold', color: myRole === 'blue' ? '#4a9eff' : '#ff8c42' }}>
-            ✈ {myRole === 'blue' ? 'Captain (Blue)' : 'Co-Captain (Orange)'}
+          <div style={{ fontSize: 13, color: '#888', fontWeight: 'bold' }}>
+            Waiting for Player 1 to choose roles…
           </div>
         )}
 
-        {/* Waiting status */}
-        <div style={{ fontSize: 12, color: '#666', minWidth: 120, textAlign: 'right' }}>
-          {!(roles.blue && roles.orange)
-            ? 'Waiting for 2nd player…'
-            : <span style={{ color: '#27ae60' }}>● Both players connected</span>}
+        {/* Current turn (during play) / connection status */}
+        <div style={{ fontSize: 12, color: '#666', minWidth: 150, textAlign: 'right' }}>
+          {(gameState.gameReady === 1 && !gameState.gameOver && !gameState.gameWin)
+            ? <span style={{ color: gameState.activePlayer === 'blue' ? '#4a9eff' : '#ff8c42', fontWeight: 'bold' }}>
+                ✈ Turn: {gameState.activePlayer === 'blue' ? 'Captain (Blue)' : 'Co-Captain (Orange)'}{isMyTurn ? ' — You' : ''}
+              </span>
+            : !(roles.blue && roles.orange)
+              ? 'Waiting for 2nd player…'
+              : <span style={{ color: '#27ae60' }}>● Both players connected</span>}
         </div>
       </div>
 
@@ -1267,17 +1287,17 @@ export default function App() {
           dice={byColor('blue')}
           dieSize={SQUARE * scale}
           onPointerDown={isMyTurn ? startDrag : undefined}
-          onRoll={isMyTurn ? handleRoll : undefined}
+          onRoll={!setupPhase ? handleRoll : undefined}
           draggingId={drag && drag.moved ? drag.id : null}
           rollTriggers={dieTriggers}
           coffeeTriggers={coffeeTriggers}
           coffeeHighlight={myRole !== 'orange' && !!coffeeChoice && !coffeeChoice.dieId}
           onCoffeeSelect={(myRole !== 'orange' && !setupPhase) ? (e, d) => setCoffeeChoice({ tokenIndex: coffeeChoice.tokenIndex, dieId: d.id, popupX: e.clientX, popupY: e.clientY }) : undefined}
-          unrolledHighlight={(!setupPhase && isMyTurn) ? (id) => !rolledThisAlt.has(id) : undefined}
-          rerollHighlight={(!setupPhase && isMyTurn) ? (id) => rerollGranted && !rerollUsed.has(id) && rolledThisAlt.has(id) : undefined}
-          canRoll={(setupPhase || !isMyTurn) ? () => false : canRollDie}
-          onRollAll={isMyTurn ? () => handleRollAll('blue') : undefined}
-          rollAllDisabled={setupPhase || !isMyTurn}
+          unrolledHighlight={!setupPhase ? (id) => !rolledThisAlt.has(id) : undefined}
+          rerollHighlight={!setupPhase ? (id) => rerollGranted && !rerollUsed.has(id) && rolledThisAlt.has(id) : undefined}
+          canRoll={setupPhase ? () => false : canRollDie}
+          onRollAll={() => handleRollAll('blue')}
+          rollAllDisabled={setupPhase}
         />
       )}
 
@@ -1288,17 +1308,17 @@ export default function App() {
           dice={byColor('orange')}
           dieSize={SQUARE * scale}
           onPointerDown={isMyTurn ? startDrag : undefined}
-          onRoll={isMyTurn ? handleRoll : undefined}
+          onRoll={!setupPhase ? handleRoll : undefined}
           draggingId={drag && drag.moved ? drag.id : null}
           rollTriggers={dieTriggers}
           coffeeTriggers={coffeeTriggers}
           coffeeHighlight={myRole !== 'blue' && !!coffeeChoice && !coffeeChoice.dieId}
           onCoffeeSelect={(myRole !== 'blue' && !setupPhase) ? (e, d) => setCoffeeChoice({ tokenIndex: coffeeChoice.tokenIndex, dieId: d.id, popupX: e.clientX, popupY: e.clientY }) : undefined}
-          unrolledHighlight={(!setupPhase && isMyTurn) ? (id) => !rolledThisAlt.has(id) : undefined}
-          rerollHighlight={(!setupPhase && isMyTurn) ? (id) => rerollGranted && !rerollUsed.has(id) && rolledThisAlt.has(id) : undefined}
-          canRoll={(setupPhase || !isMyTurn) ? () => false : canRollDie}
-          onRollAll={isMyTurn ? () => handleRollAll('orange') : undefined}
-          rollAllDisabled={setupPhase || !isMyTurn}
+          unrolledHighlight={!setupPhase ? (id) => !rolledThisAlt.has(id) : undefined}
+          rerollHighlight={!setupPhase ? (id) => rerollGranted && !rerollUsed.has(id) && rolledThisAlt.has(id) : undefined}
+          canRoll={setupPhase ? () => false : canRollDie}
+          onRollAll={() => handleRollAll('orange')}
+          rollAllDisabled={setupPhase}
         />
       )}
 
