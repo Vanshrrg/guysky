@@ -456,7 +456,7 @@ export default function App() {
           const valid =
             (tray.acceptColor === null || die.color === tray.acceptColor) &&
             tray.acceptValues.includes(vals[info.id]) &&
-            td[tray.name] === null &&
+            !td[tray.name] &&
             tray.prereq(gs)
           if (valid) {
             setPlaced(p => ({ ...p, [info.id]: { x: tray.x, y: tray.y } }))
@@ -542,7 +542,9 @@ export default function App() {
         if (!val || val._by === cid) return
         skipSync.current.trayDice = true
         const { _by, ...rest } = val
-        setTrayDice(rest)
+        // Firebase strips null values, so empty trays come back missing. Rebuild
+        // the full key set (null = empty) or occupancy checks break.
+        setTrayDice({ ...Object.fromEntries(TRAYS.map(t => [t.name, null])), ...rest })
       } else if (key === 'placed') {
         if (!val || val._by === cid) return
         skipSync.current.placed = true
@@ -662,8 +664,17 @@ export default function App() {
     handleEndTurn()
   }, [allDicePlaced]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // A role is only really taken if its holder is currently connected (or me).
+  // Stale /roles entries (from a previous session, keyed by a now-disconnected
+  // clientId) must be treated as free, or a fresh Player 1 sees both colours
+  // "taken" and can't pick anything.
+  const livePeerIds = new Set(peers.map(p => p.clientId))
+  const roleTaken = (color) =>
+    !!roles[color] &&
+    (roles[color] === clientIdRef.current || livePeerIds.has(roles[color]))
+
   const claimRole = (color) => {
-    if (roles[color]) return
+    if (roleTaken(color)) return
     const next = { ...roles, [color]: clientIdRef.current }
     fbWrite('/roles', next)
     setMyRole(color)
@@ -675,11 +686,11 @@ export default function App() {
   useEffect(() => {
     if (isFirstPlayer || myRole) return
     if (peers.length < 2) return
-    const taken = roles.blue ? 'blue' : roles.orange ? 'orange' : null
+    const taken = roleTaken('blue') ? 'blue' : roleTaken('orange') ? 'orange' : null
     if (!taken) return
     const other = taken === 'blue' ? 'orange' : 'blue'
-    if (!roles[other]) claimRole(other)
-  }, [isFirstPlayer, myRole, roles, peers.length]) // eslint-disable-line react-hooks/exhaustive-deps
+    if (!roleTaken(other)) claimRole(other)
+  }, [isFirstPlayer, myRole, roles, peers]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const isMyTurn = myRole === null || gameState.activePlayer === myRole
   // ── End Multiplayer ────────────────────────────────────────────────────────
@@ -874,7 +885,7 @@ export default function App() {
       <div style={{ background: '#0a0a0a', borderBottom: '1px solid #333', padding: '8px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontFamily: 'sans-serif' }}>
         {/* Player number — based on awareness join order */}
         <div style={{ fontSize: 16, fontWeight: 'bold', color: isFirstPlayer ? '#f1c40f' : '#aaa', display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#f1c40f', display: 'inline-block', flexShrink: 0 }} />
+          <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#27ae60', display: 'inline-block', flexShrink: 0 }} />
           {peers.length <= 1 ? 'Player 1' : isFirstPlayer ? 'Player 1' : 'Player 2'}
         </div>
 
@@ -888,17 +899,17 @@ export default function App() {
           <div style={{ display: 'flex', gap: 10 }}>
             <button
               onClick={() => claimRole('blue')}
-              disabled={!!roles.blue}
-              style={{ padding: '6px 18px', fontSize: 14, fontWeight: 'bold', background: roles.blue ? '#333' : '#1a5fa8', color: '#fff', border: 'none', borderRadius: 6, cursor: roles.blue ? 'not-allowed' : 'pointer', opacity: roles.blue ? 0.5 : 1 }}
+              disabled={roleTaken('blue')}
+              style={{ padding: '6px 18px', fontSize: 14, fontWeight: 'bold', background: roleTaken('blue') ? '#333' : '#1a5fa8', color: '#fff', border: 'none', borderRadius: 6, cursor: roleTaken('blue') ? 'not-allowed' : 'pointer', opacity: roleTaken('blue') ? 0.5 : 1 }}
             >
-              {roles.blue ? 'Captain taken' : 'Captain (Blue)'}
+              {roleTaken('blue') ? 'Captain taken' : 'Captain (Blue)'}
             </button>
             <button
               onClick={() => claimRole('orange')}
-              disabled={!!roles.orange}
-              style={{ padding: '6px 18px', fontSize: 14, fontWeight: 'bold', background: roles.orange ? '#333' : '#b84a00', color: '#fff', border: 'none', borderRadius: 6, cursor: roles.orange ? 'not-allowed' : 'pointer', opacity: roles.orange ? 0.5 : 1 }}
+              disabled={roleTaken('orange')}
+              style={{ padding: '6px 18px', fontSize: 14, fontWeight: 'bold', background: roleTaken('orange') ? '#333' : '#b84a00', color: '#fff', border: 'none', borderRadius: 6, cursor: roleTaken('orange') ? 'not-allowed' : 'pointer', opacity: roleTaken('orange') ? 0.5 : 1 }}
             >
-              {roles.orange ? 'Co-Captain taken' : 'Co-Captain (Orange)'}
+              {roleTaken('orange') ? 'Co-Captain taken' : 'Co-Captain (Orange)'}
             </button>
           </div>
         ) : (
@@ -913,7 +924,7 @@ export default function App() {
             ? <span style={{ color: gameState.activePlayer === 'blue' ? '#4a9eff' : '#ff8c42', fontWeight: 'bold' }}>
                 ✈ Turn: {gameState.activePlayer === 'blue' ? 'Captain (Blue)' : 'Co-Captain (Orange)'}{isMyTurn ? ' — You' : ''}
               </span>
-            : !(roles.blue && roles.orange)
+            : !(roleTaken('blue') && roleTaken('orange'))
               ? 'Waiting for 2nd player…'
               : <span style={{ color: '#27ae60' }}>● Both players connected</span>}
         </div>
@@ -1027,7 +1038,7 @@ export default function App() {
                           />
                           {/* check button — right edge, same row as input */}
                           {(() => {
-                            const bothReady = !!(roles.blue && roles.orange)
+                            const bothReady = roleTaken('blue') && roleTaken('orange')
                             return (
                               <button
                                 onClick={(e) => { if (!bothReady) return; e.stopPropagation(); const n = gameState.approachPanels.length; dispatch({ type: 'LOCK_APPROACH_VALUES', values: gameState.approachPanels.map((p, i) => ({ d: n - i, p: p.planes })) }); dispatch({ type: 'SET_GAME_READY', value: 1 }) }}
