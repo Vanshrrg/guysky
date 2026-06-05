@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "airline",
+      "runtimeExecutable": "C:\\Program Files\\nodejs\\node.exe",
+      "runtimeArgs": [
+        "C:\\Users\\User\\Documents\\skyteam\\airline-board-game\\node_modules\\vite\\bin\\vite.js",
+        "C:\\Users\\User\\Documents\\skyteam\\airline-board-game",
+        "--port",
+        "5173",
+        "--strictPort"
+      ],
+      "port": 5173
+    }
+  ]
+}

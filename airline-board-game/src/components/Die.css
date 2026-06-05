@@ -1,0 +1,77 @@
+/* Die.css */
+/* 3D rollable die — 90x90px, matches board square size exactly */
+
+/* Perspective container */
+.die-scene {
+  width: 90px;
+  height: 90px;
+  perspective: 405px;        /* ~4.5x die size for natural 3D depth */
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  padding: 0;
+  position: relative;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.die-scene:focus-visible {
+  outline: 3px solid rgba(255, 255, 255, 0.7);
+  outline-offset: 10px;
+  border-radius: 6px;
+}
+
+/* Ground shadow stays put while cube tumbles */
+.die-ground {
+  position: absolute;
+  left: 50%;
+  bottom: -18px;
+  width: 96px;
+  height: 22px;
+  transform: translateX(-50%);
+  background: radial-gradient(
+    ellipse at center,
+    rgba(0, 0, 0, 0.8)  0%,
+    rgba(0, 0, 0, 0.45) 45%,
+    rgba(0, 0, 0, 0)    72%
+  );
+  filter: blur(2px);
+  pointer-events: none;
+}
+
+/* 3D cube wrapper */
+.die-cube {
+  width: 90px;
+  height: 90px;
+  position: relative;
+  transform-style: preserve-3d;
+  transition: transform 1.25s cubic-bezier(0.18, 0.82, 0.32, 1);
+}
+
+/* Individual face */
+.face {
+  position: absolute;
+  width: 90px;
+  height: 90px;
+  backface-visibility: hidden;
+}
+
+.face svg {
+  display: block;
+  width: 90px;
+  height: 90px;
+}
+
+/* Face placement — translateZ = half die size (45px) */
+.face.f1 { transform: translateZ(45px); }                   /* front  */
+.face.f2 { transform: rotateY(90deg)  translateZ(45px); }   /* right  */
+.face.f3 { transform: rotateX(-90deg) translateZ(45px); }   /* top    */
+.face.f4 { transform: rotateX(90deg)  translateZ(45px); }   /* bottom */
+.face.f5 { transform: rotateY(-90deg) translateZ(45px); }   /* left   */
+.face.f6 { transform: rotateY(180deg) translateZ(45px); }   /* back   */
+
+/* Respect reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+  .die-cube {
+    transition: transform 0.001s linear;
+  }
+}
