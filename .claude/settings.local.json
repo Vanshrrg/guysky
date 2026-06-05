@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(npm -v)",
-      "PowerShell(node -v; npm -v; \\(Get-Command node\\).Source)",
-      "mcp__Claude_Preview__preview_start"
-    ]
-  }
-}
