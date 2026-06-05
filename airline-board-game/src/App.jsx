@@ -30,7 +30,7 @@ import altitude1000Img from './assets/components/altitude1000.png'
 import altitude0Img from './assets/components/altitude0.png'
 import altitude2000Img from './assets/components/altitude2000.png'
 import { gameReducer, initialState, BLUE_ENGINE_VALUES, ORANGE_ENGINE_VALUES } from './gameState'
-import { useYjsSync } from './hooks/useYjsSync'
+import { useFirebaseSync, fbSet } from './hooks/useFirebaseSync'
 import './App.css'
 
 // The board is a fixed-size canvas; everything (board art + future drop
@@ -498,92 +498,118 @@ export default function App() {
   const setupPhase = gameState.gameReady === 0
   const allDicePlaced = !setupPhase && byColor('blue').length === 0 && byColor('orange').length === 0
 
-  // ── Multiplayer (Yjs) ──────────────────────────────────────────────────────
-  const { doc, sharedMap } = useYjsSync()
+  // ── Multiplayer (Firebase) ─────────────────────────────────────────────────
   const clientIdRef = useRef((() => {
     let id = localStorage.getItem('skyteam-clientId')
     if (!id) { id = Math.random().toString(36).slice(2, 10); localStorage.setItem('skyteam-clientId', id) }
     return id
   })())
-  const [myRole, setMyRole] = useState(null)      // 'blue' | 'orange' | null
-  const [roles, setRoles] = useState({})          // { blue: clientId, orange: clientId }
-  const [isFirstPlayer, setIsFirstPlayer] = useState(false)
+  const { connected, peers } = useFirebaseSync(clientIdRef.current)
+
+  // Player 1 = earliest joinedAt in presence list
+  const isFirstPlayer = peers.length === 0 || peers[0]?.clientId === clientIdRef.current
+
+  const [myRole, setMyRole] = useState(null)
+  const [roles, setRoles] = useState({})
   const skipSync = useRef({})
 
-  // Claim first-player spot and restore role on reconnect
+  // One SSE stream for the whole /game node — NOT one per key.
+  // The RTDB endpoint is HTTP/1.1, so the browser caps connections at 6 per
+  // host. Six game-state EventSources saturated that pool, and every PUT write
+  // and presence poll then queued behind them forever (confirmed: an in-page
+  // fetch to the DB hung indefinitely). A single stream, demuxed by the event's
+  // `path` field, leaves connection slots free for reads and writes.
   useEffect(() => {
-    const fp = sharedMap.get('firstPlayer')
-    if (!fp) {
-      doc.transact(() => sharedMap.set('firstPlayer', clientIdRef.current), clientIdRef.current)
-      setIsFirstPlayer(true)
-    } else {
-      setIsFirstPlayer(fp === clientIdRef.current)
-    }
-    const savedRoles = sharedMap.get('roles') || {}
-    setRoles(savedRoles)
-    if (savedRoles.blue === clientIdRef.current) setMyRole('blue')
-    else if (savedRoles.orange === clientIdRef.current) setMyRole('orange')
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+    const DB = 'https://guysky-95670-default-rtdb.asia-southeast1.firebasedatabase.app'
+    const cid = clientIdRef.current
 
-  // Yjs observer — apply incoming remote state
-  useEffect(() => {
-    const handler = (event) => {
-      if (event.transaction.origin === clientIdRef.current) return
-      for (const key of event.keysChanged) {
-        const val = sharedMap.get(key)
-        if (key === 'gameState' && val) {
-          skipSync.current.gameState = true
-          dispatch({ type: 'SYNC_STATE', state: val })
-        } else if (key === 'values' && val) {
-          skipSync.current.values = true
-          setValues(val)
-        } else if (key === 'trayDice' && val) {
-          skipSync.current.trayDice = true
-          setTrayDice(val)
-        } else if (key === 'placed' && val) {
-          skipSync.current.placed = true
-          setPlaced(val)
-        } else if (key === 'roles') {
-          const r = val || {}
-          setRoles(r)
-          if (r.blue === clientIdRef.current) setMyRole('blue')
-          else if (r.orange === clientIdRef.current) setMyRole('orange')
-        } else if (key === 'firstPlayer') {
-          setIsFirstPlayer(val === clientIdRef.current)
-        } else if (key === 'rerollGranted' && val) {
-          setRerollGranted(true)
-        } else if (key === 'rerollReset') {
-          setRerollGranted(false)
-          setRerollUsed(new Set())
-        }
+    // Apply one top-level key of /game to local state.
+    const applyKey = (key, val) => {
+      if (key === 'gameState') {
+        if (!val || val._by === cid) return
+        skipSync.current.gameState = true
+        dispatch({ type: 'SYNC_STATE', state: val })
+      } else if (key === 'values') {
+        if (!val || val._by === cid) return
+        skipSync.current.values = true
+        const { _by, ...rest } = val
+        setValues(rest)
+      } else if (key === 'trayDice') {
+        if (!val || val._by === cid) return
+        skipSync.current.trayDice = true
+        const { _by, ...rest } = val
+        setTrayDice(rest)
+      } else if (key === 'placed') {
+        if (!val || val._by === cid) return
+        skipSync.current.placed = true
+        const { _by, ...rest } = val
+        setPlaced(rest)
+      } else if (key === 'roles') {
+        if (!val) return
+        setRoles(val)
+        if (val.blue === cid) setMyRole('blue')
+        else if (val.orange === cid) setMyRole('orange')
+      } else if (key === 'rerollGranted') {
+        if (val && val !== cid) setRerollGranted(true)
       }
+      // 'presence' is intentionally ignored — owned by useFirebaseSync polling.
     }
-    sharedMap.observe(handler)
-    return () => sharedMap.unobserve(handler)
+
+    const GAME_KEYS = ['gameState', 'values', 'trayDice', 'placed', 'roles', 'rerollGranted']
+
+    // Firebase SSE payloads are { path, data }. path '/' is a full snapshot of
+    // /game; '/gameState' is a single top-level key; '/presence/<id>' is nested.
+    const handle = (e) => {
+      try {
+        const { path, data } = JSON.parse(e.data)
+        if (path === '/') {
+          if (!data) return
+          for (const k of GAME_KEYS) if (data[k] !== undefined) applyKey(k, data[k])
+        } else {
+          const seg = path.split('/').filter(Boolean)
+          if (seg.length === 1) applyKey(seg[0], data) // deeper paths (presence) ignored
+        }
+      } catch {}
+    }
+
+    const es = new EventSource(`${DB}/game.json?alt=sse`)
+    es.addEventListener('put', handle)
+    es.addEventListener('patch', handle)
+
+    return () => es.close()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Push gameState → Yjs
+  const fbWrite = (subpath, value) => {
+    const DB = 'https://guysky-95670-default-rtdb.asia-southeast1.firebasedatabase.app'
+    fetch(`${DB}/game${subpath}.json`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(value),
+    }).catch(() => {})
+  }
+
+  // Push gameState → Firebase
   useEffect(() => {
     if (skipSync.current.gameState) { skipSync.current.gameState = false; return }
-    doc.transact(() => sharedMap.set('gameState', gameState), clientIdRef.current)
+    fbWrite('/gameState', { ...gameState, _by: clientIdRef.current })
   }, [gameState]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Push values → Yjs
+  // Push values → Firebase
   useEffect(() => {
     if (skipSync.current.values) { skipSync.current.values = false; return }
-    doc.transact(() => sharedMap.set('values', values), clientIdRef.current)
+    fbWrite('/values', { ...values, _by: clientIdRef.current })
   }, [values]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Push trayDice → Yjs
+  // Push trayDice → Firebase
   useEffect(() => {
     if (skipSync.current.trayDice) { skipSync.current.trayDice = false; return }
-    doc.transact(() => sharedMap.set('trayDice', trayDice), clientIdRef.current)
+    fbWrite('/trayDice', { ...trayDice, _by: clientIdRef.current })
   }, [trayDice]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Push placed → Yjs
+  // Push placed → Firebase
   useEffect(() => {
     if (skipSync.current.placed) { skipSync.current.placed = false; return }
-    doc.transact(() => sharedMap.set('placed', placed), clientIdRef.current)
+    fbWrite('/placed', { ...placed, _by: clientIdRef.current })
   }, [placed]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Reset local turn state when turnCount advances (both clients)
@@ -615,16 +641,15 @@ export default function App() {
   useEffect(() => {
     if (!allDicePlaced || setupPhase || gameState.gameOver || gameState.gameWin) return
     if (endTurnFiredRef.current) return
-    if (myRole !== null && myRole !== 'blue') return // only Captain triggers
+    if (myRole !== null && myRole !== 'blue') return
     endTurnFiredRef.current = true
     handleEndTurn()
   }, [allDicePlaced]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const claimRole = (color) => {
-    const current = sharedMap.get('roles') || {}
-    if (current[color]) return
-    const next = { ...current, [color]: clientIdRef.current }
-    doc.transact(() => sharedMap.set('roles', next), clientIdRef.current)
+    if (roles[color]) return
+    const next = { ...roles, [color]: clientIdRef.current }
+    fbWrite('/roles', next)
     setMyRole(color)
     setRoles(next)
   }
@@ -819,31 +844,45 @@ export default function App() {
 
   return (
     <div>
-      {/* Role selection — shown until this client has a role */}
-      {myRole === null && (
-        <div style={{ display: 'flex', justifyContent: 'center', gap: 16, padding: '12px 0', background: '#111' }}>
-          <button
-            onClick={() => claimRole('blue')}
-            disabled={!!roles.blue}
-            style={{ padding: '10px 24px', fontSize: 15, fontWeight: 'bold', background: roles.blue ? '#333' : '#1a5fa8', color: '#fff', border: 'none', borderRadius: 8, cursor: roles.blue ? 'not-allowed' : 'pointer', opacity: roles.blue ? 0.5 : 1 }}
-          >
-            {roles.blue ? 'Captain taken' : 'I am Captain (Blue)'}
-          </button>
-          <button
-            onClick={() => claimRole('orange')}
-            disabled={!!roles.orange}
-            style={{ padding: '10px 24px', fontSize: 15, fontWeight: 'bold', background: roles.orange ? '#333' : '#b84a00', color: '#fff', border: 'none', borderRadius: 8, cursor: roles.orange ? 'not-allowed' : 'pointer', opacity: roles.orange ? 0.5 : 1 }}
-          >
-            {roles.orange ? 'Co-Captain taken' : 'I am Co-Captain (Orange)'}
-          </button>
+      {/* Player identity bar — always visible at the top */}
+      <div style={{ background: '#0a0a0a', borderBottom: '1px solid #333', padding: '8px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontFamily: 'sans-serif' }}>
+        {/* Player number — based on awareness join order */}
+        <div style={{ fontSize: 16, fontWeight: 'bold', color: isFirstPlayer ? '#f1c40f' : '#aaa', display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#27ae60', display: 'inline-block', flexShrink: 0 }} />
+          {peers.length <= 1 ? 'Player 1' : isFirstPlayer ? 'Player 1' : 'Player 2'}
         </div>
-      )}
-      {myRole !== null && (
-        <div style={{ textAlign: 'center', padding: '6px 0', background: '#111', color: myRole === 'blue' ? '#4a9eff' : '#ff8c42', fontFamily: 'sans-serif', fontSize: 13, fontWeight: 'bold' }}>
-          {myRole === 'blue' ? '✈ Captain (Blue)' : '✈ Co-Captain (Orange)'}
-          {!isCaptain && setupPhase && <span style={{ marginLeft: 12, color: '#888', fontWeight: 'normal' }}>Waiting for Captain to set up…</span>}
+
+        {/* Role selection or role label */}
+        {myRole === null ? (
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button
+              onClick={() => claimRole('blue')}
+              disabled={!!roles.blue}
+              style={{ padding: '6px 18px', fontSize: 14, fontWeight: 'bold', background: roles.blue ? '#333' : '#1a5fa8', color: '#fff', border: 'none', borderRadius: 6, cursor: roles.blue ? 'not-allowed' : 'pointer', opacity: roles.blue ? 0.5 : 1 }}
+            >
+              {roles.blue ? 'Captain taken' : 'Captain (Blue)'}
+            </button>
+            <button
+              onClick={() => claimRole('orange')}
+              disabled={!!roles.orange}
+              style={{ padding: '6px 18px', fontSize: 14, fontWeight: 'bold', background: roles.orange ? '#333' : '#b84a00', color: '#fff', border: 'none', borderRadius: 6, cursor: roles.orange ? 'not-allowed' : 'pointer', opacity: roles.orange ? 0.5 : 1 }}
+            >
+              {roles.orange ? 'Co-Captain taken' : 'Co-Captain (Orange)'}
+            </button>
+          </div>
+        ) : (
+          <div style={{ fontSize: 15, fontWeight: 'bold', color: myRole === 'blue' ? '#4a9eff' : '#ff8c42' }}>
+            ✈ {myRole === 'blue' ? 'Captain (Blue)' : 'Co-Captain (Orange)'}
+          </div>
+        )}
+
+        {/* Waiting status */}
+        <div style={{ fontSize: 12, color: '#666', minWidth: 120, textAlign: 'right' }}>
+          {!(roles.blue && roles.orange)
+            ? 'Waiting for 2nd player…'
+            : <span style={{ color: '#27ae60' }}>● Both players connected</span>}
         </div>
-      )}
+      </div>
 
       <div style={{
         width: '100%',
@@ -952,11 +991,17 @@ export default function App() {
                             style={{ position: 'absolute', top: 12, left: 8, right: 8, width: DEST_W - 16, background: 'transparent', border: 'none', outline: 'none', color: '#fff', fontWeight: 'bold', fontSize: 17, textAlign: 'center', fontFamily: 'sans-serif', textShadow: '0 1px 3px #000', cursor: (approachLocked || !isCaptain) ? 'default' : 'text' }}
                           />
                           {/* check button — right edge, same row as input */}
-                          <button
-                            onClick={(e) => { e.stopPropagation(); const n = gameState.approachPanels.length; dispatch({ type: 'LOCK_APPROACH_VALUES', values: gameState.approachPanels.map((p, i) => ({ d: n - i, p: p.planes })) }); dispatch({ type: 'SET_GAME_READY', value: 1 }) }}
-                            onPointerDown={e => e.stopPropagation()}
-                            style={{ position: 'absolute', top: 22, right: 4, width: 16, height: 16, padding: 0, border: 'none', borderRadius: 2, background: '#1a5a1a', color: '#fff', fontSize: 11, lineHeight: 1, cursor: 'pointer', display: approachLocked ? 'none' : 'flex', alignItems: 'center', justifyContent: 'center' }}
-                          >✓</button>
+                          {(() => {
+                            const bothReady = !!(roles.blue && roles.orange)
+                            return (
+                              <button
+                                onClick={(e) => { if (!bothReady) return; e.stopPropagation(); const n = gameState.approachPanels.length; dispatch({ type: 'LOCK_APPROACH_VALUES', values: gameState.approachPanels.map((p, i) => ({ d: n - i, p: p.planes })) }); dispatch({ type: 'SET_GAME_READY', value: 1 }) }}
+                                onPointerDown={e => e.stopPropagation()}
+                                title={bothReady ? 'Start game' : 'Waiting for both players…'}
+                                style={{ position: 'absolute', top: 22, right: 4, width: 16, height: 16, padding: 0, border: 'none', borderRadius: 2, background: bothReady ? '#1a5a1a' : '#555', color: '#fff', fontSize: 11, lineHeight: 1, cursor: bothReady ? 'pointer' : 'not-allowed', display: approachLocked ? 'none' : 'flex', alignItems: 'center', justifyContent: 'center', opacity: bothReady ? 1 : 0.5 }}
+                              >✓</button>
+                            )
+                          })()}
                           {slotSymbol(gameState.approachPanels[0].planeSlots, 40)}
                           <div style={{ position: 'absolute', top: 71, left: 0, right: 0, bottom: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
                             {Array.from({ length: destPlanes }).map((_, ti) => (
@@ -985,7 +1030,6 @@ export default function App() {
                                 <button onClick={(e) => { e.stopPropagation(); if (gameState.approachPanels.length > 2) { dispatch({ type: 'REMOVE_APPROACH_PANEL' }); setApproachPos(p => ({ ...p, y: p.y + BLANK_H + PANEL_GAP })) } }} style={{ ...btnBase, top: 0, borderRadius: '0 0 0 3px', borderTop: 'none' }}>−</button>
                               </>}
                               <img src={blankPanelImg} draggable={false} style={{ width: BLANK_W, height: BLANK_H, display: 'block', userSelect: 'none' }} />
-                              <div style={{ position: 'absolute', bottom: 4, right: 6, color: '#fff', fontSize: 15, fontWeight: 'bold', fontFamily: 'monospace', pointerEvents: 'none', textShadow: '0 1px 3px #000' }}>{dist}</div>
                               {slotSymbol(panel.planeSlots)}
                               <div style={{ position: 'absolute', top: 33, left: 0, right: 0, bottom: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
                                 {Array.from({ length: planes }).map((_, ti) => (
@@ -1097,7 +1141,7 @@ export default function App() {
                   dispatch({ type: 'SET_REROLL_TOKEN', value: false })
                   setRerollGranted(true)
                   // Notify remote client to also grant reroll
-                  doc.transact(() => sharedMap.set('rerollGranted', Date.now()), clientIdRef.current)
+                  fbWrite('/rerollGranted', clientIdRef.current)
                 }
               }}
               style={{
