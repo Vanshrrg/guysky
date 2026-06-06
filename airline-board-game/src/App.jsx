@@ -514,6 +514,8 @@ export default function App() {
   const canEditApproach = !approachLocked && isFirstPlayer
 
   const [myRole, setMyRole] = useState(null)
+  const myRoleRef = useRef(null)
+  myRoleRef.current = myRole
   const [roles, setRoles] = useState({})
   const skipSync = useRef({})
 
@@ -544,12 +546,31 @@ export default function App() {
         const { _by, ...rest } = val
         // Firebase strips null values, so empty trays come back missing. Rebuild
         // the full key set (null = empty) or occupancy checks break.
-        setTrayDice({ ...Object.fromEntries(TRAYS.map(t => [t.name, null])), ...rest })
+        const blank = Object.fromEntries(TRAYS.map(t => [t.name, null]))
+        const myColor = myRoleRef.current
+        if (!myColor) { setTrayDice({ ...blank, ...rest }); return }
+        // Both clients edit the shared board, but each only ever places its own
+        // colour's dice. Merge by occupant ownership — keep my-colour entries
+        // from local state, take the peer's colour from the incoming snapshot —
+        // so the peer's snapshot (which lacks my dice) can't wipe my placements.
+        setTrayDice(prev => {
+          const merged = { ...blank }
+          for (const [t, id] of Object.entries(prev)) if (id && id.startsWith(myColor)) merged[t] = id
+          for (const [t, id] of Object.entries(rest)) if (id && !id.startsWith(myColor)) merged[t] = id
+          return merged
+        })
       } else if (key === 'placed') {
         if (!val || val._by === cid) return
         skipSync.current.placed = true
         const { _by, ...rest } = val
-        setPlaced(rest)
+        const myColor = myRoleRef.current
+        if (!myColor) { setPlaced(rest); return }
+        setPlaced(prev => {
+          const merged = {}
+          for (const [id, pos] of Object.entries(prev)) if (id.startsWith(myColor)) merged[id] = pos
+          for (const [id, pos] of Object.entries(rest)) if (!id.startsWith(myColor)) merged[id] = pos
+          return merged
+        })
       } else if (key === 'roles') {
         if (!val) return
         setRoles(val)
@@ -639,6 +660,11 @@ export default function App() {
     setRerollUsed(new Set())
     setRerollGranted(false)
     setDieTriggers(Object.fromEntries(ALL_DICE.map(d => [d.id, 0])))
+    // End-of-turn board clear is driven by turnCount (not the placed/trayDice
+    // sync) because the ownership-merge intentionally ignores a peer's empty
+    // snapshot. Both clients clear their board here when the turn advances.
+    setPlaced({})
+    setTrayDice(Object.fromEntries(TRAYS.map(t => [t.name, null])))
   }, [gameState.turnCount]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Flip activePlayer when this client's dice are all placed but not all 8 yet
