@@ -352,7 +352,11 @@ export default function App() {
   }
 
   // Always-current snapshot used inside event-handler closures to avoid stale state
-  latestRef.current = { brakes: gameState.brakes, flaps: gameState.flaps, landingGear: gameState.landingGear, coffeeTokens: gameState.coffeeTokens, trayDice, values }
+  latestRef.current = { brakes: gameState.brakes, flaps: gameState.flaps, landingGear: gameState.landingGear, coffeeTokens: gameState.coffeeTokens, trayDice, values, placed }
+  // activePlayer mirrored into a ref so the (possibly stale) finalizeDrag closure
+  // captured by a long-lived pointerup listener always reads the current turn.
+  const activePlayerRef = useRef(gameState.activePlayer)
+  activePlayerRef.current = gameState.activePlayer
 
   // Active custom drag. While moving, we render one opaque die that follows the
   // cursor and hide the die at its source. dragRef mirrors it for the window
@@ -462,6 +466,18 @@ export default function App() {
             setPlaced(p => ({ ...p, [info.id]: { x: tray.x, y: tray.y } }))
             setTrayDice(prev => ({ ...prev, [tray.name]: info.id }))
             tray.onSnap(dispatch, gs, vals[info.id])
+            // SkyTeam alternation: after I place ONE die, control passes to the
+            // other pilot — unless they've already placed all of theirs, in which
+            // case I keep going. Driven from the local placement (not a synced
+            // `placed`-count watcher, which can't tell my placement from a peer's
+            // die arriving over the wire).
+            const myColor = myRoleRef.current
+            if (myColor && activePlayerRef.current === myColor) {
+              const other = myColor === 'blue' ? 'orange' : 'blue'
+              const placedNow = { ...latestRef.current.placed, [info.id]: true }
+              const otherRemaining = ALL_DICE.filter(d => d.color === other && !placedNow[d.id]).length
+              if (otherRemaining > 0) dispatch({ type: 'SET_ACTIVE_PLAYER', value: other })
+            }
           } else {
             setPlaced(p => { const next = { ...p }; delete next[info.id]; return next })
           }
@@ -527,6 +543,10 @@ export default function App() {
   // The creator seeds a complete gameState once (full PUT); everyone else, and
   // every subsequent change, writes partial PATCHes.
   const needsSeedRef = useRef(false)
+  // Last reset signal we've seen/written. A bumped /resetAt makes BOTH clients
+  // wipe their local board wholesale — bypassing the per-colour ownership merge,
+  // which would otherwise ignore a peer's emptied board and strand old dice.
+  const resetSeenRef = useRef(null)
 
   // One SSE stream for the whole /game node — NOT one per key.
   // The RTDB endpoint is HTTP/1.1, so the browser caps connections at 6 per
@@ -612,11 +632,28 @@ export default function App() {
         if (!val || val._by === cid) return
         skipSync.current.axisAngle = true
         setAxisAngle(val.v)
+      } else if (key === 'resetAt') {
+        // A peer (or we) restarted the game. Ignore the initial snapshot value
+        // and our own echo; otherwise wipe ALL local board state — including our
+        // own colour's dice, which the ownership merge would normally preserve.
+        if (val == null || resetSeenRef.current === val) return
+        resetSeenRef.current = val
+        if (!hydratedRef.current) return // join-time snapshot — board is already fresh
+        setPlaced({})
+        setTrayDice(Object.fromEntries(TRAYS.map(t => [t.name, null])))
+        setValues(Object.fromEntries(ALL_DICE.map(d => [d.id, d.value])))
+        setAxisAngle(0)
+        setDieTriggers(Object.fromEntries(ALL_DICE.map(d => [d.id, 0])))
+        setRolledThisAlt(new Set())
+        setRerollUsed(new Set())
+        setRerollGranted(false)
+        setTurnResult(null)
+        setApproachPos(APPROACH_START)
       }
       // 'presence' is intentionally ignored — owned by useFirebaseSync polling.
     }
 
-    const GAME_KEYS = ['gameState', 'values', 'trayDice', 'placed', 'roles', 'rerollGranted', 'approachPos', 'axisAngle']
+    const GAME_KEYS = ['gameState', 'values', 'trayDice', 'placed', 'roles', 'rerollGranted', 'approachPos', 'axisAngle', 'resetAt']
 
     // Firebase SSE payloads are { path, data }. path '/' is a full snapshot of
     // /game; '/gameState' is a single top-level key; '/presence/<id>' is nested.
@@ -729,22 +766,11 @@ export default function App() {
     setTrayDice(Object.fromEntries(TRAYS.map(t => [t.name, null])))
   }, [gameState.turnCount]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Turns alternate one die at a time (SkyTeam rule): after the active player
-  // places a single die, control passes to the other player — unless they've
-  // already placed all of theirs, in which case the active player keeps going.
-  // The turn itself ends (auto End Turn, below) once all 8 dice are down.
-  const prevPlacedCountRef = useRef(0)
-  useEffect(() => {
-    const count = Object.keys(placed).length
-    const prev = prevPlacedCountRef.current
-    prevPlacedCountRef.current = count
-    if (setupPhase || !myRole || gameState.gameOver || gameState.gameWin) return
-    if (count <= prev) return                     // a removal or end-of-turn reset, not a placement
-    if (gameState.activePlayer !== myRole) return // only the player who just placed hands off
-    const other = myRole === 'blue' ? 'orange' : 'blue'
-    const otherRemaining = ALL_DICE.filter(d => d.color === other && !placed[d.id]).length
-    if (otherRemaining > 0) dispatch({ type: 'SET_ACTIVE_PLAYER', value: other })
-  }, [placed]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Turn alternation (one die at a time, SkyTeam rule) is driven directly from
+  // the local placement in finalizeDrag — see the handoff block there. A synced
+  // `placed`-count watcher can't be used: `placed` is merged across both clients,
+  // so a peer's die arriving looks identical to a local placement and the turn
+  // would bounce back and forth.
 
   // Auto end turn when all 8 dice placed — only Captain (or solo) fires it
   const endTurnFiredRef = useRef(false)
@@ -843,6 +869,20 @@ export default function App() {
     setTurnResult(null)
 
     setApproachPos(APPROACH_START)
+
+    // Broadcast the reset to Firebase so the peer's board is wiped too. Write a
+    // fresh, authoritative copy of every shared key (so a late joiner's snapshot
+    // is clean), then bump /resetAt to force a full local clear on the peer.
+    const cid = clientIdRef.current
+    const ts = Date.now()
+    resetSeenRef.current = ts // ignore our own /resetAt echo
+    fbWrite('/gameState', { ...initialState, _by: cid }, 'PUT')
+    fbWrite('/values', { ...Object.fromEntries(ALL_DICE.map(d => [d.id, d.value])), _by: cid }, 'PUT')
+    fbWrite('/trayDice', { ...Object.fromEntries(TRAYS.map(t => [t.name, null])), _by: cid }, 'PUT')
+    fbWrite('/placed', { _by: cid }, 'PUT')
+    fbWrite('/approachPos', { ...APPROACH_START, _by: cid }, 'PUT')
+    fbWrite('/axisAngle', { v: 0, _by: cid }, 'PUT')
+    fbWrite('/resetAt', ts, 'PUT')
   }
 
   const handleEndTurn = () => {
