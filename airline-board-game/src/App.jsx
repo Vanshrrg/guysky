@@ -639,6 +639,12 @@ export default function App() {
         if (val == null || resetSeenRef.current === val) return
         resetSeenRef.current = val
         if (!hydratedRef.current) return // join-time snapshot — board is already fresh
+        // Reset the WHOLE gameState locally (coffee tokens, switches, engine/brake
+        // markers, approach panels, altitude, …). Doing it here — rather than
+        // relying on the separate /gameState PUT — makes the peer's reset atomic
+        // and immune to a stale push racing the PUT.
+        skipSync.current.gameState = true
+        dispatch({ type: 'SYNC_STATE', state: { ...initialState } })
         setPlaced({})
         setTrayDice(Object.fromEntries(TRAYS.map(t => [t.name, null])))
         setValues(Object.fromEntries(ALL_DICE.map(d => [d.id, d.value])))
