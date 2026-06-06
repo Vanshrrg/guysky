@@ -1,6 +1,26 @@
 export const BLUE_ENGINE_VALUES = [4.5, 5.5, 6.5, 7.5]
 export const ORANGE_ENGINE_VALUES = [8.5, 9.5, 10.5, 11.5, 12.5]
 
+// Final-landing adjudication, evaluated when End Turn is pressed at altitude 0.
+// Pure so it can be unit-tested independently of the React layer. Returns
+// 'win' only when every landing requirement is met, otherwise 'over'.
+//   destD       — distance remaining on the destination panel (0 = at the airport)
+//   planes      — planes still on the destination panel (must be cleared)
+//   flaps       — bool[4]; all must be deployed
+//   landingGear — bool[3]; all must be down
+//   axisPos     — final axis/bank position; must be centred (0)
+//   engSum      — sum of the two engine dice faces (landing speed)
+//   brakeVal    — brake threshold; engSum must be strictly below it
+export function computeLandingResult({ destD, planes, flaps, landingGear, axisPos, engSum, brakeVal }) {
+  if (destD > 0) return 'over'           // haven't reached the destination yet
+  const noPlanes = planes === 0
+  const allFlaps = flaps.every(Boolean)
+  const allGear = landingGear.every(Boolean)
+  const axisCenter = axisPos === 0
+  const brakePassed = engSum < brakeVal
+  return (noPlanes && allFlaps && allGear && axisCenter && brakePassed) ? 'win' : 'over'
+}
+
 export const initialState = {
   dicePositions:  {},
   axisAngle:      90,

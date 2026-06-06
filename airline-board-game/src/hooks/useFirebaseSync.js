@@ -25,7 +25,11 @@ const GAME_PATH = '/game'
 
 const HEARTBEAT_MS = 3000  // re-announce our presence this often
 const POLL_MS = 2000       // re-read the presence map this often
-const STALE_MS = 10000     // drop a peer whose heartbeat is older than this
+// Drop a peer whose heartbeat is older than this. Generous because browsers
+// throttle background-tab timers (a hidden tab's heartbeat can stall well past
+// the nominal interval); a tight window would drop a peer whose phone merely
+// locked or who switched apps. We also re-announce immediately on refocus.
+const STALE_MS = 30000
 
 function dbUrl(path) {
   return `${DB_URL}${GAME_PATH}${path}.json`
@@ -86,6 +90,15 @@ export function useFirebaseSync(clientId) {
     const hb = setInterval(announce, HEARTBEAT_MS)
     const poll = setInterval(refresh, POLL_MS)
 
+    // Background tabs throttle the heartbeat interval, so the moment we become
+    // visible/focused again, announce + refresh immediately — this resurrects a
+    // peer that was throttled past STALE_MS and pulls a fresh presence map.
+    const onActive = () => {
+      if (document.visibilityState === 'visible') announce().then(refresh)
+    }
+    document.addEventListener('visibilitychange', onActive)
+    window.addEventListener('focus', onActive)
+
     // Best-effort removal on tab close (keepalive lets it finish after unload).
     const removeSelf = () =>
       fetch(dbUrl(`/presence/${clientId}`), { method: 'DELETE', keepalive: true }).catch(() => {})
@@ -95,6 +108,8 @@ export function useFirebaseSync(clientId) {
       cancelled = true
       clearInterval(hb)
       clearInterval(poll)
+      document.removeEventListener('visibilitychange', onActive)
+      window.removeEventListener('focus', onActive)
       window.removeEventListener('beforeunload', removeSelf)
       removeSelf()
     }

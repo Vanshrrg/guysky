@@ -29,7 +29,7 @@ import altitude3000Img from './assets/components/altitude3000.png'
 import altitude1000Img from './assets/components/altitude1000.png'
 import altitude0Img from './assets/components/altitude0.png'
 import altitude2000Img from './assets/components/altitude2000.png'
-import { gameReducer, initialState, BLUE_ENGINE_VALUES, ORANGE_ENGINE_VALUES } from './gameState'
+import { gameReducer, initialState, BLUE_ENGINE_VALUES, ORANGE_ENGINE_VALUES, computeLandingResult } from './gameState'
 import { useFirebaseSync, fbSet } from './hooks/useFirebaseSync'
 import './App.css'
 
@@ -804,10 +804,11 @@ export default function App() {
     const gs = gameState
     const issues = []
 
-    // Engine check
+    // Engine check (both engine dice must be placed; `!= null` also rejects an
+    // undefined key, e.g. a tray map that lost its nulls through Firebase)
     const blueEngDieId = trayDice['eng-blue']
     const orangeEngDieId = trayDice['eng-orange']
-    const engineCheckPassed = blueEngDieId !== null && orangeEngDieId !== null
+    const engineCheckPassed = blueEngDieId != null && orangeEngDieId != null
     let approachDistance = null
     if (engineCheckPassed) {
       const engineValue = values[blueEngDieId] + values[orangeEngDieId]
@@ -816,7 +817,6 @@ export default function App() {
       if (engineValue < blueThreshold) approachDistance = 0
       else if (engineValue > orangeThreshold) approachDistance = 2
       else approachDistance = 1
-    } else {
     }
 
     // Axis check
@@ -886,19 +886,15 @@ export default function App() {
 
     // Endgame check — runs when End Turn is pressed while already at altitude 0
     if (engineCheckPassed && axisCheckPassed && gs.altitude === 0 && gs.gameReady === 1) {
-      const destD = gs.approachPanels[0].d ?? 0
-      if (destD > 0) {
-        endgameResult = 'over'
-      } else {
-        const noPlanes = gs.approachPanels[0].planes === 0
-        const allFlaps = gs.flaps.every(Boolean)
-        const allGear = gs.landingGear.every(Boolean)
-        const axisCenter = computedAxisPos === 0
-        const engSum = (blueEngDieId ? values[blueEngDieId] : 0) + (orangeEngDieId ? values[orangeEngDieId] : 0)
-        const brakeVal = BRAKE_MARKER_POS[gs.brakeMarker]?.value ?? 0
-        const brakePassed = engSum < brakeVal
-        endgameResult = (noPlanes && allFlaps && allGear && axisCenter && brakePassed) ? 'win' : 'over'
-      }
+      endgameResult = computeLandingResult({
+        destD: gs.approachPanels[0].d ?? 0,
+        planes: gs.approachPanels[0].planes,
+        flaps: gs.flaps,
+        landingGear: gs.landingGear,
+        axisPos: computedAxisPos,
+        engSum: (blueEngDieId != null ? values[blueEngDieId] : 0) + (orangeEngDieId != null ? values[orangeEngDieId] : 0),
+        brakeVal: BRAKE_MARKER_POS[gs.brakeMarker]?.value ?? 0,
+      })
     }
 
     // Return all dice to trays
