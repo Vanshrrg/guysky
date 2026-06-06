@@ -196,6 +196,11 @@ export function gameReducer(state, action) {
       return { ...state, turnCount: state.turnCount + 1 }
     case 'SYNC_STATE':
       return { ...action.state }
+    case 'MERGE_STATE':
+      // Apply only the fields that changed on the peer (a PATCH), leaving every
+      // other field untouched. This is what stops two clients editing different
+      // parts of the state from clobbering each other on a whole-object write.
+      return { ...state, ...action.state }
     case 'SET_GAME_READY':
       return { ...state, gameReady: action.value }
     case 'SET_GAME_OVER':

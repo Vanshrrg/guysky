@@ -523,6 +523,10 @@ export default function App() {
   // (gameReady=0, default dice faces) and overwrite a game already in progress —
   // a reloading or newly-joining client (or a stray tab) would reset the table.
   const hydratedRef = useRef(false)
+  // True only when WE are creating the game (no gameState existed at hydration).
+  // The creator seeds a complete gameState once (full PUT); everyone else, and
+  // every subsequent change, writes partial PATCHes.
+  const needsSeedRef = useRef(false)
 
   // One SSE stream for the whole /game node — NOT one per key.
   // The RTDB endpoint is HTTP/1.1, so the browser caps connections at 6 per
@@ -534,12 +538,16 @@ export default function App() {
     const DB = 'https://guysky-95670-default-rtdb.asia-southeast1.firebasedatabase.app'
     const cid = clientIdRef.current
 
-    // Apply one top-level key of /game to local state.
-    const applyKey = (key, val) => {
+    // Apply one top-level key of /game to local state. `isMerge` is true when
+    // this came from a Firebase PATCH event (partial gameState) rather than a
+    // full snapshot/PUT.
+    const applyKey = (key, val, isMerge = false) => {
       if (key === 'gameState') {
         if (!val || val._by === cid) return
+        needsSeedRef.current = false // a game exists; we are not the creator
         skipSync.current.gameState = true
-        dispatch({ type: 'SYNC_STATE', state: val })
+        const { _by, ...rest } = val
+        dispatch({ type: isMerge ? 'MERGE_STATE' : 'SYNC_STATE', state: rest })
       } else if (key === 'values') {
         if (!val || val._by === cid) return
         skipSync.current.values = true
@@ -612,42 +620,61 @@ export default function App() {
 
     // Firebase SSE payloads are { path, data }. path '/' is a full snapshot of
     // /game; '/gameState' is a single top-level key; '/presence/<id>' is nested.
-    const handle = (e) => {
+    const handle = (e, isPatch) => {
       try {
         const { path, data } = JSON.parse(e.data)
         if (path === '/') {
           // Root snapshot. Absorb the current game, THEN allow pushing. If data
           // is null there's no game yet, so this client may create one.
           if (data) for (const k of GAME_KEYS) if (data[k] !== undefined) applyKey(k, data[k])
+          // No gameState in the snapshot ⇒ no game yet ⇒ we may seed one.
+          if (!data || data.gameState === undefined) needsSeedRef.current = true
           hydratedRef.current = true
         } else {
           const seg = path.split('/').filter(Boolean)
-          if (seg.length === 1) applyKey(seg[0], data) // deeper paths (presence) ignored
+          if (seg.length === 1) applyKey(seg[0], data, isPatch) // deeper paths (presence) ignored
         }
       } catch {}
     }
 
     const es = new EventSource(`${DB}/game.json?alt=sse`)
-    es.addEventListener('put', handle)
-    es.addEventListener('patch', handle)
+    es.addEventListener('put', e => handle(e, false))
+    es.addEventListener('patch', e => handle(e, true))
 
     return () => es.close()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const fbWrite = (subpath, value) => {
+  const fbWrite = (subpath, value, method = 'PUT') => {
     const DB = 'https://guysky-95670-default-rtdb.asia-southeast1.firebasedatabase.app'
     fetch(`${DB}/game${subpath}.json`, {
-      method: 'PUT',
+      method,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(value),
     }).catch(() => {})
   }
 
-  // Push gameState → Firebase
+  // Push gameState → Firebase as a PATCH of only the fields that changed.
+  // The reducer keeps unchanged fields referentially stable, so a top-level
+  // reference diff identifies exactly what this client touched. Writing only
+  // those keys means a peer editing different fields (e.g. orange placing a
+  // radio die) can't clobber this client's update (e.g. blue's end-turn
+  // altitude/turn advance) — the root of the "turn didn't advance" bug.
+  const gsRef = useRef(gameState)
   useEffect(() => {
-    if (!hydratedRef.current) return
-    if (skipSync.current.gameState) { skipSync.current.gameState = false; return }
-    fbWrite('/gameState', { ...gameState, _by: clientIdRef.current })
+    if (!hydratedRef.current) { gsRef.current = gameState; return }
+    if (skipSync.current.gameState) { skipSync.current.gameState = false; gsRef.current = gameState; return }
+    if (needsSeedRef.current) {
+      // First write of a brand-new game: seed the COMPLETE state so a later
+      // joiner's snapshot isn't missing fields. Subsequent writes are PATCHes.
+      needsSeedRef.current = false
+      gsRef.current = gameState
+      fbWrite('/gameState', { ...gameState, _by: clientIdRef.current }, 'PUT')
+      return
+    }
+    const patch = {}
+    for (const k of Object.keys(gameState)) if (gameState[k] !== gsRef.current[k]) patch[k] = gameState[k]
+    gsRef.current = gameState
+    if (Object.keys(patch).length) fbWrite('/gameState', { ...patch, _by: clientIdRef.current }, 'PATCH')
   }, [gameState]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Push values → Firebase
@@ -702,17 +729,22 @@ export default function App() {
     setTrayDice(Object.fromEntries(TRAYS.map(t => [t.name, null])))
   }, [gameState.turnCount]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Flip activePlayer when this client's dice are all placed but not all 8 yet
+  // Turns alternate one die at a time (SkyTeam rule): after the active player
+  // places a single die, control passes to the other player — unless they've
+  // already placed all of theirs, in which case the active player keeps going.
+  // The turn itself ends (auto End Turn, below) once all 8 dice are down.
+  const prevPlacedCountRef = useRef(0)
   useEffect(() => {
+    const count = Object.keys(placed).length
+    const prev = prevPlacedCountRef.current
+    prevPlacedCountRef.current = count
     if (setupPhase || !myRole || gameState.gameOver || gameState.gameWin) return
-    if (gameState.activePlayer !== myRole) return
-    const myColorDone = byColor(myRole).length === 0
-    const allDone = byColor('blue').length === 0 && byColor('orange').length === 0
-    if (myColorDone && !allDone) {
-      const other = myRole === 'blue' ? 'orange' : 'blue'
-      dispatch({ type: 'SET_ACTIVE_PLAYER', value: other })
-    }
-  }, [placed, trayDice]) // eslint-disable-line react-hooks/exhaustive-deps
+    if (count <= prev) return                     // a removal or end-of-turn reset, not a placement
+    if (gameState.activePlayer !== myRole) return // only the player who just placed hands off
+    const other = myRole === 'blue' ? 'orange' : 'blue'
+    const otherRemaining = ALL_DICE.filter(d => d.color === other && !placed[d.id]).length
+    if (otherRemaining > 0) dispatch({ type: 'SET_ACTIVE_PLAYER', value: other })
+  }, [placed]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto end turn when all 8 dice placed — only Captain (or solo) fires it
   const endTurnFiredRef = useRef(false)
