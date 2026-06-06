@@ -518,6 +518,11 @@ export default function App() {
   myRoleRef.current = myRole
   const [roles, setRoles] = useState({})
   const skipSync = useRef({})
+  // True once we've absorbed the initial Firebase snapshot. Until then we must
+  // NOT push: on mount every push effect would otherwise fire with initialState
+  // (gameReady=0, default dice faces) and overwrite a game already in progress —
+  // a reloading or newly-joining client (or a stray tab) would reset the table.
+  const hydratedRef = useRef(false)
 
   // One SSE stream for the whole /game node — NOT one per key.
   // The RTDB endpoint is HTTP/1.1, so the browser caps connections at 6 per
@@ -611,8 +616,10 @@ export default function App() {
       try {
         const { path, data } = JSON.parse(e.data)
         if (path === '/') {
-          if (!data) return
-          for (const k of GAME_KEYS) if (data[k] !== undefined) applyKey(k, data[k])
+          // Root snapshot. Absorb the current game, THEN allow pushing. If data
+          // is null there's no game yet, so this client may create one.
+          if (data) for (const k of GAME_KEYS) if (data[k] !== undefined) applyKey(k, data[k])
+          hydratedRef.current = true
         } else {
           const seg = path.split('/').filter(Boolean)
           if (seg.length === 1) applyKey(seg[0], data) // deeper paths (presence) ignored
@@ -638,24 +645,28 @@ export default function App() {
 
   // Push gameState → Firebase
   useEffect(() => {
+    if (!hydratedRef.current) return
     if (skipSync.current.gameState) { skipSync.current.gameState = false; return }
     fbWrite('/gameState', { ...gameState, _by: clientIdRef.current })
   }, [gameState]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Push values → Firebase
   useEffect(() => {
+    if (!hydratedRef.current) return
     if (skipSync.current.values) { skipSync.current.values = false; return }
     fbWrite('/values', { ...values, _by: clientIdRef.current })
   }, [values]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Push trayDice → Firebase
   useEffect(() => {
+    if (!hydratedRef.current) return
     if (skipSync.current.trayDice) { skipSync.current.trayDice = false; return }
     fbWrite('/trayDice', { ...trayDice, _by: clientIdRef.current })
   }, [trayDice]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Push placed → Firebase
   useEffect(() => {
+    if (!hydratedRef.current) return
     if (skipSync.current.placed) { skipSync.current.placed = false; return }
     fbWrite('/placed', { ...placed, _by: clientIdRef.current })
   }, [placed]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -663,12 +674,14 @@ export default function App() {
   // Push approachPos → Firebase (vertical position of the approach strip, so
   // both clients render it identically — panel data already rides in gameState)
   useEffect(() => {
+    if (!hydratedRef.current) return
     if (skipSync.current.approachPos) { skipSync.current.approachPos = false; return }
     fbWrite('/approachPos', { ...approachPos, _by: clientIdRef.current })
   }, [approachPos]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Push axisAngle → Firebase (shared plane bank; see apply handler above)
   useEffect(() => {
+    if (!hydratedRef.current) return
     if (skipSync.current.axisAngle) { skipSync.current.axisAngle = false; return }
     fbWrite('/axisAngle', { v: axisAngle, _by: clientIdRef.current })
   }, [axisAngle]) // eslint-disable-line react-hooks/exhaustive-deps
