@@ -539,7 +539,16 @@ export default function App() {
         if (!val || val._by === cid) return
         skipSync.current.values = true
         const { _by, ...rest } = val
-        setValues(rest)
+        const myColor = myRoleRef.current
+        if (!myColor) { setValues(rest); return }
+        // Both pilots roll simultaneously each round, so two values pushes cross.
+        // Keep my own dice from local state, take only the peer's dice from the
+        // incoming snapshot — otherwise a peer's push reverts my fresh roll.
+        setValues(prev => {
+          const merged = { ...prev }
+          for (const [id, v] of Object.entries(rest)) if (!id.startsWith(myColor)) merged[id] = v
+          return merged
+        })
       } else if (key === 'trayDice') {
         if (!val || val._by === cid) return
         skipSync.current.trayDice = true
@@ -583,11 +592,18 @@ export default function App() {
         skipSync.current.approachPos = true
         const { _by, ...rest } = val
         setApproachPos(rest)
+      } else if (key === 'axisAngle') {
+        // The plane bank is a shared board element. It's set both by manual
+        // rotation and by the end-turn dice computation; keep both clients in
+        // sync so the displayed tilt matches the authoritative value.
+        if (!val || val._by === cid) return
+        skipSync.current.axisAngle = true
+        setAxisAngle(val.v)
       }
       // 'presence' is intentionally ignored — owned by useFirebaseSync polling.
     }
 
-    const GAME_KEYS = ['gameState', 'values', 'trayDice', 'placed', 'roles', 'rerollGranted', 'approachPos']
+    const GAME_KEYS = ['gameState', 'values', 'trayDice', 'placed', 'roles', 'rerollGranted', 'approachPos', 'axisAngle']
 
     // Firebase SSE payloads are { path, data }. path '/' is a full snapshot of
     // /game; '/gameState' is a single top-level key; '/presence/<id>' is nested.
@@ -650,6 +666,12 @@ export default function App() {
     if (skipSync.current.approachPos) { skipSync.current.approachPos = false; return }
     fbWrite('/approachPos', { ...approachPos, _by: clientIdRef.current })
   }, [approachPos]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Push axisAngle → Firebase (shared plane bank; see apply handler above)
+  useEffect(() => {
+    if (skipSync.current.axisAngle) { skipSync.current.axisAngle = false; return }
+    fbWrite('/axisAngle', { v: axisAngle, _by: clientIdRef.current })
+  }, [axisAngle]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Reset local turn state when turnCount advances (both clients)
   const prevTurnCount = useRef(gameState.turnCount)
