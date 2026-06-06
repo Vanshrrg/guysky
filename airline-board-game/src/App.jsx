@@ -41,7 +41,7 @@ import './App.css'
 // Bump on every deploy so you can confirm at a glance which build a tab is
 // running (shown in the top bar). If two tabs show different markers, one is
 // serving a stale cached bundle and needs a hard refresh.
-const BUILD = 'b8'
+const BUILD = 'b9'
 const BOARD_W = 706
 const BOARD_H = Math.round(BOARD_W * 1078 / 768) // ≈ 991
 // A die slot measures 72px in the native 768-wide artwork (see
@@ -309,6 +309,10 @@ export default function App() {
   // compass center. Not tied to discrete angles — fully manual.
   const [axisAngle, setAxisAngle] = useState(0)
   const axisDragRef = useRef(null)
+  // Last axis value we've sent to OR received from Firebase. Guards the push
+  // effect against echoing a received update or stranding a no-op (axisAngle is
+  // a plain number, so an unchanged setState won't re-fire the effect).
+  const lastAxisRef = useRef(0)
 
   // Drag the arc handle to bank the plane. The angle is measured from straight
   // up (12 o'clock = level) clockwise, clamped to ±AXIS_MAX so the handle stays
@@ -633,8 +637,13 @@ export default function App() {
         // The plane bank is a shared board element. It's set both by manual
         // rotation and by the end-turn dice computation; keep both clients in
         // sync so the displayed tilt matches the authoritative value.
+        // NOTE: axisAngle is a NUMBER, so we can't use the skipSync flag the
+        // object-valued keys use — if an incoming value equals the current one,
+        // setAxisAngle is a no-op, the push effect never fires to clear the flag,
+        // and it stays stuck (swallowing the next real local bank). Track the
+        // last-synced value in a ref instead; the push effect skips it.
         if (!val || val._by === cid) return
-        skipSync.current.axisAngle = true
+        lastAxisRef.current = val.v
         setAxisAngle(val.v)
       } else if (key === 'resetAt') {
         // A peer (or we) restarted the game. Ignore the initial snapshot value
@@ -652,6 +661,7 @@ export default function App() {
         setPlaced({})
         setTrayDice(Object.fromEntries(TRAYS.map(t => [t.name, null])))
         setValues(Object.fromEntries(ALL_DICE.map(d => [d.id, d.value])))
+        lastAxisRef.current = 0
         setAxisAngle(0)
         setDieTriggers(Object.fromEntries(ALL_DICE.map(d => [d.id, 0])))
         setRolledThisAlt(new Set())
@@ -753,10 +763,13 @@ export default function App() {
     fbWrite('/approachPos', { ...approachPos, _by: clientIdRef.current })
   }, [approachPos]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Push axisAngle → Firebase (shared plane bank; see apply handler above)
+  // Push axisAngle → Firebase (shared plane bank; see apply handler above).
+  // lastAxisRef holds the value we last sent OR received, so a received update
+  // doesn't echo back and a no-op can't strand a skip flag.
   useEffect(() => {
     if (!hydratedRef.current) return
-    if (skipSync.current.axisAngle) { skipSync.current.axisAngle = false; return }
+    if (axisAngle === lastAxisRef.current) return // received value or unchanged — don't echo
+    lastAxisRef.current = axisAngle
     fbWrite('/axisAngle', { v: axisAngle, _by: clientIdRef.current })
   }, [axisAngle]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -871,6 +884,7 @@ export default function App() {
     setPlaced({})
     setTrayDice(Object.fromEntries(TRAYS.map(t => [t.name, null])))
     setValues(Object.fromEntries(ALL_DICE.map(d => [d.id, d.value])))
+    lastAxisRef.current = 0
     setAxisAngle(0)
     setDieTriggers(Object.fromEntries(ALL_DICE.map(d => [d.id, 0])))
     setRolledThisAlt(new Set())
