@@ -1426,47 +1426,33 @@ export default function App() {
         </div>
       </div>
 
-      {/* Blue dice tray — shown to Captain or solo player */}
-      {(myRole === null || myRole === 'blue') && (
-        <DiceTray
-          color="blue"
-          dice={byColor('blue')}
-          dieSize={SQUARE * scale}
-          onPointerDown={isMyTurn ? startDrag : undefined}
-          onRoll={!setupPhase ? handleRoll : undefined}
-          draggingId={drag && drag.moved ? drag.id : null}
-          rollTriggers={dieTriggers}
-          coffeeTriggers={coffeeTriggers}
-          coffeeHighlight={myRole !== 'orange' && !!coffeeChoice && !coffeeChoice.dieId}
-          onCoffeeSelect={(myRole !== 'orange' && !setupPhase) ? (e, d) => setCoffeeChoice({ tokenIndex: coffeeChoice.tokenIndex, dieId: d.id, popupX: e.clientX, popupY: e.clientY }) : undefined}
-          unrolledHighlight={!setupPhase ? (id) => !rolledThisAlt.has(id) : undefined}
-          rerollHighlight={!setupPhase ? (id) => rerollGranted && !rerollUsed.has(id) && rolledThisAlt.has(id) : undefined}
-          canRoll={setupPhase ? () => false : canRollDie}
-          onRollAll={() => handleRollAll('blue')}
-          rollAllDisabled={setupPhase}
-        />
-      )}
-
-      {/* Orange dice tray — shown to Co-Captain or solo player */}
-      {(myRole === null || myRole === 'orange') && (
-        <DiceTray
-          color="orange"
-          dice={byColor('orange')}
-          dieSize={SQUARE * scale}
-          onPointerDown={isMyTurn ? startDrag : undefined}
-          onRoll={!setupPhase ? handleRoll : undefined}
-          draggingId={drag && drag.moved ? drag.id : null}
-          rollTriggers={dieTriggers}
-          coffeeTriggers={coffeeTriggers}
-          coffeeHighlight={myRole !== 'blue' && !!coffeeChoice && !coffeeChoice.dieId}
-          onCoffeeSelect={(myRole !== 'blue' && !setupPhase) ? (e, d) => setCoffeeChoice({ tokenIndex: coffeeChoice.tokenIndex, dieId: d.id, popupX: e.clientX, popupY: e.clientY }) : undefined}
-          unrolledHighlight={!setupPhase ? (id) => !rolledThisAlt.has(id) : undefined}
-          rerollHighlight={!setupPhase ? (id) => rerollGranted && !rerollUsed.has(id) && rolledThisAlt.has(id) : undefined}
-          canRoll={setupPhase ? () => false : canRollDie}
-          onRollAll={() => handleRollAll('orange')}
-          rollAllDisabled={setupPhase}
-        />
-      )}
+      {/* Both dice trays are rendered for BOTH players so each can see the
+          other's dice (faces, rolls, what's still in the tray) live. Only the
+          tray matching my role is interactive; the peer's tray is read-only.
+          A solo player (myRole === null) owns both. */}
+      {['blue', 'orange'].map(color => {
+        const mine = myRole === null || myRole === color
+        return (
+          <DiceTray
+            key={color}
+            color={color}
+            dice={byColor(color)}
+            dieSize={SQUARE * scale}
+            onPointerDown={(mine && isMyTurn) ? startDrag : undefined}
+            onRoll={(mine && !setupPhase) ? handleRoll : undefined}
+            draggingId={drag && drag.moved ? drag.id : null}
+            rollTriggers={dieTriggers}
+            coffeeTriggers={coffeeTriggers}
+            coffeeHighlight={mine && !!coffeeChoice && !coffeeChoice.dieId}
+            onCoffeeSelect={(mine && !setupPhase) ? (e, d) => setCoffeeChoice({ tokenIndex: coffeeChoice.tokenIndex, dieId: d.id, popupX: e.clientX, popupY: e.clientY }) : undefined}
+            unrolledHighlight={(mine && !setupPhase) ? (id) => !rolledThisAlt.has(id) : undefined}
+            rerollHighlight={(mine && !setupPhase) ? (id) => rerollGranted && !rerollUsed.has(id) && rolledThisAlt.has(id) : undefined}
+            canRoll={(mine && !setupPhase) ? canRollDie : () => false}
+            onRollAll={mine ? () => handleRollAll(color) : undefined}
+            rollAllDisabled={setupPhase}
+          />
+        )
+      })}
 
       {/* Reset button — only for first player */}
       {isFirstPlayer && (
