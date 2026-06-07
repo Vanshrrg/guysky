@@ -41,7 +41,7 @@ import './App.css'
 // Bump on every deploy so you can confirm at a glance which build a tab is
 // running (shown in the top bar). If two tabs show different markers, one is
 // serving a stale cached bundle and needs a hard refresh.
-const BUILD = 'b9'
+const BUILD = 'b10'
 const BOARD_W = 706
 const BOARD_H = Math.round(BOARD_W * 1078 / 768) // ≈ 991
 // A die slot measures 72px in the native 768-wide artwork (see
@@ -628,6 +628,23 @@ export default function App() {
         else if (val.orange === cid) setMyRole('orange')
       } else if (key === 'rerollGranted') {
         if (val && val !== cid) setRerollGranted(true)
+      } else if (key === 'rolled' || key === 'rerollUsed') {
+        // Which dice have been rolled / reroll-spent this altitude. Persisted so
+        // a refresh doesn't revert dice to the "unrolled" (red) state. On the
+        // initial snapshot (pre-hydration) or before a role is known, take the
+        // full set; during live play merge by die-colour ownership like values.
+        if (!val || val._by === cid) return
+        skipSync.current[key] = true
+        const incoming = val.ids || []
+        const setter = key === 'rolled' ? setRolledThisAlt : setRerollUsed
+        const full = !hydratedRef.current || !myRoleRef.current
+        const myColor = myRoleRef.current
+        setter(prev => {
+          if (full) return new Set(incoming)
+          const m = new Set([...prev].filter(id => id.startsWith(myColor)))
+          for (const id of incoming) if (!id.startsWith(myColor)) m.add(id)
+          return m
+        })
       } else if (key === 'approachPos') {
         if (!val || val._by === cid) return
         skipSync.current.approachPos = true
@@ -673,7 +690,7 @@ export default function App() {
       // 'presence' is intentionally ignored — owned by useFirebaseSync polling.
     }
 
-    const GAME_KEYS = ['gameState', 'values', 'trayDice', 'placed', 'roles', 'rerollGranted', 'approachPos', 'axisAngle', 'resetAt']
+    const GAME_KEYS = ['gameState', 'values', 'trayDice', 'placed', 'roles', 'rerollGranted', 'rolled', 'rerollUsed', 'approachPos', 'axisAngle', 'resetAt']
 
     // Firebase SSE payloads are { path, data }. path '/' is a full snapshot of
     // /game; '/gameState' is a single top-level key; '/presence/<id>' is nested.
@@ -755,6 +772,19 @@ export default function App() {
     fbWrite('/placed', { ...placed, _by: clientIdRef.current })
   }, [placed]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Push rolled / rerollUsed → Firebase (die-roll state, so a refresh restores
+  // which dice were already rolled instead of reverting them to "unrolled").
+  useEffect(() => {
+    if (!hydratedRef.current) return
+    if (skipSync.current.rolled) { skipSync.current.rolled = false; return }
+    fbWrite('/rolled', { ids: [...rolledThisAlt], _by: clientIdRef.current })
+  }, [rolledThisAlt]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!hydratedRef.current) return
+    if (skipSync.current.rerollUsed) { skipSync.current.rerollUsed = false; return }
+    fbWrite('/rerollUsed', { ids: [...rerollUsed], _by: clientIdRef.current })
+  }, [rerollUsed]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // Push approachPos → Firebase (vertical position of the approach strip, so
   // both clients render it identically — panel data already rides in gameState)
   useEffect(() => {
@@ -781,6 +811,7 @@ export default function App() {
     setRolledThisAlt(new Set())
     setRerollUsed(new Set())
     setRerollGranted(false)
+    fbWrite('/rerollGranted', null) // clear shared grant so it doesn't leak into next turn / a refresh
     setDieTriggers(Object.fromEntries(ALL_DICE.map(d => [d.id, 0])))
     // End-of-turn board clear is driven by turnCount (not the placed/trayDice
     // sync) because the ownership-merge intentionally ignores a peer's empty
@@ -906,6 +937,9 @@ export default function App() {
     fbWrite('/placed', { _by: cid }, 'PUT')
     fbWrite('/approachPos', { ...APPROACH_START, _by: cid }, 'PUT')
     fbWrite('/axisAngle', { v: 0, _by: cid }, 'PUT')
+    fbWrite('/rolled', { ids: [], _by: cid }, 'PUT')
+    fbWrite('/rerollUsed', { ids: [], _by: cid }, 'PUT')
+    fbWrite('/rerollGranted', null, 'PUT')
     fbWrite('/resetAt', ts, 'PUT')
   }
 
@@ -1180,7 +1214,6 @@ export default function App() {
                         <div style={{ position: 'relative' }}>
                           <img src={destinationPanelImg} draggable={false} style={{ width: DEST_W, height: DEST_H, display: 'block', userSelect: 'none' }} />
 
-                          <div style={{ position: 'absolute', bottom: 4, right: 6, color: '#fff', fontSize: 18, fontWeight: 'bold', fontFamily: 'monospace', pointerEvents: 'none', textShadow: '0 1px 3px #000' }}>{maxDist}</div>
                           {/* destination label — centered */}
                           <input
                             readOnly={!canEditApproach}
@@ -1319,7 +1352,7 @@ export default function App() {
             {COFFEE_POS.map((pos, i) => (
               <div
                 key={`coffee-${i}`}
-                onClick={() => { if (!setupPhase && gameState.coffeeTokens[i]) setCoffeeChoice({ tokenIndex: i }) }}
+                onClick={() => { if (!setupPhase && isMyTurn && gameState.coffeeTokens[i]) setCoffeeChoice({ tokenIndex: i }) }}
                 style={{
                   position: 'absolute', left: pos.x, top: pos.y,
                   width: COFFEE_W, height: COFFEE_H,
@@ -1337,7 +1370,7 @@ export default function App() {
               src={rerollImg}
               draggable={false}
               onClick={() => {
-                if (!setupPhase && gameState.rerollToken) {
+                if (!setupPhase && isMyTurn && gameState.rerollToken) {
                   dispatch({ type: 'SET_REROLL_TOKEN', value: false })
                   setRerollGranted(true)
                   // Notify remote client to also grant reroll
@@ -1351,7 +1384,7 @@ export default function App() {
                 width: Math.round(px(87)),
                 height: Math.round(px(102)),
                 opacity: gameState.rerollToken ? 1 : 0,
-                cursor: 'pointer',
+                cursor: (!setupPhase && isMyTurn && gameState.rerollToken) ? 'pointer' : 'default',
                 userSelect: 'none',
               }}
             />
