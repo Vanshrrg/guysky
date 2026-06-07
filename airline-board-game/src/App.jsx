@@ -41,7 +41,7 @@ import './App.css'
 // Bump on every deploy so you can confirm at a glance which build a tab is
 // running (shown in the top bar). If two tabs show different markers, one is
 // serving a stale cached bundle and needs a hard refresh.
-const BUILD = 'b11'
+const BUILD = 'b12'
 const BOARD_W = 706
 const BOARD_H = Math.round(BOARD_W * 1078 / 768) // ≈ 991
 // A die slot measures 72px in the native 768-wide artwork (see
@@ -342,6 +342,16 @@ export default function App() {
   const [pan, setPan] = useState({ x: 0, y: 0 })
   const zoomRef = useRef(1); zoomRef.current = zoom
   const panRef = useRef({ x: 0, y: 0 }); panRef.current = pan
+  // Available screen height, for sizing the board viewport window (see below).
+  const [availH, setAvailH] = useState(typeof window !== 'undefined' ? window.innerHeight : 800)
+  useEffect(() => {
+    const u = () => setAvailH(window.innerHeight)
+    window.addEventListener('resize', u)
+    return () => window.removeEventListener('resize', u)
+  }, [])
+  // Board viewport metrics (width, window height, full content height), set during
+  // render and read by the pan clamp without TDZ issues.
+  const viewMetricsRef = useRef({ vw: 0, vh: 0, fullH: 0 })
   // Tap-to-move: id of the die currently selected by tap (null = none).
   const [selectedDie, setSelectedDie] = useState(null)
 
@@ -597,9 +607,14 @@ export default function App() {
   const pdist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y)
   const clampZoom = (z) => Math.max(MIN_ZOOM, Math.min(1, z))
   const clampPan = (p, z) => {
-    const vw = BOARD_W * scale, vh = BOARD_H * scale
-    const cw = vw * z, ch = vh * z
-    const range = (content, view) => content <= view ? [0, view - content] : [view - content, 0]
+    const { vw, vh, fullH } = viewMetricsRef.current
+    const cw = vw * z, ch = fullH * z
+    // When the content is smaller than the window, pin it centred; otherwise let
+    // it pan within the window edges.
+    const range = (content, view) => {
+      if (content <= view) { const c = (view - content) / 2; return [c, c] }
+      return [view - content, 0]
+    }
     const [xlo, xhi] = range(cw, vw)
     const [ylo, yhi] = range(ch, vh)
     return { x: Math.max(xlo, Math.min(xhi, p.x)), y: Math.max(ylo, Math.min(yhi, p.y)) }
@@ -646,8 +661,8 @@ export default function App() {
       gestureRef.current = { mode: 'pan', startPan: { ...panRef.current }, sx: pt.x, sy: pt.y }
     }
   }
-  // Re-clamp the pan whenever the fit scale changes (rotation / resize).
-  useEffect(() => { setPan(p => clampPan(p, zoomRef.current)) }, [scale]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Re-clamp the pan whenever the fit scale or window height changes.
+  useEffect(() => { setPan(p => clampPan(p, zoomRef.current)) }, [scale, availH]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const [dieTriggers, setDieTriggers] = useState(() => Object.fromEntries(ALL_DICE.map(d => [d.id, 0])))
   const [rolledThisAlt, setRolledThisAlt] = useState(new Set())
@@ -1042,6 +1057,15 @@ export default function App() {
   const ALT_STRIP_Y_BY_VALUE = { 6: 7, 5: 117, 4: 227, 3: 337, 2: 447, 1: 559, 0: 632 }
   const altStrip = { x: ALT_STRIP_X, y: ALT_STRIP_Y_BY_VALUE[gameState.altitude] ?? 7, w: ALT_STRIP_W, h: ALT_STRIP_H }
 
+  // Board viewport window. The full board (altitude strip + canvas) at fit scale
+  // is taller than a phone/tablet screen, which pushed the dice tray off-screen
+  // and blocked scrolling to it. Cap the window to leave room for the tray below;
+  // at default zoom the board overflows this window and one-finger pan navigates
+  // it, while pinch-out shrinks it to show the whole board at once.
+  const fullContentH = (altStrip.h + BOARD_H) * scale
+  const viewportH = Math.min(fullContentH, Math.max(320, availH - 220))
+  viewMetricsRef.current = { vw: BOARD_W * scale, vh: viewportH, fullH: fullContentH }
+
 
   const handleRollAll = (filterColor) => {
     setTurnResult(null)
@@ -1284,7 +1308,7 @@ export default function App() {
          onPointerMove={onBoardPointerMove}
          onPointerUp={onBoardPointerUp}
          onPointerCancel={onBoardPointerUp}
-         style={{ position: 'relative', overflow: 'hidden', width: BOARD_W * scale, height: (altStrip.h + BOARD_H) * scale }}
+         style={{ position: 'relative', overflow: 'hidden', width: BOARD_W * scale, height: viewportH }}
        >
         <div style={{
           transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
