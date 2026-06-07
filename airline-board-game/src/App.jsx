@@ -41,7 +41,7 @@ import './App.css'
 // Bump on every deploy so you can confirm at a glance which build a tab is
 // running (shown in the top bar). If two tabs show different markers, one is
 // serving a stale cached bundle and needs a hard refresh.
-const BUILD = 'b10'
+const BUILD = 'b11'
 const BOARD_W = 706
 const BOARD_H = Math.round(BOARD_W * 1078 / 768) // ≈ 991
 // A die slot measures 72px in the native 768-wide artwork (see
@@ -160,47 +160,57 @@ const TRAYS = [
   { name: 'gear-0', group: 'gear', cascade: false, x: 24, y: 365, snapR: 60,
     acceptColor: 'blue',   acceptValues: [1, 2],
     prereq: ()       => true,
-    onSnap: (dispatch, gs) => { if (!gs.landingGear[0]) dispatch({ type: 'TOGGLE_LANDING_GEAR', index: 0 }) } },
+    onSnap: (dispatch, gs) => { if (!gs.landingGear[0]) dispatch({ type: 'TOGGLE_LANDING_GEAR', index: 0 }) },
+    onUnsnap: (dispatch, gs) => { if (gs.landingGear[0]) dispatch({ type: 'TOGGLE_LANDING_GEAR', index: 0 }) } },
   { name: 'gear-1', group: 'gear', cascade: false, x: 27, y: 522, snapR: 60,
     acceptColor: 'blue',   acceptValues: [3, 4],
     prereq: ()       => true,
-    onSnap: (dispatch, gs) => { if (!gs.landingGear[1]) dispatch({ type: 'TOGGLE_LANDING_GEAR', index: 1 }) } },
+    onSnap: (dispatch, gs) => { if (!gs.landingGear[1]) dispatch({ type: 'TOGGLE_LANDING_GEAR', index: 1 }) },
+    onUnsnap: (dispatch, gs) => { if (gs.landingGear[1]) dispatch({ type: 'TOGGLE_LANDING_GEAR', index: 1 }) } },
   { name: 'gear-2', group: 'gear', cascade: false, x: 26, y: 676, snapR: 60,
     acceptColor: 'blue',   acceptValues: [5, 6],
     prereq: ()       => true,
-    onSnap: (dispatch, gs) => { if (!gs.landingGear[2]) dispatch({ type: 'TOGGLE_LANDING_GEAR', index: 2 }) } },
+    onSnap: (dispatch, gs) => { if (!gs.landingGear[2]) dispatch({ type: 'TOGGLE_LANDING_GEAR', index: 2 }) },
+    onUnsnap: (dispatch, gs) => { if (gs.landingGear[2]) dispatch({ type: 'TOGGLE_LANDING_GEAR', index: 2 }) } },
 
   // ── Brake group (3 slots above brake switches, blue dice) ──────────────────
   { name: 'brake-0', group: 'brake', x: 216, y: 715, snapR: 60,
     acceptColor: 'blue',   acceptValues: [2],
     prereq: ()       => true,
-    onSnap: (dispatch, gs) => { if (!gs.brakes[0]) dispatch({ type: 'TOGGLE_BRAKE', index: 0 }) } },
+    onSnap: (dispatch, gs) => { if (!gs.brakes[0]) dispatch({ type: 'TOGGLE_BRAKE', index: 0 }) },
+    onUnsnap: (dispatch, gs) => { if (gs.brakes[0]) dispatch({ type: 'TOGGLE_BRAKE', index: 0 }) } },
   { name: 'brake-1', group: 'brake', x: 323, y: 715, snapR: 60,
     acceptColor: 'blue',   acceptValues: [4],
     prereq: (gs)     => gs.brakes[0],
-    onSnap: (dispatch, gs) => { if (!gs.brakes[1]) dispatch({ type: 'TOGGLE_BRAKE', index: 1 }) } },
+    onSnap: (dispatch, gs) => { if (!gs.brakes[1]) dispatch({ type: 'TOGGLE_BRAKE', index: 1 }) },
+    onUnsnap: (dispatch, gs) => { if (gs.brakes[1]) dispatch({ type: 'TOGGLE_BRAKE', index: 1 }) } },
   { name: 'brake-2', group: 'brake', x: 430, y: 715, snapR: 60,
     acceptColor: 'blue',   acceptValues: [6],
     prereq: (gs)     => gs.brakes[0] && gs.brakes[1],
-    onSnap: (dispatch, gs) => { if (!gs.brakes[2]) dispatch({ type: 'TOGGLE_BRAKE', index: 2 }) } },
+    onSnap: (dispatch, gs) => { if (!gs.brakes[2]) dispatch({ type: 'TOGGLE_BRAKE', index: 2 }) },
+    onUnsnap: (dispatch, gs) => { if (gs.brakes[2]) dispatch({ type: 'TOGGLE_BRAKE', index: 2 }) } },
 
   // ── Flap group (4 slots on flap switches, orange dice) ────────────────────
   { name: 'flap-0', group: 'flap', x: 616, y: 363, snapR: 60,
     acceptColor: 'orange', acceptValues: [1, 2],
     prereq: ()       => true,
-    onSnap: (dispatch, gs) => { if (!gs.flaps[0]) dispatch({ type: 'TOGGLE_FLAP', index: 0 }) } },
+    onSnap: (dispatch, gs) => { if (!gs.flaps[0]) dispatch({ type: 'TOGGLE_FLAP', index: 0 }) },
+    onUnsnap: (dispatch, gs) => { if (gs.flaps[0]) dispatch({ type: 'TOGGLE_FLAP', index: 0 }) } },
   { name: 'flap-1', group: 'flap', x: 617, y: 521, snapR: 60,
     acceptColor: 'orange', acceptValues: [2, 3],
     prereq: (gs)     => gs.flaps[0],
-    onSnap: (dispatch, gs) => { if (!gs.flaps[1]) dispatch({ type: 'TOGGLE_FLAP', index: 1 }) } },
+    onSnap: (dispatch, gs) => { if (!gs.flaps[1]) dispatch({ type: 'TOGGLE_FLAP', index: 1 }) },
+    onUnsnap: (dispatch, gs) => { if (gs.flaps[1]) dispatch({ type: 'TOGGLE_FLAP', index: 1 }) } },
   { name: 'flap-2', group: 'flap', x: 617, y: 678, snapR: 60,
     acceptColor: 'orange', acceptValues: [4, 5],
     prereq: (gs)     => gs.flaps[1],
-    onSnap: (dispatch, gs) => { if (!gs.flaps[2]) dispatch({ type: 'TOGGLE_FLAP', index: 2 }) } },
+    onSnap: (dispatch, gs) => { if (!gs.flaps[2]) dispatch({ type: 'TOGGLE_FLAP', index: 2 }) },
+    onUnsnap: (dispatch, gs) => { if (gs.flaps[2]) dispatch({ type: 'TOGGLE_FLAP', index: 2 }) } },
   { name: 'flap-3', group: 'flap', x: 617, y: 835, snapR: 60,
     acceptColor: 'orange', acceptValues: [5, 6],
     prereq: (gs)     => gs.flaps[2],
-    onSnap: (dispatch, gs) => { if (!gs.flaps[3]) dispatch({ type: 'TOGGLE_FLAP', index: 3 }) } },
+    onSnap: (dispatch, gs) => { if (!gs.flaps[3]) dispatch({ type: 'TOGGLE_FLAP', index: 3 }) },
+    onUnsnap: (dispatch, gs) => { if (gs.flaps[3]) dispatch({ type: 'TOGGLE_FLAP', index: 3 }) } },
 
   // ── Axis trays — blue (left bank) and orange (right bank) ────────────────────
   { name: 'axis-blue', group: 'axis-blue', cascade: false, x: 139, y: 156, snapR: 50,
@@ -229,6 +239,10 @@ const TRAYS = [
     onSnap: (dispatch, gs, val) => {
       dispatch({ type: 'SET_RADIO2', value: val })
       dispatch({ type: 'REMOVE_APPROACH_PLANE', distanceValue: val })
+    },
+    onUnsnap: (dispatch, gs, val) => {
+      dispatch({ type: 'SET_RADIO2', value: null })
+      dispatch({ type: 'ADD_APPROACH_PLANE', distanceValue: val })
     } },
   { name: 'radio3', group: 'radio3', cascade: false, x: 616, y: 141, snapR: 50,
     acceptColor: 'orange', acceptValues: [1, 2, 3, 4, 5, 6],
@@ -236,6 +250,10 @@ const TRAYS = [
     onSnap: (dispatch, gs, val) => {
       dispatch({ type: 'SET_RADIO3', value: val })
       dispatch({ type: 'REMOVE_APPROACH_PLANE', distanceValue: val })
+    },
+    onUnsnap: (dispatch, gs, val) => {
+      dispatch({ type: 'SET_RADIO3', value: null })
+      dispatch({ type: 'ADD_APPROACH_PLANE', distanceValue: val })
     } },
 
   { name: 'radio1', group: 'radio1', cascade: false, x: 22, y: 141, snapR: 50,
@@ -244,6 +262,10 @@ const TRAYS = [
     onSnap: (dispatch, gs, val) => {
       dispatch({ type: 'SET_RADIO1', value: val })
       dispatch({ type: 'REMOVE_APPROACH_PLANE', distanceValue: val })
+    },
+    onUnsnap: (dispatch, gs, val) => {
+      dispatch({ type: 'SET_RADIO1', value: null })
+      dispatch({ type: 'ADD_APPROACH_PLANE', distanceValue: val })
     } },
 
   // ── Concentration track (3 slots, any die) — toggles coffee tokens in order ─
@@ -254,6 +276,10 @@ const TRAYS = [
     onSnap: (dispatch, gs) => {
       const next = gs.coffeeTokens.indexOf(false)
       if (next !== -1) dispatch({ type: 'SET_COFFEE_TOKEN', index: next, value: true })
+    },
+    onUnsnap: (dispatch, gs) => {
+      const last = gs.coffeeTokens.lastIndexOf(true)
+      if (last !== -1) dispatch({ type: 'SET_COFFEE_TOKEN', index: last, value: false })
     } },
   { name: 'conc-1', group: 'conc', cascade: false, x: 323, y: 891, snapR: 50,
     acceptColor: null, acceptValues: [1, 2, 3, 4, 5, 6],
@@ -261,6 +287,10 @@ const TRAYS = [
     onSnap: (dispatch, gs) => {
       const next = gs.coffeeTokens.indexOf(false)
       if (next !== -1) dispatch({ type: 'SET_COFFEE_TOKEN', index: next, value: true })
+    },
+    onUnsnap: (dispatch, gs) => {
+      const last = gs.coffeeTokens.lastIndexOf(true)
+      if (last !== -1) dispatch({ type: 'SET_COFFEE_TOKEN', index: last, value: false })
     } },
   { name: 'conc-2', group: 'conc', cascade: false, x: 429, y: 891, snapR: 50,
     acceptColor: null, acceptValues: [1, 2, 3, 4, 5, 6],
@@ -268,6 +298,10 @@ const TRAYS = [
     onSnap: (dispatch, gs) => {
       const next = gs.coffeeTokens.indexOf(false)
       if (next !== -1) dispatch({ type: 'SET_COFFEE_TOKEN', index: next, value: true })
+    },
+    onUnsnap: (dispatch, gs) => {
+      const last = gs.coffeeTokens.lastIndexOf(true)
+      if (last !== -1) dispatch({ type: 'SET_COFFEE_TOKEN', index: last, value: false })
     } },
 ]
 
@@ -296,9 +330,20 @@ const AXIS_MAX = 90      // max bank each way (degrees)
 const AXIS_SNAP_ANGLES = [-72.61, -51.30, -26.28, 0, 26.28, 51.30, 72.61]
 
 export default function App() {
-  const scale = useBoardScale()
+  const scale = useBoardScale()   // auto-fit size = the zoom-IN cap (zoom factor 1)
   const canvasRef = useRef(null)
   const [gameState, dispatch] = useReducer(gameReducer, initialState)
+
+  // Board-only pinch-zoom + pan (touch). `zoom` is a factor on top of the
+  // auto-fit `scale`; capped at 1 (can't enlarge past the default) and floored
+  // at MIN_ZOOM. `pan` translates the zoomed board within its viewport.
+  const MIN_ZOOM = 0.4
+  const [zoom, setZoom] = useState(1)
+  const [pan, setPan] = useState({ x: 0, y: 0 })
+  const zoomRef = useRef(1); zoomRef.current = zoom
+  const panRef = useRef({ x: 0, y: 0 }); panRef.current = pan
+  // Tap-to-move: id of the die currently selected by tap (null = none).
+  const [selectedDie, setSelectedDie] = useState(null)
 
   const [trayDice, setTrayDice] = useState(
     () => Object.fromEntries(TRAYS.map(t => [t.name, null]))
@@ -406,7 +451,7 @@ export default function App() {
       px: e.clientX,               // current pointer
       py: e.clientY,
       size: rect.width,            // on-screen die size at grab time
-      scale,                       // board scale captured now
+      scale: scale * zoomRef.current, // effective on-screen board scale (fit × zoom)
       moved: false,
     }
     dragRef.current = info
@@ -415,6 +460,7 @@ export default function App() {
     const move = (ev) => {
       const d = dragRef.current
       if (!d) return
+      ev.preventDefault?.()        // stop iOS from turning the drag into a scroll
       d.px = ev.clientX
       d.py = ev.clientY
       if (!d.moved) {
@@ -430,15 +476,61 @@ export default function App() {
       window.removeEventListener('pointercancel', up)
       finalizeDrag(dragRef.current)
     }
-    window.addEventListener('pointermove', move)
+    window.addEventListener('pointermove', move, { passive: false })
     window.addEventListener('pointerup', up)
     window.addEventListener('pointercancel', up)
+  }
+
+  // Whether `dieId` may snap into `tray` given the current board state. Shared by
+  // drag-finalize and tap-to-place so both honour the exact same rules.
+  const validateSnap = (tray, dieId, gs, td, vals) => {
+    const die = ALL_DICE.find(d => d.id === dieId)
+    return !!die &&
+      (tray.acceptColor === null || die.color === tray.acceptColor) &&
+      tray.acceptValues.includes(vals[dieId]) &&
+      !td[tray.name] &&
+      tray.prereq(gs)
+  }
+
+  // Commit a die into a tray (used by both drag-drop and tap-to-place): mark it
+  // placed, occupy the tray, run the side-effect, and hand the turn to the other
+  // pilot if they still have dice (SkyTeam one-die-at-a-time alternation).
+  const placeDie = (dieId, tray) => {
+    const { brakes, flaps, landingGear, coffeeTokens, values: vals } = latestRef.current
+    const gs = { brakes, flaps, landingGear, coffeeTokens }
+    setPlaced(p => ({ ...p, [dieId]: { x: tray.x, y: tray.y } }))
+    setTrayDice(prev => ({ ...prev, [tray.name]: dieId }))
+    tray.onSnap(dispatch, gs, vals[dieId])
+    const myColor = myRoleRef.current
+    if (myColor && activePlayerRef.current === myColor) {
+      const other = myColor === 'blue' ? 'orange' : 'blue'
+      const placedNow = { ...latestRef.current.placed, [dieId]: true }
+      const otherRemaining = ALL_DICE.filter(d => d.color === other && !placedNow[d.id]).length
+      if (otherRemaining > 0) dispatch({ type: 'SET_ACTIVE_PLAYER', value: other })
+    }
+  }
+
+  // Pick a placed die back up: free its tray, remove the placement, and reverse
+  // the tray's side-effect via its onUnsnap handler (tap-to-return).
+  const returnDie = (dieId) => {
+    const { brakes, flaps, landingGear, coffeeTokens, trayDice: td, values: vals } = latestRef.current
+    const gs = { brakes, flaps, landingGear, coffeeTokens }
+    const tray = TRAYS.find(t => td[t.name] === dieId)
+    if (!tray) return
+    if (tray.onUnsnap) tray.onUnsnap(dispatch, gs, vals[dieId])
+    setPlaced(p => { const next = { ...p }; delete next[dieId]; return next })
+    setTrayDice(prev => ({ ...prev, [tray.name]: null }))
   }
 
   const finalizeDrag = (info) => {
     dragRef.current = null
     setDrag(null)
-    if (!info || !info.moved) return // a tap, not a drag — leave die as-is
+    if (!info) return
+    if (!info.moved) {
+      // A tap (not a drag) on an eligible die → toggle tap-to-move selection.
+      setSelectedDie(s => (s === info.id ? null : info.id))
+      return
+    }
 
     const rect = canvasRef.current.getBoundingClientRect()
     const overBoard =
@@ -454,10 +546,8 @@ export default function App() {
       x = Math.max(0, Math.min(BOARD_W - SQUARE, x))
       y = Math.max(0, Math.min(BOARD_H - SQUARE, y))
 
-      // Unified snap-tray check: one loop covers all tray groups
       const { brakes, flaps, landingGear, coffeeTokens, trayDice: td, values: vals } = latestRef.current
       const gs = { brakes, flaps, landingGear, coffeeTokens }
-      const die = ALL_DICE.find(d => d.id === info.id)
       const dieCx = x + SQUARE / 2
       const dieCy = y + SQUARE / 2
       let snapped = false
@@ -465,27 +555,8 @@ export default function App() {
         const tCx = tray.x + SQUARE / 2
         const tCy = tray.y + SQUARE / 2
         if (Math.hypot(dieCx - tCx, dieCy - tCy) < tray.snapR) {
-          const valid =
-            (tray.acceptColor === null || die.color === tray.acceptColor) &&
-            tray.acceptValues.includes(vals[info.id]) &&
-            !td[tray.name] &&
-            tray.prereq(gs)
-          if (valid) {
-            setPlaced(p => ({ ...p, [info.id]: { x: tray.x, y: tray.y } }))
-            setTrayDice(prev => ({ ...prev, [tray.name]: info.id }))
-            tray.onSnap(dispatch, gs, vals[info.id])
-            // SkyTeam alternation: after I place ONE die, control passes to the
-            // other pilot — unless they've already placed all of theirs, in which
-            // case I keep going. Driven from the local placement (not a synced
-            // `placed`-count watcher, which can't tell my placement from a peer's
-            // die arriving over the wire).
-            const myColor = myRoleRef.current
-            if (myColor && activePlayerRef.current === myColor) {
-              const other = myColor === 'blue' ? 'orange' : 'blue'
-              const placedNow = { ...latestRef.current.placed, [info.id]: true }
-              const otherRemaining = ALL_DICE.filter(d => d.color === other && !placedNow[d.id]).length
-              if (otherRemaining > 0) dispatch({ type: 'SET_ACTIVE_PLAYER', value: other })
-            }
+          if (validateSnap(tray, info.id, gs, td, vals)) {
+            placeDie(info.id, tray)
           } else {
             setPlaced(p => { const next = { ...p }; delete next[info.id]; return next })
           }
@@ -504,6 +575,79 @@ export default function App() {
       })
     }
   }
+
+  // Tap a placed die: first tap selects it, second tap returns it to its tray.
+  const handlePlacedDieTap = (dieId) => {
+    if (setupPhase || !isMyTurn) return
+    if (myRole !== null && !dieId.startsWith(myRole)) return
+    if (selectedDie === dieId) { returnDie(dieId); setSelectedDie(null) }
+    else setSelectedDie(dieId)
+  }
+
+  // Tap a highlighted tray to place the currently-selected (tray) die into it.
+  const tapPlaceSelected = (tray) => {
+    if (!selectedDie) return
+    placeDie(selectedDie, tray)
+    setSelectedDie(null)
+  }
+
+  // ── Board pinch-zoom + pan gesture layer ────────────────────────────────────
+  const pointersRef = useRef(new Map())
+  const gestureRef = useRef(null)
+  const pdist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y)
+  const clampZoom = (z) => Math.max(MIN_ZOOM, Math.min(1, z))
+  const clampPan = (p, z) => {
+    const vw = BOARD_W * scale, vh = BOARD_H * scale
+    const cw = vw * z, ch = vh * z
+    const range = (content, view) => content <= view ? [0, view - content] : [view - content, 0]
+    const [xlo, xhi] = range(cw, vw)
+    const [ylo, yhi] = range(ch, vh)
+    return { x: Math.max(xlo, Math.min(xhi, p.x)), y: Math.max(ylo, Math.min(yhi, p.y)) }
+  }
+  const onBoardPointerDown = (e) => {
+    if (e.target.closest('[data-die]')) return // a die: let it handle its own drag
+    // Only the bare board background drives pan/pinch — taps on switches, the
+    // axis handle, tokens, approach controls, etc. must reach those controls.
+    if (!e.target.closest('[data-pan]')) return
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
+    try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* ignore */ }
+    const pts = [...pointersRef.current.values()]
+    if (pointersRef.current.size >= 2) {
+      gestureRef.current = {
+        mode: 'pinch', startDist: pdist(pts[0], pts[1]) || 1, startZoom: zoomRef.current,
+        startPan: { ...panRef.current }, vpRect: e.currentTarget.getBoundingClientRect(),
+        startMid: { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 },
+      }
+    } else {
+      gestureRef.current = { mode: 'pan', startPan: { ...panRef.current }, sx: e.clientX, sy: e.clientY }
+    }
+  }
+  const onBoardPointerMove = (e) => {
+    if (!pointersRef.current.has(e.pointerId)) return
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
+    const g = gestureRef.current
+    if (!g) return
+    if (g.mode === 'pinch' && pointersRef.current.size >= 2) {
+      const pts = [...pointersRef.current.values()]
+      const nz = clampZoom(g.startZoom * pdist(pts[0], pts[1]) / g.startDist)
+      const m = { x: g.startMid.x - g.vpRect.left, y: g.startMid.y - g.vpRect.top }
+      const k = nz / g.startZoom
+      const np = { x: m.x - k * (m.x - g.startPan.x), y: m.y - k * (m.y - g.startPan.y) }
+      setZoom(nz); setPan(clampPan(np, nz))
+    } else if (g.mode === 'pan') {
+      setPan(clampPan({ x: g.startPan.x + (e.clientX - g.sx), y: g.startPan.y + (e.clientY - g.sy) }, zoomRef.current))
+    }
+  }
+  const onBoardPointerUp = (e) => {
+    pointersRef.current.delete(e.pointerId)
+    if (pointersRef.current.size === 0) { gestureRef.current = null; return }
+    if (pointersRef.current.size === 1) {
+      const [pt] = [...pointersRef.current.values()]
+      gestureRef.current = { mode: 'pan', startPan: { ...panRef.current }, sx: pt.x, sy: pt.y }
+    }
+  }
+  // Re-clamp the pan whenever the fit scale changes (rotation / resize).
+  useEffect(() => { setPan(p => clampPan(p, zoomRef.current)) }, [scale]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const [dieTriggers, setDieTriggers] = useState(() => Object.fromEntries(ALL_DICE.map(d => [d.id, 0])))
   const [rolledThisAlt, setRolledThisAlt] = useState(new Set())
@@ -685,6 +829,9 @@ export default function App() {
         setRerollUsed(new Set())
         setRerollGranted(false)
         setTurnResult(null)
+        setSelectedDie(null)
+        setZoom(1)
+        setPan({ x: 0, y: 0 })
         setApproachPos(APPROACH_START)
       }
       // 'presence' is intentionally ignored — owned by useFirebaseSync polling.
@@ -811,6 +958,7 @@ export default function App() {
     setRolledThisAlt(new Set())
     setRerollUsed(new Set())
     setRerollGranted(false)
+    setSelectedDie(null)
     fbWrite('/rerollGranted', null) // clear shared grant so it doesn't leak into next turn / a refresh
     setDieTriggers(Object.fromEntries(ALL_DICE.map(d => [d.id, 0])))
     // End-of-turn board clear is driven by turnCount (not the placed/trayDice
@@ -922,6 +1070,9 @@ export default function App() {
     setRerollUsed(new Set())
     setRerollGranted(false)
     setTurnResult(null)
+    setSelectedDie(null)
+    setZoom(1)
+    setPan({ x: 0, y: 0 })
 
     setApproachPos(APPROACH_START)
 
@@ -1124,6 +1275,25 @@ export default function App() {
         flexDirection: 'column',
         alignItems: 'center',
       }}>
+       {/* Board viewport — clips the zoom/pan transform. Two-finger pinch zooms
+           (out from the default), one finger pans; dice (data-die) are skipped so
+           they keep their own drag. Trays/bar live outside and stay fixed. */}
+       <div
+         className="board-viewport"
+         onPointerDown={onBoardPointerDown}
+         onPointerMove={onBoardPointerMove}
+         onPointerUp={onBoardPointerUp}
+         onPointerCancel={onBoardPointerUp}
+         style={{ position: 'relative', overflow: 'hidden', width: BOARD_W * scale, height: (altStrip.h + BOARD_H) * scale }}
+       >
+        <div style={{
+          transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+          transformOrigin: '0 0',
+          width: BOARD_W * scale,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+        }}>
         {/* Altitude strip — draggable + resizable */}
         <div style={{ width: BOARD_W * scale, height: altStrip.h * scale, flexShrink: 0 }}>
           <div style={{
@@ -1136,6 +1306,7 @@ export default function App() {
             <img
               src={altitudeStripImg}
               draggable={false}
+              data-pan
               style={{
                 position: 'absolute',
                 left: Math.round(altStrip.x),
@@ -1168,6 +1339,7 @@ export default function App() {
               src={background}
               width={BOARD_W}
               draggable={false}
+              data-pan
               style={{ display: 'block', userSelect: 'none' }}
             />
 
@@ -1447,24 +1619,46 @@ export default function App() {
             {gameState.altitude === 1 && <img src={altitude1000Img} draggable={false} style={{ position:'absolute', left:388, top:26, width:197, height:103, userSelect:'none', zIndex:20 }} />}
             {gameState.altitude === 0 && <img src={altitude0Img}    draggable={false} style={{ position:'absolute', left:390, top:28, width:196, height:103, userSelect:'none', zIndex:20 }} />}
 
+            {/* Tap-to-place targets — when a tray die is selected, highlight every
+                valid tray; tapping one drops the die there. */}
+            {selectedDie && !placed[selectedDie] && TRAYS
+              .filter(t => validateSnap(t, selectedDie, { brakes: gameState.brakes, flaps: gameState.flaps, landingGear: gameState.landingGear, coffeeTokens: gameState.coffeeTokens }, trayDice, values))
+              .map(t => (
+                <div
+                  key={`tap-${t.name}`}
+                  onClick={() => tapPlaceSelected(t)}
+                  style={{
+                    position: 'absolute', left: t.x, top: t.y, width: SQUARE, height: SQUARE,
+                    borderRadius: 8, outline: '3px solid #2ecc71', boxShadow: '0 0 12px 3px rgba(46,204,113,0.8)',
+                    background: 'rgba(46,204,113,0.15)', cursor: 'pointer', zIndex: 60,
+                  }}
+                />
+              ))}
+
             {/* Dice placed on the board. Press-drag to reposition; release off
-                the board to return to the tray. Sized to a board square. */}
+                the board to return to the tray. Tap once to select, again to
+                return to the tray. Sized to a board square. */}
             {ALL_DICE.filter(d => placed[d.id]).map(d => {
               const pos = placed[d.id]
               return (
                 <div
                   key={d.id}
+                  data-die
                   draggable={false}
                   onPointerDown={(e) => startDrag(e, d)}
+                  onClick={() => handlePlacedDieTap(d.id)}
                   style={{
                     position: 'absolute',
                     left: pos.x,
                     top: pos.y,
                     width: SQUARE,
                     height: SQUARE,
-                    cursor: 'grab',
+                    cursor: 'pointer',
                     touchAction: 'none',
                     userSelect: 'none',
+                    borderRadius: 8,
+                    outline: selectedDie === d.id ? '3px solid #2ecc71' : 'none',
+                    boxShadow: selectedDie === d.id ? '0 0 12px 3px rgba(46,204,113,0.8)' : 'none',
                     visibility: isHidden(d.id) ? 'hidden' : 'visible'
                   }}
                 >
@@ -1476,6 +1670,8 @@ export default function App() {
             })}
           </div>
         </div>
+        </div>
+       </div>
       </div>
 
       {/* Each player sees ONLY their own colour's tray (solo sees both). The
@@ -1495,7 +1691,8 @@ export default function App() {
           onCoffeeSelect={(myRole !== 'orange' && !setupPhase) ? (e, d) => setCoffeeChoice({ tokenIndex: coffeeChoice.tokenIndex, dieId: d.id, popupX: e.clientX, popupY: e.clientY }) : undefined}
           unrolledHighlight={!setupPhase ? (id) => !rolledThisAlt.has(id) : undefined}
           rerollHighlight={!setupPhase ? (id) => rerollGranted && !rerollUsed.has(id) && rolledThisAlt.has(id) : undefined}
-          canRoll={setupPhase ? () => false : canRollDie}
+          canRoll={setupPhase ? () => false : (id) => !rolledThisAlt.has(id)}
+          selectedId={selectedDie}
           onRollAll={() => handleRollAll('blue')}
           rollAllDisabled={setupPhase}
         />
@@ -1515,7 +1712,8 @@ export default function App() {
           onCoffeeSelect={(myRole !== 'blue' && !setupPhase) ? (e, d) => setCoffeeChoice({ tokenIndex: coffeeChoice.tokenIndex, dieId: d.id, popupX: e.clientX, popupY: e.clientY }) : undefined}
           unrolledHighlight={!setupPhase ? (id) => !rolledThisAlt.has(id) : undefined}
           rerollHighlight={!setupPhase ? (id) => rerollGranted && !rerollUsed.has(id) && rolledThisAlt.has(id) : undefined}
-          canRoll={setupPhase ? () => false : canRollDie}
+          canRoll={setupPhase ? () => false : (id) => !rolledThisAlt.has(id)}
+          selectedId={selectedDie}
           onRollAll={() => handleRollAll('orange')}
           rollAllDisabled={setupPhase}
         />

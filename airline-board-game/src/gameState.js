@@ -181,6 +181,15 @@ export function gameReducer(state, action) {
         idx === i && p.planes > 0 ? { ...p, planes: p.planes - 1 } : p)
       return { ...state, approachPanels: panels }
     }
+    case 'ADD_APPROACH_PLANE': {
+      // Inverse of REMOVE_APPROACH_PLANE — restores a plane when a radio die is
+      // picked back up (tap-to-return). Capped at the panel's original planeSlots.
+      const i = state.approachDistance - action.distanceValue
+      if (i < 0 || i >= state.approachPanels.length) return state
+      const panels = state.approachPanels.map((p, idx) =>
+        idx === i && p.planes < (p.planeSlots ?? Infinity) ? { ...p, planes: p.planes + 1 } : p)
+      return { ...state, approachPanels: panels }
+    }
     case 'LOAD_APPROACH_STRIP': {
       const { strip } = action
       const panels = strip.panels.map((p, i) =>
