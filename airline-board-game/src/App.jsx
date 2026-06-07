@@ -29,8 +29,8 @@ import altitude3000Img from './assets/components/altitude3000.png'
 import altitude1000Img from './assets/components/altitude1000.png'
 import altitude0Img from './assets/components/altitude0.png'
 import altitude2000Img from './assets/components/altitude2000.png'
-import { gameReducer, initialState, BLUE_ENGINE_VALUES, ORANGE_ENGINE_VALUES } from './gameState'
-import { useYjsSync } from './hooks/useYjsSync'
+import { gameReducer, initialState, BLUE_ENGINE_VALUES, ORANGE_ENGINE_VALUES, computeLandingResult } from './gameState'
+import { useFirebaseSync, fbSet } from './hooks/useFirebaseSync'
 import './App.css'
 
 // The board is a fixed-size canvas; everything (board art + future drop
@@ -38,6 +38,10 @@ import './App.css'
 // as one unit so pixel positions stay valid on phone / iPad / PC.
 // Height is derived from the real background image aspect (768x1078) so the
 // canvas exactly matches the artwork and nothing overflows it.
+// Bump on every deploy so you can confirm at a glance which build a tab is
+// running (shown in the top bar). If two tabs show different markers, one is
+// serving a stale cached bundle and needs a hard refresh.
+const BUILD = 'b12'
 const BOARD_W = 706
 const BOARD_H = Math.round(BOARD_W * 1078 / 768) // ≈ 991
 // A die slot measures 72px in the native 768-wide artwork (see
@@ -156,47 +160,57 @@ const TRAYS = [
   { name: 'gear-0', group: 'gear', cascade: false, x: 24, y: 365, snapR: 60,
     acceptColor: 'blue',   acceptValues: [1, 2],
     prereq: ()       => true,
-    onSnap: (dispatch, gs) => { if (!gs.landingGear[0]) dispatch({ type: 'TOGGLE_LANDING_GEAR', index: 0 }) } },
+    onSnap: (dispatch, gs) => { if (!gs.landingGear[0]) dispatch({ type: 'TOGGLE_LANDING_GEAR', index: 0 }) },
+    onUnsnap: (dispatch, gs) => { if (gs.landingGear[0]) dispatch({ type: 'TOGGLE_LANDING_GEAR', index: 0 }) } },
   { name: 'gear-1', group: 'gear', cascade: false, x: 27, y: 522, snapR: 60,
     acceptColor: 'blue',   acceptValues: [3, 4],
     prereq: ()       => true,
-    onSnap: (dispatch, gs) => { if (!gs.landingGear[1]) dispatch({ type: 'TOGGLE_LANDING_GEAR', index: 1 }) } },
+    onSnap: (dispatch, gs) => { if (!gs.landingGear[1]) dispatch({ type: 'TOGGLE_LANDING_GEAR', index: 1 }) },
+    onUnsnap: (dispatch, gs) => { if (gs.landingGear[1]) dispatch({ type: 'TOGGLE_LANDING_GEAR', index: 1 }) } },
   { name: 'gear-2', group: 'gear', cascade: false, x: 26, y: 676, snapR: 60,
     acceptColor: 'blue',   acceptValues: [5, 6],
     prereq: ()       => true,
-    onSnap: (dispatch, gs) => { if (!gs.landingGear[2]) dispatch({ type: 'TOGGLE_LANDING_GEAR', index: 2 }) } },
+    onSnap: (dispatch, gs) => { if (!gs.landingGear[2]) dispatch({ type: 'TOGGLE_LANDING_GEAR', index: 2 }) },
+    onUnsnap: (dispatch, gs) => { if (gs.landingGear[2]) dispatch({ type: 'TOGGLE_LANDING_GEAR', index: 2 }) } },
 
   // ── Brake group (3 slots above brake switches, blue dice) ──────────────────
   { name: 'brake-0', group: 'brake', x: 216, y: 715, snapR: 60,
     acceptColor: 'blue',   acceptValues: [2],
     prereq: ()       => true,
-    onSnap: (dispatch, gs) => { if (!gs.brakes[0]) dispatch({ type: 'TOGGLE_BRAKE', index: 0 }) } },
+    onSnap: (dispatch, gs) => { if (!gs.brakes[0]) dispatch({ type: 'TOGGLE_BRAKE', index: 0 }) },
+    onUnsnap: (dispatch, gs) => { if (gs.brakes[0]) dispatch({ type: 'TOGGLE_BRAKE', index: 0 }) } },
   { name: 'brake-1', group: 'brake', x: 323, y: 715, snapR: 60,
     acceptColor: 'blue',   acceptValues: [4],
     prereq: (gs)     => gs.brakes[0],
-    onSnap: (dispatch, gs) => { if (!gs.brakes[1]) dispatch({ type: 'TOGGLE_BRAKE', index: 1 }) } },
+    onSnap: (dispatch, gs) => { if (!gs.brakes[1]) dispatch({ type: 'TOGGLE_BRAKE', index: 1 }) },
+    onUnsnap: (dispatch, gs) => { if (gs.brakes[1]) dispatch({ type: 'TOGGLE_BRAKE', index: 1 }) } },
   { name: 'brake-2', group: 'brake', x: 430, y: 715, snapR: 60,
     acceptColor: 'blue',   acceptValues: [6],
     prereq: (gs)     => gs.brakes[0] && gs.brakes[1],
-    onSnap: (dispatch, gs) => { if (!gs.brakes[2]) dispatch({ type: 'TOGGLE_BRAKE', index: 2 }) } },
+    onSnap: (dispatch, gs) => { if (!gs.brakes[2]) dispatch({ type: 'TOGGLE_BRAKE', index: 2 }) },
+    onUnsnap: (dispatch, gs) => { if (gs.brakes[2]) dispatch({ type: 'TOGGLE_BRAKE', index: 2 }) } },
 
   // ── Flap group (4 slots on flap switches, orange dice) ────────────────────
   { name: 'flap-0', group: 'flap', x: 616, y: 363, snapR: 60,
     acceptColor: 'orange', acceptValues: [1, 2],
     prereq: ()       => true,
-    onSnap: (dispatch, gs) => { if (!gs.flaps[0]) dispatch({ type: 'TOGGLE_FLAP', index: 0 }) } },
+    onSnap: (dispatch, gs) => { if (!gs.flaps[0]) dispatch({ type: 'TOGGLE_FLAP', index: 0 }) },
+    onUnsnap: (dispatch, gs) => { if (gs.flaps[0]) dispatch({ type: 'TOGGLE_FLAP', index: 0 }) } },
   { name: 'flap-1', group: 'flap', x: 617, y: 521, snapR: 60,
     acceptColor: 'orange', acceptValues: [2, 3],
     prereq: (gs)     => gs.flaps[0],
-    onSnap: (dispatch, gs) => { if (!gs.flaps[1]) dispatch({ type: 'TOGGLE_FLAP', index: 1 }) } },
+    onSnap: (dispatch, gs) => { if (!gs.flaps[1]) dispatch({ type: 'TOGGLE_FLAP', index: 1 }) },
+    onUnsnap: (dispatch, gs) => { if (gs.flaps[1]) dispatch({ type: 'TOGGLE_FLAP', index: 1 }) } },
   { name: 'flap-2', group: 'flap', x: 617, y: 678, snapR: 60,
     acceptColor: 'orange', acceptValues: [4, 5],
     prereq: (gs)     => gs.flaps[1],
-    onSnap: (dispatch, gs) => { if (!gs.flaps[2]) dispatch({ type: 'TOGGLE_FLAP', index: 2 }) } },
+    onSnap: (dispatch, gs) => { if (!gs.flaps[2]) dispatch({ type: 'TOGGLE_FLAP', index: 2 }) },
+    onUnsnap: (dispatch, gs) => { if (gs.flaps[2]) dispatch({ type: 'TOGGLE_FLAP', index: 2 }) } },
   { name: 'flap-3', group: 'flap', x: 617, y: 835, snapR: 60,
     acceptColor: 'orange', acceptValues: [5, 6],
     prereq: (gs)     => gs.flaps[2],
-    onSnap: (dispatch, gs) => { if (!gs.flaps[3]) dispatch({ type: 'TOGGLE_FLAP', index: 3 }) } },
+    onSnap: (dispatch, gs) => { if (!gs.flaps[3]) dispatch({ type: 'TOGGLE_FLAP', index: 3 }) },
+    onUnsnap: (dispatch, gs) => { if (gs.flaps[3]) dispatch({ type: 'TOGGLE_FLAP', index: 3 }) } },
 
   // ── Axis trays — blue (left bank) and orange (right bank) ────────────────────
   { name: 'axis-blue', group: 'axis-blue', cascade: false, x: 139, y: 156, snapR: 50,
@@ -225,6 +239,10 @@ const TRAYS = [
     onSnap: (dispatch, gs, val) => {
       dispatch({ type: 'SET_RADIO2', value: val })
       dispatch({ type: 'REMOVE_APPROACH_PLANE', distanceValue: val })
+    },
+    onUnsnap: (dispatch, gs, val) => {
+      dispatch({ type: 'SET_RADIO2', value: null })
+      dispatch({ type: 'ADD_APPROACH_PLANE', distanceValue: val })
     } },
   { name: 'radio3', group: 'radio3', cascade: false, x: 616, y: 141, snapR: 50,
     acceptColor: 'orange', acceptValues: [1, 2, 3, 4, 5, 6],
@@ -232,6 +250,10 @@ const TRAYS = [
     onSnap: (dispatch, gs, val) => {
       dispatch({ type: 'SET_RADIO3', value: val })
       dispatch({ type: 'REMOVE_APPROACH_PLANE', distanceValue: val })
+    },
+    onUnsnap: (dispatch, gs, val) => {
+      dispatch({ type: 'SET_RADIO3', value: null })
+      dispatch({ type: 'ADD_APPROACH_PLANE', distanceValue: val })
     } },
 
   { name: 'radio1', group: 'radio1', cascade: false, x: 22, y: 141, snapR: 50,
@@ -240,6 +262,10 @@ const TRAYS = [
     onSnap: (dispatch, gs, val) => {
       dispatch({ type: 'SET_RADIO1', value: val })
       dispatch({ type: 'REMOVE_APPROACH_PLANE', distanceValue: val })
+    },
+    onUnsnap: (dispatch, gs, val) => {
+      dispatch({ type: 'SET_RADIO1', value: null })
+      dispatch({ type: 'ADD_APPROACH_PLANE', distanceValue: val })
     } },
 
   // ── Concentration track (3 slots, any die) — toggles coffee tokens in order ─
@@ -250,6 +276,10 @@ const TRAYS = [
     onSnap: (dispatch, gs) => {
       const next = gs.coffeeTokens.indexOf(false)
       if (next !== -1) dispatch({ type: 'SET_COFFEE_TOKEN', index: next, value: true })
+    },
+    onUnsnap: (dispatch, gs) => {
+      const last = gs.coffeeTokens.lastIndexOf(true)
+      if (last !== -1) dispatch({ type: 'SET_COFFEE_TOKEN', index: last, value: false })
     } },
   { name: 'conc-1', group: 'conc', cascade: false, x: 323, y: 891, snapR: 50,
     acceptColor: null, acceptValues: [1, 2, 3, 4, 5, 6],
@@ -257,6 +287,10 @@ const TRAYS = [
     onSnap: (dispatch, gs) => {
       const next = gs.coffeeTokens.indexOf(false)
       if (next !== -1) dispatch({ type: 'SET_COFFEE_TOKEN', index: next, value: true })
+    },
+    onUnsnap: (dispatch, gs) => {
+      const last = gs.coffeeTokens.lastIndexOf(true)
+      if (last !== -1) dispatch({ type: 'SET_COFFEE_TOKEN', index: last, value: false })
     } },
   { name: 'conc-2', group: 'conc', cascade: false, x: 429, y: 891, snapR: 50,
     acceptColor: null, acceptValues: [1, 2, 3, 4, 5, 6],
@@ -264,6 +298,10 @@ const TRAYS = [
     onSnap: (dispatch, gs) => {
       const next = gs.coffeeTokens.indexOf(false)
       if (next !== -1) dispatch({ type: 'SET_COFFEE_TOKEN', index: next, value: true })
+    },
+    onUnsnap: (dispatch, gs) => {
+      const last = gs.coffeeTokens.lastIndexOf(true)
+      if (last !== -1) dispatch({ type: 'SET_COFFEE_TOKEN', index: last, value: false })
     } },
 ]
 
@@ -292,9 +330,30 @@ const AXIS_MAX = 90      // max bank each way (degrees)
 const AXIS_SNAP_ANGLES = [-72.61, -51.30, -26.28, 0, 26.28, 51.30, 72.61]
 
 export default function App() {
-  const scale = useBoardScale()
+  const scale = useBoardScale()   // auto-fit size = the zoom-IN cap (zoom factor 1)
   const canvasRef = useRef(null)
   const [gameState, dispatch] = useReducer(gameReducer, initialState)
+
+  // Board-only pinch-zoom + pan (touch). `zoom` is a factor on top of the
+  // auto-fit `scale`; capped at 1 (can't enlarge past the default) and floored
+  // at MIN_ZOOM. `pan` translates the zoomed board within its viewport.
+  const MIN_ZOOM = 0.4
+  const [zoom, setZoom] = useState(1)
+  const [pan, setPan] = useState({ x: 0, y: 0 })
+  const zoomRef = useRef(1); zoomRef.current = zoom
+  const panRef = useRef({ x: 0, y: 0 }); panRef.current = pan
+  // Available screen height, for sizing the board viewport window (see below).
+  const [availH, setAvailH] = useState(typeof window !== 'undefined' ? window.innerHeight : 800)
+  useEffect(() => {
+    const u = () => setAvailH(window.innerHeight)
+    window.addEventListener('resize', u)
+    return () => window.removeEventListener('resize', u)
+  }, [])
+  // Board viewport metrics (width, window height, full content height), set during
+  // render and read by the pan clamp without TDZ issues.
+  const viewMetricsRef = useRef({ vw: 0, vh: 0, fullH: 0 })
+  // Tap-to-move: id of the die currently selected by tap (null = none).
+  const [selectedDie, setSelectedDie] = useState(null)
 
   const [trayDice, setTrayDice] = useState(
     () => Object.fromEntries(TRAYS.map(t => [t.name, null]))
@@ -305,6 +364,10 @@ export default function App() {
   // compass center. Not tied to discrete angles — fully manual.
   const [axisAngle, setAxisAngle] = useState(0)
   const axisDragRef = useRef(null)
+  // Last axis value we've sent to OR received from Firebase. Guards the push
+  // effect against echoing a received update or stranding a no-op (axisAngle is
+  // a plain number, so an unchanged setState won't re-fire the effect).
+  const lastAxisRef = useRef(0)
 
   // Drag the arc handle to bank the plane. The angle is measured from straight
   // up (12 o'clock = level) clockwise, clamped to ±AXIS_MAX so the handle stays
@@ -352,7 +415,11 @@ export default function App() {
   }
 
   // Always-current snapshot used inside event-handler closures to avoid stale state
-  latestRef.current = { brakes: gameState.brakes, flaps: gameState.flaps, landingGear: gameState.landingGear, coffeeTokens: gameState.coffeeTokens, trayDice, values }
+  latestRef.current = { brakes: gameState.brakes, flaps: gameState.flaps, landingGear: gameState.landingGear, coffeeTokens: gameState.coffeeTokens, trayDice, values, placed }
+  // activePlayer mirrored into a ref so the (possibly stale) finalizeDrag closure
+  // captured by a long-lived pointerup listener always reads the current turn.
+  const activePlayerRef = useRef(gameState.activePlayer)
+  activePlayerRef.current = gameState.activePlayer
 
   // Active custom drag. While moving, we render one opaque die that follows the
   // cursor and hide the die at its source. dragRef mirrors it for the window
@@ -394,7 +461,7 @@ export default function App() {
       px: e.clientX,               // current pointer
       py: e.clientY,
       size: rect.width,            // on-screen die size at grab time
-      scale,                       // board scale captured now
+      scale: scale * zoomRef.current, // effective on-screen board scale (fit × zoom)
       moved: false,
     }
     dragRef.current = info
@@ -403,6 +470,7 @@ export default function App() {
     const move = (ev) => {
       const d = dragRef.current
       if (!d) return
+      ev.preventDefault?.()        // stop iOS from turning the drag into a scroll
       d.px = ev.clientX
       d.py = ev.clientY
       if (!d.moved) {
@@ -418,15 +486,61 @@ export default function App() {
       window.removeEventListener('pointercancel', up)
       finalizeDrag(dragRef.current)
     }
-    window.addEventListener('pointermove', move)
+    window.addEventListener('pointermove', move, { passive: false })
     window.addEventListener('pointerup', up)
     window.addEventListener('pointercancel', up)
+  }
+
+  // Whether `dieId` may snap into `tray` given the current board state. Shared by
+  // drag-finalize and tap-to-place so both honour the exact same rules.
+  const validateSnap = (tray, dieId, gs, td, vals) => {
+    const die = ALL_DICE.find(d => d.id === dieId)
+    return !!die &&
+      (tray.acceptColor === null || die.color === tray.acceptColor) &&
+      tray.acceptValues.includes(vals[dieId]) &&
+      !td[tray.name] &&
+      tray.prereq(gs)
+  }
+
+  // Commit a die into a tray (used by both drag-drop and tap-to-place): mark it
+  // placed, occupy the tray, run the side-effect, and hand the turn to the other
+  // pilot if they still have dice (SkyTeam one-die-at-a-time alternation).
+  const placeDie = (dieId, tray) => {
+    const { brakes, flaps, landingGear, coffeeTokens, values: vals } = latestRef.current
+    const gs = { brakes, flaps, landingGear, coffeeTokens }
+    setPlaced(p => ({ ...p, [dieId]: { x: tray.x, y: tray.y } }))
+    setTrayDice(prev => ({ ...prev, [tray.name]: dieId }))
+    tray.onSnap(dispatch, gs, vals[dieId])
+    const myColor = myRoleRef.current
+    if (myColor && activePlayerRef.current === myColor) {
+      const other = myColor === 'blue' ? 'orange' : 'blue'
+      const placedNow = { ...latestRef.current.placed, [dieId]: true }
+      const otherRemaining = ALL_DICE.filter(d => d.color === other && !placedNow[d.id]).length
+      if (otherRemaining > 0) dispatch({ type: 'SET_ACTIVE_PLAYER', value: other })
+    }
+  }
+
+  // Pick a placed die back up: free its tray, remove the placement, and reverse
+  // the tray's side-effect via its onUnsnap handler (tap-to-return).
+  const returnDie = (dieId) => {
+    const { brakes, flaps, landingGear, coffeeTokens, trayDice: td, values: vals } = latestRef.current
+    const gs = { brakes, flaps, landingGear, coffeeTokens }
+    const tray = TRAYS.find(t => td[t.name] === dieId)
+    if (!tray) return
+    if (tray.onUnsnap) tray.onUnsnap(dispatch, gs, vals[dieId])
+    setPlaced(p => { const next = { ...p }; delete next[dieId]; return next })
+    setTrayDice(prev => ({ ...prev, [tray.name]: null }))
   }
 
   const finalizeDrag = (info) => {
     dragRef.current = null
     setDrag(null)
-    if (!info || !info.moved) return // a tap, not a drag — leave die as-is
+    if (!info) return
+    if (!info.moved) {
+      // A tap (not a drag) on an eligible die → toggle tap-to-move selection.
+      setSelectedDie(s => (s === info.id ? null : info.id))
+      return
+    }
 
     const rect = canvasRef.current.getBoundingClientRect()
     const overBoard =
@@ -442,10 +556,8 @@ export default function App() {
       x = Math.max(0, Math.min(BOARD_W - SQUARE, x))
       y = Math.max(0, Math.min(BOARD_H - SQUARE, y))
 
-      // Unified snap-tray check: one loop covers all tray groups
       const { brakes, flaps, landingGear, coffeeTokens, trayDice: td, values: vals } = latestRef.current
       const gs = { brakes, flaps, landingGear, coffeeTokens }
-      const die = ALL_DICE.find(d => d.id === info.id)
       const dieCx = x + SQUARE / 2
       const dieCy = y + SQUARE / 2
       let snapped = false
@@ -453,15 +565,8 @@ export default function App() {
         const tCx = tray.x + SQUARE / 2
         const tCy = tray.y + SQUARE / 2
         if (Math.hypot(dieCx - tCx, dieCy - tCy) < tray.snapR) {
-          const valid =
-            (tray.acceptColor === null || die.color === tray.acceptColor) &&
-            tray.acceptValues.includes(vals[info.id]) &&
-            td[tray.name] === null &&
-            tray.prereq(gs)
-          if (valid) {
-            setPlaced(p => ({ ...p, [info.id]: { x: tray.x, y: tray.y } }))
-            setTrayDice(prev => ({ ...prev, [tray.name]: info.id }))
-            tray.onSnap(dispatch, gs, vals[info.id])
+          if (validateSnap(tray, info.id, gs, td, vals)) {
+            placeDie(info.id, tray)
           } else {
             setPlaced(p => { const next = { ...p }; delete next[info.id]; return next })
           }
@@ -481,6 +586,84 @@ export default function App() {
     }
   }
 
+  // Tap a placed die: first tap selects it, second tap returns it to its tray.
+  const handlePlacedDieTap = (dieId) => {
+    if (setupPhase || !isMyTurn) return
+    if (myRole !== null && !dieId.startsWith(myRole)) return
+    if (selectedDie === dieId) { returnDie(dieId); setSelectedDie(null) }
+    else setSelectedDie(dieId)
+  }
+
+  // Tap a highlighted tray to place the currently-selected (tray) die into it.
+  const tapPlaceSelected = (tray) => {
+    if (!selectedDie) return
+    placeDie(selectedDie, tray)
+    setSelectedDie(null)
+  }
+
+  // ── Board pinch-zoom + pan gesture layer ────────────────────────────────────
+  const pointersRef = useRef(new Map())
+  const gestureRef = useRef(null)
+  const pdist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y)
+  const clampZoom = (z) => Math.max(MIN_ZOOM, Math.min(1, z))
+  const clampPan = (p, z) => {
+    const { vw, vh, fullH } = viewMetricsRef.current
+    const cw = vw * z, ch = fullH * z
+    // When the content is smaller than the window, pin it centred; otherwise let
+    // it pan within the window edges.
+    const range = (content, view) => {
+      if (content <= view) { const c = (view - content) / 2; return [c, c] }
+      return [view - content, 0]
+    }
+    const [xlo, xhi] = range(cw, vw)
+    const [ylo, yhi] = range(ch, vh)
+    return { x: Math.max(xlo, Math.min(xhi, p.x)), y: Math.max(ylo, Math.min(yhi, p.y)) }
+  }
+  const onBoardPointerDown = (e) => {
+    if (e.target.closest('[data-die]')) return // a die: let it handle its own drag
+    // Only the bare board background drives pan/pinch — taps on switches, the
+    // axis handle, tokens, approach controls, etc. must reach those controls.
+    if (!e.target.closest('[data-pan]')) return
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
+    try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* ignore */ }
+    const pts = [...pointersRef.current.values()]
+    if (pointersRef.current.size >= 2) {
+      gestureRef.current = {
+        mode: 'pinch', startDist: pdist(pts[0], pts[1]) || 1, startZoom: zoomRef.current,
+        startPan: { ...panRef.current }, vpRect: e.currentTarget.getBoundingClientRect(),
+        startMid: { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 },
+      }
+    } else {
+      gestureRef.current = { mode: 'pan', startPan: { ...panRef.current }, sx: e.clientX, sy: e.clientY }
+    }
+  }
+  const onBoardPointerMove = (e) => {
+    if (!pointersRef.current.has(e.pointerId)) return
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
+    const g = gestureRef.current
+    if (!g) return
+    if (g.mode === 'pinch' && pointersRef.current.size >= 2) {
+      const pts = [...pointersRef.current.values()]
+      const nz = clampZoom(g.startZoom * pdist(pts[0], pts[1]) / g.startDist)
+      const m = { x: g.startMid.x - g.vpRect.left, y: g.startMid.y - g.vpRect.top }
+      const k = nz / g.startZoom
+      const np = { x: m.x - k * (m.x - g.startPan.x), y: m.y - k * (m.y - g.startPan.y) }
+      setZoom(nz); setPan(clampPan(np, nz))
+    } else if (g.mode === 'pan') {
+      setPan(clampPan({ x: g.startPan.x + (e.clientX - g.sx), y: g.startPan.y + (e.clientY - g.sy) }, zoomRef.current))
+    }
+  }
+  const onBoardPointerUp = (e) => {
+    pointersRef.current.delete(e.pointerId)
+    if (pointersRef.current.size === 0) { gestureRef.current = null; return }
+    if (pointersRef.current.size === 1) {
+      const [pt] = [...pointersRef.current.values()]
+      gestureRef.current = { mode: 'pan', startPan: { ...panRef.current }, sx: pt.x, sy: pt.y }
+    }
+  }
+  // Re-clamp the pan whenever the fit scale or window height changes.
+  useEffect(() => { setPan(p => clampPan(p, zoomRef.current)) }, [scale, availH]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const [dieTriggers, setDieTriggers] = useState(() => Object.fromEntries(ALL_DICE.map(d => [d.id, 0])))
   const [rolledThisAlt, setRolledThisAlt] = useState(new Set())
   const [rerollUsed, setRerollUsed] = useState(new Set())
@@ -498,93 +681,289 @@ export default function App() {
   const setupPhase = gameState.gameReady === 0
   const allDicePlaced = !setupPhase && byColor('blue').length === 0 && byColor('orange').length === 0
 
-  // ── Multiplayer (Yjs) ──────────────────────────────────────────────────────
-  const { doc, sharedMap } = useYjsSync()
+  // ── Multiplayer (Firebase) ─────────────────────────────────────────────────
   const clientIdRef = useRef((() => {
     let id = localStorage.getItem('skyteam-clientId')
     if (!id) { id = Math.random().toString(36).slice(2, 10); localStorage.setItem('skyteam-clientId', id) }
     return id
   })())
-  const [myRole, setMyRole] = useState(null)      // 'blue' | 'orange' | null
-  const [roles, setRoles] = useState({})          // { blue: clientId, orange: clientId }
-  const [isFirstPlayer, setIsFirstPlayer] = useState(false)
+  const { connected, peers } = useFirebaseSync(clientIdRef.current)
+
+  // Player 1 = earliest joinedAt in presence list
+  const isFirstPlayer = peers.length === 0 || peers[0]?.clientId === clientIdRef.current
+  // The approach track is set up by a single editor (Player 1) during setup, so
+  // the two clients can't fight over it and both stay in sync. Player 2's
+  // controls are hidden; the strip itself (panels/planes) still renders for both.
+  const canEditApproach = !approachLocked && isFirstPlayer
+
+  const [myRole, setMyRole] = useState(null)
+  const myRoleRef = useRef(null)
+  myRoleRef.current = myRole
+  const [roles, setRoles] = useState({})
   const skipSync = useRef({})
+  // True once we've absorbed the initial Firebase snapshot. Until then we must
+  // NOT push: on mount every push effect would otherwise fire with initialState
+  // (gameReady=0, default dice faces) and overwrite a game already in progress —
+  // a reloading or newly-joining client (or a stray tab) would reset the table.
+  const hydratedRef = useRef(false)
+  // True only when WE are creating the game (no gameState existed at hydration).
+  // The creator seeds a complete gameState once (full PUT); everyone else, and
+  // every subsequent change, writes partial PATCHes.
+  const needsSeedRef = useRef(false)
+  // Last reset signal we've seen/written. A bumped /resetAt makes BOTH clients
+  // wipe their local board wholesale — bypassing the per-colour ownership merge,
+  // which would otherwise ignore a peer's emptied board and strand old dice.
+  const resetSeenRef = useRef(null)
 
-  // Claim first-player spot and restore role on reconnect
+  // One SSE stream for the whole /game node — NOT one per key.
+  // The RTDB endpoint is HTTP/1.1, so the browser caps connections at 6 per
+  // host. Six game-state EventSources saturated that pool, and every PUT write
+  // and presence poll then queued behind them forever (confirmed: an in-page
+  // fetch to the DB hung indefinitely). A single stream, demuxed by the event's
+  // `path` field, leaves connection slots free for reads and writes.
   useEffect(() => {
-    const fp = sharedMap.get('firstPlayer')
-    if (!fp) {
-      doc.transact(() => sharedMap.set('firstPlayer', clientIdRef.current), clientIdRef.current)
-      setIsFirstPlayer(true)
-    } else {
-      setIsFirstPlayer(fp === clientIdRef.current)
-    }
-    const savedRoles = sharedMap.get('roles') || {}
-    setRoles(savedRoles)
-    if (savedRoles.blue === clientIdRef.current) setMyRole('blue')
-    else if (savedRoles.orange === clientIdRef.current) setMyRole('orange')
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+    const DB = 'https://guysky-95670-default-rtdb.asia-southeast1.firebasedatabase.app'
+    const cid = clientIdRef.current
 
-  // Yjs observer — apply incoming remote state
-  useEffect(() => {
-    const handler = (event) => {
-      if (event.transaction.origin === clientIdRef.current) return
-      for (const key of event.keysChanged) {
-        const val = sharedMap.get(key)
-        if (key === 'gameState' && val) {
-          skipSync.current.gameState = true
-          dispatch({ type: 'SYNC_STATE', state: val })
-        } else if (key === 'values' && val) {
-          skipSync.current.values = true
-          setValues(val)
-        } else if (key === 'trayDice' && val) {
-          skipSync.current.trayDice = true
-          setTrayDice(val)
-        } else if (key === 'placed' && val) {
-          skipSync.current.placed = true
-          setPlaced(val)
-        } else if (key === 'roles') {
-          const r = val || {}
-          setRoles(r)
-          if (r.blue === clientIdRef.current) setMyRole('blue')
-          else if (r.orange === clientIdRef.current) setMyRole('orange')
-        } else if (key === 'firstPlayer') {
-          setIsFirstPlayer(val === clientIdRef.current)
-        } else if (key === 'rerollGranted' && val) {
-          setRerollGranted(true)
-        } else if (key === 'rerollReset') {
-          setRerollGranted(false)
-          setRerollUsed(new Set())
-        }
+    // Apply one top-level key of /game to local state. `isMerge` is true when
+    // this came from a Firebase PATCH event (partial gameState) rather than a
+    // full snapshot/PUT.
+    const applyKey = (key, val, isMerge = false) => {
+      if (key === 'gameState') {
+        if (!val || val._by === cid) return
+        needsSeedRef.current = false // a game exists; we are not the creator
+        skipSync.current.gameState = true
+        const { _by, ...rest } = val
+        dispatch({ type: isMerge ? 'MERGE_STATE' : 'SYNC_STATE', state: rest })
+      } else if (key === 'values') {
+        if (!val || val._by === cid) return
+        skipSync.current.values = true
+        const { _by, ...rest } = val
+        const myColor = myRoleRef.current
+        if (!myColor) { setValues(rest); return }
+        // Both pilots roll simultaneously each round, so two values pushes cross.
+        // Keep my own dice from local state, take only the peer's dice from the
+        // incoming snapshot — otherwise a peer's push reverts my fresh roll.
+        setValues(prev => {
+          const merged = { ...prev }
+          for (const [id, v] of Object.entries(rest)) if (!id.startsWith(myColor)) merged[id] = v
+          return merged
+        })
+      } else if (key === 'trayDice') {
+        if (!val || val._by === cid) return
+        skipSync.current.trayDice = true
+        const { _by, ...rest } = val
+        // Firebase strips null values, so empty trays come back missing. Rebuild
+        // the full key set (null = empty) or occupancy checks break.
+        const blank = Object.fromEntries(TRAYS.map(t => [t.name, null]))
+        const myColor = myRoleRef.current
+        if (!myColor) { setTrayDice({ ...blank, ...rest }); return }
+        // Both clients edit the shared board, but each only ever places its own
+        // colour's dice. Merge by occupant ownership — keep my-colour entries
+        // from local state, take the peer's colour from the incoming snapshot —
+        // so the peer's snapshot (which lacks my dice) can't wipe my placements.
+        setTrayDice(prev => {
+          const merged = { ...blank }
+          for (const [t, id] of Object.entries(prev)) if (id && id.startsWith(myColor)) merged[t] = id
+          for (const [t, id] of Object.entries(rest)) if (id && !id.startsWith(myColor)) merged[t] = id
+          return merged
+        })
+      } else if (key === 'placed') {
+        if (!val || val._by === cid) return
+        skipSync.current.placed = true
+        const { _by, ...rest } = val
+        const myColor = myRoleRef.current
+        if (!myColor) { setPlaced(rest); return }
+        setPlaced(prev => {
+          const merged = {}
+          for (const [id, pos] of Object.entries(prev)) if (id.startsWith(myColor)) merged[id] = pos
+          for (const [id, pos] of Object.entries(rest)) if (!id.startsWith(myColor)) merged[id] = pos
+          return merged
+        })
+      } else if (key === 'roles') {
+        if (!val) return
+        setRoles(val)
+        if (val.blue === cid) setMyRole('blue')
+        else if (val.orange === cid) setMyRole('orange')
+      } else if (key === 'rerollGranted') {
+        if (val && val !== cid) setRerollGranted(true)
+      } else if (key === 'rolled' || key === 'rerollUsed') {
+        // Which dice have been rolled / reroll-spent this altitude. Persisted so
+        // a refresh doesn't revert dice to the "unrolled" (red) state. On the
+        // initial snapshot (pre-hydration) or before a role is known, take the
+        // full set; during live play merge by die-colour ownership like values.
+        if (!val || val._by === cid) return
+        skipSync.current[key] = true
+        const incoming = val.ids || []
+        const setter = key === 'rolled' ? setRolledThisAlt : setRerollUsed
+        const full = !hydratedRef.current || !myRoleRef.current
+        const myColor = myRoleRef.current
+        setter(prev => {
+          if (full) return new Set(incoming)
+          const m = new Set([...prev].filter(id => id.startsWith(myColor)))
+          for (const id of incoming) if (!id.startsWith(myColor)) m.add(id)
+          return m
+        })
+      } else if (key === 'approachPos') {
+        if (!val || val._by === cid) return
+        skipSync.current.approachPos = true
+        const { _by, ...rest } = val
+        setApproachPos(rest)
+      } else if (key === 'axisAngle') {
+        // The plane bank is a shared board element. It's set both by manual
+        // rotation and by the end-turn dice computation; keep both clients in
+        // sync so the displayed tilt matches the authoritative value.
+        // NOTE: axisAngle is a NUMBER, so we can't use the skipSync flag the
+        // object-valued keys use — if an incoming value equals the current one,
+        // setAxisAngle is a no-op, the push effect never fires to clear the flag,
+        // and it stays stuck (swallowing the next real local bank). Track the
+        // last-synced value in a ref instead; the push effect skips it.
+        if (!val || val._by === cid) return
+        lastAxisRef.current = val.v
+        setAxisAngle(val.v)
+      } else if (key === 'resetAt') {
+        // A peer (or we) restarted the game. Ignore the initial snapshot value
+        // and our own echo; otherwise wipe ALL local board state — including our
+        // own colour's dice, which the ownership merge would normally preserve.
+        if (val == null || resetSeenRef.current === val) return
+        resetSeenRef.current = val
+        if (!hydratedRef.current) return // join-time snapshot — board is already fresh
+        // Reset the WHOLE gameState locally (coffee tokens, switches, engine/brake
+        // markers, approach panels, altitude, …). Doing it here — rather than
+        // relying on the separate /gameState PUT — makes the peer's reset atomic
+        // and immune to a stale push racing the PUT.
+        skipSync.current.gameState = true
+        dispatch({ type: 'SYNC_STATE', state: { ...initialState } })
+        setPlaced({})
+        setTrayDice(Object.fromEntries(TRAYS.map(t => [t.name, null])))
+        setValues(Object.fromEntries(ALL_DICE.map(d => [d.id, d.value])))
+        lastAxisRef.current = 0
+        setAxisAngle(0)
+        setDieTriggers(Object.fromEntries(ALL_DICE.map(d => [d.id, 0])))
+        setRolledThisAlt(new Set())
+        setRerollUsed(new Set())
+        setRerollGranted(false)
+        setTurnResult(null)
+        setSelectedDie(null)
+        setZoom(1)
+        setPan({ x: 0, y: 0 })
+        setApproachPos(APPROACH_START)
       }
+      // 'presence' is intentionally ignored — owned by useFirebaseSync polling.
     }
-    sharedMap.observe(handler)
-    return () => sharedMap.unobserve(handler)
+
+    const GAME_KEYS = ['gameState', 'values', 'trayDice', 'placed', 'roles', 'rerollGranted', 'rolled', 'rerollUsed', 'approachPos', 'axisAngle', 'resetAt']
+
+    // Firebase SSE payloads are { path, data }. path '/' is a full snapshot of
+    // /game; '/gameState' is a single top-level key; '/presence/<id>' is nested.
+    const handle = (e, isPatch) => {
+      try {
+        const { path, data } = JSON.parse(e.data)
+        if (path === '/') {
+          // Root snapshot. Absorb the current game, THEN allow pushing. If data
+          // is null there's no game yet, so this client may create one.
+          if (data) for (const k of GAME_KEYS) if (data[k] !== undefined) applyKey(k, data[k])
+          // No gameState in the snapshot ⇒ no game yet ⇒ we may seed one.
+          if (!data || data.gameState === undefined) needsSeedRef.current = true
+          hydratedRef.current = true
+        } else {
+          const seg = path.split('/').filter(Boolean)
+          if (seg.length === 1) applyKey(seg[0], data, isPatch) // deeper paths (presence) ignored
+        }
+      } catch {}
+    }
+
+    const es = new EventSource(`${DB}/game.json?alt=sse`)
+    es.addEventListener('put', e => handle(e, false))
+    es.addEventListener('patch', e => handle(e, true))
+
+    return () => es.close()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Push gameState → Yjs
+  const fbWrite = (subpath, value, method = 'PUT') => {
+    const DB = 'https://guysky-95670-default-rtdb.asia-southeast1.firebasedatabase.app'
+    fetch(`${DB}/game${subpath}.json`, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(value),
+    }).catch(() => {})
+  }
+
+  // Push gameState → Firebase as a PATCH of only the fields that changed.
+  // The reducer keeps unchanged fields referentially stable, so a top-level
+  // reference diff identifies exactly what this client touched. Writing only
+  // those keys means a peer editing different fields (e.g. orange placing a
+  // radio die) can't clobber this client's update (e.g. blue's end-turn
+  // altitude/turn advance) — the root of the "turn didn't advance" bug.
+  const gsRef = useRef(gameState)
   useEffect(() => {
-    if (skipSync.current.gameState) { skipSync.current.gameState = false; return }
-    doc.transact(() => sharedMap.set('gameState', gameState), clientIdRef.current)
+    if (!hydratedRef.current) { gsRef.current = gameState; return }
+    if (skipSync.current.gameState) { skipSync.current.gameState = false; gsRef.current = gameState; return }
+    if (needsSeedRef.current) {
+      // First write of a brand-new game: seed the COMPLETE state so a later
+      // joiner's snapshot isn't missing fields. Subsequent writes are PATCHes.
+      needsSeedRef.current = false
+      gsRef.current = gameState
+      fbWrite('/gameState', { ...gameState, _by: clientIdRef.current }, 'PUT')
+      return
+    }
+    const patch = {}
+    for (const k of Object.keys(gameState)) if (gameState[k] !== gsRef.current[k]) patch[k] = gameState[k]
+    gsRef.current = gameState
+    if (Object.keys(patch).length) fbWrite('/gameState', { ...patch, _by: clientIdRef.current }, 'PATCH')
   }, [gameState]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Push values → Yjs
+  // Push values → Firebase
   useEffect(() => {
+    if (!hydratedRef.current) return
     if (skipSync.current.values) { skipSync.current.values = false; return }
-    doc.transact(() => sharedMap.set('values', values), clientIdRef.current)
+    fbWrite('/values', { ...values, _by: clientIdRef.current })
   }, [values]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Push trayDice → Yjs
+  // Push trayDice → Firebase
   useEffect(() => {
+    if (!hydratedRef.current) return
     if (skipSync.current.trayDice) { skipSync.current.trayDice = false; return }
-    doc.transact(() => sharedMap.set('trayDice', trayDice), clientIdRef.current)
+    fbWrite('/trayDice', { ...trayDice, _by: clientIdRef.current })
   }, [trayDice]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Push placed → Yjs
+  // Push placed → Firebase
   useEffect(() => {
+    if (!hydratedRef.current) return
     if (skipSync.current.placed) { skipSync.current.placed = false; return }
-    doc.transact(() => sharedMap.set('placed', placed), clientIdRef.current)
+    fbWrite('/placed', { ...placed, _by: clientIdRef.current })
   }, [placed]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Push rolled / rerollUsed → Firebase (die-roll state, so a refresh restores
+  // which dice were already rolled instead of reverting them to "unrolled").
+  useEffect(() => {
+    if (!hydratedRef.current) return
+    if (skipSync.current.rolled) { skipSync.current.rolled = false; return }
+    fbWrite('/rolled', { ids: [...rolledThisAlt], _by: clientIdRef.current })
+  }, [rolledThisAlt]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!hydratedRef.current) return
+    if (skipSync.current.rerollUsed) { skipSync.current.rerollUsed = false; return }
+    fbWrite('/rerollUsed', { ids: [...rerollUsed], _by: clientIdRef.current })
+  }, [rerollUsed]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Push approachPos → Firebase (vertical position of the approach strip, so
+  // both clients render it identically — panel data already rides in gameState)
+  useEffect(() => {
+    if (!hydratedRef.current) return
+    if (skipSync.current.approachPos) { skipSync.current.approachPos = false; return }
+    fbWrite('/approachPos', { ...approachPos, _by: clientIdRef.current })
+  }, [approachPos]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Push axisAngle → Firebase (shared plane bank; see apply handler above).
+  // lastAxisRef holds the value we last sent OR received, so a received update
+  // doesn't echo back and a no-op can't strand a skip flag.
+  useEffect(() => {
+    if (!hydratedRef.current) return
+    if (axisAngle === lastAxisRef.current) return // received value or unchanged — don't echo
+    lastAxisRef.current = axisAngle
+    fbWrite('/axisAngle', { v: axisAngle, _by: clientIdRef.current })
+  }, [axisAngle]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Reset local turn state when turnCount advances (both clients)
   const prevTurnCount = useRef(gameState.turnCount)
@@ -594,20 +973,21 @@ export default function App() {
     setRolledThisAlt(new Set())
     setRerollUsed(new Set())
     setRerollGranted(false)
+    setSelectedDie(null)
+    fbWrite('/rerollGranted', null) // clear shared grant so it doesn't leak into next turn / a refresh
     setDieTriggers(Object.fromEntries(ALL_DICE.map(d => [d.id, 0])))
+    // End-of-turn board clear is driven by turnCount (not the placed/trayDice
+    // sync) because the ownership-merge intentionally ignores a peer's empty
+    // snapshot. Both clients clear their board here when the turn advances.
+    setPlaced({})
+    setTrayDice(Object.fromEntries(TRAYS.map(t => [t.name, null])))
   }, [gameState.turnCount]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Flip activePlayer when this client's dice are all placed but not all 8 yet
-  useEffect(() => {
-    if (setupPhase || !myRole || gameState.gameOver || gameState.gameWin) return
-    if (gameState.activePlayer !== myRole) return
-    const myColorDone = byColor(myRole).length === 0
-    const allDone = byColor('blue').length === 0 && byColor('orange').length === 0
-    if (myColorDone && !allDone) {
-      const other = myRole === 'blue' ? 'orange' : 'blue'
-      dispatch({ type: 'SET_ACTIVE_PLAYER', value: other })
-    }
-  }, [placed, trayDice]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Turn alternation (one die at a time, SkyTeam rule) is driven directly from
+  // the local placement in finalizeDrag — see the handoff block there. A synced
+  // `placed`-count watcher can't be used: `placed` is merged across both clients,
+  // so a peer's die arriving looks identical to a local placement and the turn
+  // would bounce back and forth.
 
   // Auto end turn when all 8 dice placed — only Captain (or solo) fires it
   const endTurnFiredRef = useRef(false)
@@ -615,22 +995,40 @@ export default function App() {
   useEffect(() => {
     if (!allDicePlaced || setupPhase || gameState.gameOver || gameState.gameWin) return
     if (endTurnFiredRef.current) return
-    if (myRole !== null && myRole !== 'blue') return // only Captain triggers
+    if (myRole !== null && myRole !== 'blue') return
     endTurnFiredRef.current = true
     handleEndTurn()
   }, [allDicePlaced]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // A role is only really taken if its holder is currently connected (or me).
+  // Stale /roles entries (from a previous session, keyed by a now-disconnected
+  // clientId) must be treated as free, or a fresh Player 1 sees both colours
+  // "taken" and can't pick anything.
+  const livePeerIds = new Set(peers.map(p => p.clientId))
+  const roleTaken = (color) =>
+    !!roles[color] &&
+    (roles[color] === clientIdRef.current || livePeerIds.has(roles[color]))
+
   const claimRole = (color) => {
-    const current = sharedMap.get('roles') || {}
-    if (current[color]) return
-    const next = { ...current, [color]: clientIdRef.current }
-    doc.transact(() => sharedMap.set('roles', next), clientIdRef.current)
+    if (roleTaken(color)) return
+    const next = { ...roles, [color]: clientIdRef.current }
+    fbWrite('/roles', next)
     setMyRole(color)
     setRoles(next)
   }
 
+  // Player 2 doesn't pick — it auto-claims whichever colour Player 1 left open,
+  // so role assignment is fully Player-1-controlled.
+  useEffect(() => {
+    if (isFirstPlayer || myRole) return
+    if (peers.length < 2) return
+    const taken = roleTaken('blue') ? 'blue' : roleTaken('orange') ? 'orange' : null
+    if (!taken) return
+    const other = taken === 'blue' ? 'orange' : 'blue'
+    if (!roleTaken(other)) claimRole(other)
+  }, [isFirstPlayer, myRole, roles, peers]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const isMyTurn = myRole === null || gameState.activePlayer === myRole
-  const isCaptain = myRole === null || myRole === 'blue'
   // ── End Multiplayer ────────────────────────────────────────────────────────
   const [savedStrips, setSavedStrips] = useState(() => {
     try { return JSON.parse(localStorage.getItem('approachStrips') || '[]') } catch { return [] }
@@ -659,6 +1057,15 @@ export default function App() {
   const ALT_STRIP_Y_BY_VALUE = { 6: 7, 5: 117, 4: 227, 3: 337, 2: 447, 1: 559, 0: 632 }
   const altStrip = { x: ALT_STRIP_X, y: ALT_STRIP_Y_BY_VALUE[gameState.altitude] ?? 7, w: ALT_STRIP_W, h: ALT_STRIP_H }
 
+  // Board viewport window. The full board (altitude strip + canvas) at fit scale
+  // is taller than a phone/tablet screen, which pushed the dice tray off-screen
+  // and blocked scrolling to it. Cap the window to leave room for the tray below;
+  // at default zoom the board overflows this window and one-finger pan navigates
+  // it, while pinch-out shrinks it to show the whole board at once.
+  const fullContentH = (altStrip.h + BOARD_H) * scale
+  const viewportH = Math.min(fullContentH, Math.max(320, availH - 220))
+  viewMetricsRef.current = { vw: BOARD_W * scale, vh: viewportH, fullH: fullContentH }
+
 
   const handleRollAll = (filterColor) => {
     setTurnResult(null)
@@ -680,24 +1087,46 @@ export default function App() {
     setPlaced({})
     setTrayDice(Object.fromEntries(TRAYS.map(t => [t.name, null])))
     setValues(Object.fromEntries(ALL_DICE.map(d => [d.id, d.value])))
+    lastAxisRef.current = 0
     setAxisAngle(0)
     setDieTriggers(Object.fromEntries(ALL_DICE.map(d => [d.id, 0])))
     setRolledThisAlt(new Set())
     setRerollUsed(new Set())
     setRerollGranted(false)
     setTurnResult(null)
+    setSelectedDie(null)
+    setZoom(1)
+    setPan({ x: 0, y: 0 })
 
     setApproachPos(APPROACH_START)
+
+    // Broadcast the reset to Firebase so the peer's board is wiped too. Write a
+    // fresh, authoritative copy of every shared key (so a late joiner's snapshot
+    // is clean), then bump /resetAt to force a full local clear on the peer.
+    const cid = clientIdRef.current
+    const ts = Date.now()
+    resetSeenRef.current = ts // ignore our own /resetAt echo
+    fbWrite('/gameState', { ...initialState, _by: cid }, 'PUT')
+    fbWrite('/values', { ...Object.fromEntries(ALL_DICE.map(d => [d.id, d.value])), _by: cid }, 'PUT')
+    fbWrite('/trayDice', { ...Object.fromEntries(TRAYS.map(t => [t.name, null])), _by: cid }, 'PUT')
+    fbWrite('/placed', { _by: cid }, 'PUT')
+    fbWrite('/approachPos', { ...APPROACH_START, _by: cid }, 'PUT')
+    fbWrite('/axisAngle', { v: 0, _by: cid }, 'PUT')
+    fbWrite('/rolled', { ids: [], _by: cid }, 'PUT')
+    fbWrite('/rerollUsed', { ids: [], _by: cid }, 'PUT')
+    fbWrite('/rerollGranted', null, 'PUT')
+    fbWrite('/resetAt', ts, 'PUT')
   }
 
   const handleEndTurn = () => {
     const gs = gameState
     const issues = []
 
-    // Engine check
+    // Engine check (both engine dice must be placed; `!= null` also rejects an
+    // undefined key, e.g. a tray map that lost its nulls through Firebase)
     const blueEngDieId = trayDice['eng-blue']
     const orangeEngDieId = trayDice['eng-orange']
-    const engineCheckPassed = blueEngDieId !== null && orangeEngDieId !== null
+    const engineCheckPassed = blueEngDieId != null && orangeEngDieId != null
     let approachDistance = null
     if (engineCheckPassed) {
       const engineValue = values[blueEngDieId] + values[orangeEngDieId]
@@ -706,7 +1135,6 @@ export default function App() {
       if (engineValue < blueThreshold) approachDistance = 0
       else if (engineValue > orangeThreshold) approachDistance = 2
       else approachDistance = 1
-    } else {
     }
 
     // Axis check
@@ -776,19 +1204,15 @@ export default function App() {
 
     // Endgame check — runs when End Turn is pressed while already at altitude 0
     if (engineCheckPassed && axisCheckPassed && gs.altitude === 0 && gs.gameReady === 1) {
-      const destD = gs.approachPanels[0].d ?? 0
-      if (destD > 0) {
-        endgameResult = 'over'
-      } else {
-        const noPlanes = gs.approachPanels[0].planes === 0
-        const allFlaps = gs.flaps.every(Boolean)
-        const allGear = gs.landingGear.every(Boolean)
-        const axisCenter = computedAxisPos === 0
-        const engSum = (blueEngDieId ? values[blueEngDieId] : 0) + (orangeEngDieId ? values[orangeEngDieId] : 0)
-        const brakeVal = BRAKE_MARKER_POS[gs.brakeMarker]?.value ?? 0
-        const brakePassed = engSum < brakeVal
-        endgameResult = (noPlanes && allFlaps && allGear && axisCenter && brakePassed) ? 'win' : 'over'
-      }
+      endgameResult = computeLandingResult({
+        destD: gs.approachPanels[0].d ?? 0,
+        planes: gs.approachPanels[0].planes,
+        flaps: gs.flaps,
+        landingGear: gs.landingGear,
+        axisPos: computedAxisPos,
+        engSum: (blueEngDieId != null ? values[blueEngDieId] : 0) + (orangeEngDieId != null ? values[orangeEngDieId] : 0),
+        brakeVal: BRAKE_MARKER_POS[gs.brakeMarker]?.value ?? 0,
+      })
     }
 
     // Return all dice to trays
@@ -819,31 +1243,55 @@ export default function App() {
 
   return (
     <div>
-      {/* Role selection — shown until this client has a role */}
-      {myRole === null && (
-        <div style={{ display: 'flex', justifyContent: 'center', gap: 16, padding: '12px 0', background: '#111' }}>
-          <button
-            onClick={() => claimRole('blue')}
-            disabled={!!roles.blue}
-            style={{ padding: '10px 24px', fontSize: 15, fontWeight: 'bold', background: roles.blue ? '#333' : '#1a5fa8', color: '#fff', border: 'none', borderRadius: 8, cursor: roles.blue ? 'not-allowed' : 'pointer', opacity: roles.blue ? 0.5 : 1 }}
-          >
-            {roles.blue ? 'Captain taken' : 'I am Captain (Blue)'}
-          </button>
-          <button
-            onClick={() => claimRole('orange')}
-            disabled={!!roles.orange}
-            style={{ padding: '10px 24px', fontSize: 15, fontWeight: 'bold', background: roles.orange ? '#333' : '#b84a00', color: '#fff', border: 'none', borderRadius: 8, cursor: roles.orange ? 'not-allowed' : 'pointer', opacity: roles.orange ? 0.5 : 1 }}
-          >
-            {roles.orange ? 'Co-Captain taken' : 'I am Co-Captain (Orange)'}
-          </button>
+      {/* Player identity bar — always visible at the top */}
+      <div style={{ background: '#0a0a0a', borderBottom: '1px solid #333', padding: '8px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontFamily: 'sans-serif' }}>
+        {/* Player number — based on awareness join order */}
+        <div style={{ fontSize: 16, fontWeight: 'bold', color: isFirstPlayer ? '#f1c40f' : '#aaa', display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#27ae60', display: 'inline-block', flexShrink: 0 }} />
+          {peers.length <= 1 ? 'Player 1' : isFirstPlayer ? 'Player 1' : 'Player 2'}
+          <span style={{ fontSize: 10, color: '#666', fontWeight: 'normal', marginLeft: 6 }}>[{BUILD}]</span>
         </div>
-      )}
-      {myRole !== null && (
-        <div style={{ textAlign: 'center', padding: '6px 0', background: '#111', color: myRole === 'blue' ? '#4a9eff' : '#ff8c42', fontFamily: 'sans-serif', fontSize: 13, fontWeight: 'bold' }}>
-          {myRole === 'blue' ? '✈ Captain (Blue)' : '✈ Co-Captain (Orange)'}
-          {!isCaptain && setupPhase && <span style={{ marginLeft: 12, color: '#888', fontWeight: 'normal' }}>Waiting for Captain to set up…</span>}
+
+        {/* Role selection or role label */}
+        {myRole !== null ? (
+          <div style={{ fontSize: 15, fontWeight: 'bold', color: myRole === 'blue' ? '#4a9eff' : '#ff8c42' }}>
+            ✈ {myRole === 'blue' ? 'Captain (Blue)' : 'Co-Captain (Orange)'}
+          </div>
+        ) : isFirstPlayer ? (
+          /* Player 1 picks a colour; Player 2 auto-takes the other (effect below) */
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button
+              onClick={() => claimRole('blue')}
+              disabled={roleTaken('blue')}
+              style={{ padding: '6px 18px', fontSize: 14, fontWeight: 'bold', background: roleTaken('blue') ? '#333' : '#1a5fa8', color: '#fff', border: 'none', borderRadius: 6, cursor: roleTaken('blue') ? 'not-allowed' : 'pointer', opacity: roleTaken('blue') ? 0.5 : 1 }}
+            >
+              {roleTaken('blue') ? 'Captain taken' : 'Captain (Blue)'}
+            </button>
+            <button
+              onClick={() => claimRole('orange')}
+              disabled={roleTaken('orange')}
+              style={{ padding: '6px 18px', fontSize: 14, fontWeight: 'bold', background: roleTaken('orange') ? '#333' : '#b84a00', color: '#fff', border: 'none', borderRadius: 6, cursor: roleTaken('orange') ? 'not-allowed' : 'pointer', opacity: roleTaken('orange') ? 0.5 : 1 }}
+            >
+              {roleTaken('orange') ? 'Co-Captain taken' : 'Co-Captain (Orange)'}
+            </button>
+          </div>
+        ) : (
+          <div style={{ fontSize: 13, color: '#888', fontWeight: 'bold' }}>
+            Waiting for Player 1 to choose roles…
+          </div>
+        )}
+
+        {/* Current turn (during play) / connection status */}
+        <div style={{ fontSize: 12, color: '#666', minWidth: 150, textAlign: 'right' }}>
+          {(gameState.gameReady === 1 && !gameState.gameOver && !gameState.gameWin)
+            ? <span style={{ color: gameState.activePlayer === 'blue' ? '#4a9eff' : '#ff8c42', fontWeight: 'bold' }}>
+                ✈ Turn: {gameState.activePlayer === 'blue' ? 'Captain (Blue)' : 'Co-Captain (Orange)'}{isMyTurn ? ' — You' : ''}
+              </span>
+            : !(roleTaken('blue') && roleTaken('orange'))
+              ? 'Waiting for 2nd player…'
+              : <span style={{ color: '#27ae60' }}>● Both players connected</span>}
         </div>
-      )}
+      </div>
 
       <div style={{
         width: '100%',
@@ -851,6 +1299,25 @@ export default function App() {
         flexDirection: 'column',
         alignItems: 'center',
       }}>
+       {/* Board viewport — clips the zoom/pan transform. Two-finger pinch zooms
+           (out from the default), one finger pans; dice (data-die) are skipped so
+           they keep their own drag. Trays/bar live outside and stay fixed. */}
+       <div
+         className="board-viewport"
+         onPointerDown={onBoardPointerDown}
+         onPointerMove={onBoardPointerMove}
+         onPointerUp={onBoardPointerUp}
+         onPointerCancel={onBoardPointerUp}
+         style={{ position: 'relative', overflow: 'hidden', width: BOARD_W * scale, height: viewportH }}
+       >
+        <div style={{
+          transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+          transformOrigin: '0 0',
+          width: BOARD_W * scale,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+        }}>
         {/* Altitude strip — draggable + resizable */}
         <div style={{ width: BOARD_W * scale, height: altStrip.h * scale, flexShrink: 0 }}>
           <div style={{
@@ -863,6 +1330,7 @@ export default function App() {
             <img
               src={altitudeStripImg}
               draggable={false}
+              data-pan
               style={{
                 position: 'absolute',
                 left: Math.round(altStrip.x),
@@ -895,6 +1363,7 @@ export default function App() {
               src={background}
               width={BOARD_W}
               draggable={false}
+              data-pan
               style={{ display: 'block', userSelect: 'none' }}
             />
 
@@ -920,7 +1389,7 @@ export default function App() {
                     return (
                       <>
                         {/* ── right-side controls (save / load dropdown) — setup only ── */}
-                        {!approachLocked && (
+                        {canEditApproach && (
                           <div style={{ position: 'absolute', left: DEST_W + 6, top: 0, display: 'flex', flexDirection: 'column', gap: 4, zIndex: 20 }}>
                             <button
                               onClick={(e) => { e.stopPropagation(); saveStrip() }}
@@ -941,29 +1410,34 @@ export default function App() {
                         <div style={{ position: 'relative' }}>
                           <img src={destinationPanelImg} draggable={false} style={{ width: DEST_W, height: DEST_H, display: 'block', userSelect: 'none' }} />
 
-                          <div style={{ position: 'absolute', bottom: 4, right: 6, color: '#fff', fontSize: 18, fontWeight: 'bold', fontFamily: 'monospace', pointerEvents: 'none', textShadow: '0 1px 3px #000' }}>{maxDist}</div>
                           {/* destination label — centered */}
                           <input
-                            readOnly={approachLocked || !isCaptain}
+                            readOnly={!canEditApproach}
                             value={gameState.approachHeader}
-                            onChange={e => isCaptain && dispatch({ type: 'SET_APPROACH_HEADER', value: e.target.value })}
+                            onChange={e => canEditApproach && dispatch({ type: 'SET_APPROACH_HEADER', value: e.target.value })}
                             onPointerDown={e => e.stopPropagation()}
                             placeholder="Destination"
-                            style={{ position: 'absolute', top: 12, left: 8, right: 8, width: DEST_W - 16, background: 'transparent', border: 'none', outline: 'none', color: '#fff', fontWeight: 'bold', fontSize: 17, textAlign: 'center', fontFamily: 'sans-serif', textShadow: '0 1px 3px #000', cursor: (approachLocked || !isCaptain) ? 'default' : 'text' }}
+                            style={{ position: 'absolute', top: 12, left: 8, right: 8, width: DEST_W - 16, background: 'transparent', border: 'none', outline: 'none', color: '#fff', fontWeight: 'bold', fontSize: 17, textAlign: 'center', fontFamily: 'sans-serif', textShadow: '0 1px 3px #000', cursor: canEditApproach ? 'text' : 'default' }}
                           />
                           {/* check button — right edge, same row as input */}
-                          <button
-                            onClick={(e) => { e.stopPropagation(); const n = gameState.approachPanels.length; dispatch({ type: 'LOCK_APPROACH_VALUES', values: gameState.approachPanels.map((p, i) => ({ d: n - i, p: p.planes })) }); dispatch({ type: 'SET_GAME_READY', value: 1 }) }}
-                            onPointerDown={e => e.stopPropagation()}
-                            style={{ position: 'absolute', top: 22, right: 4, width: 16, height: 16, padding: 0, border: 'none', borderRadius: 2, background: '#1a5a1a', color: '#fff', fontSize: 11, lineHeight: 1, cursor: 'pointer', display: approachLocked ? 'none' : 'flex', alignItems: 'center', justifyContent: 'center' }}
-                          >✓</button>
+                          {(() => {
+                            const bothReady = roleTaken('blue') && roleTaken('orange')
+                            return (
+                              <button
+                                onClick={(e) => { if (!bothReady) return; e.stopPropagation(); const n = gameState.approachPanels.length; dispatch({ type: 'LOCK_APPROACH_VALUES', values: gameState.approachPanels.map((p, i) => ({ d: n - i, p: p.planes })) }); dispatch({ type: 'SET_GAME_READY', value: 1 }) }}
+                                onPointerDown={e => e.stopPropagation()}
+                                title={bothReady ? 'Start game' : 'Waiting for both players…'}
+                                style={{ position: 'absolute', top: 22, right: 4, width: 16, height: 16, padding: 0, border: 'none', borderRadius: 2, background: bothReady ? '#1a5a1a' : '#555', color: '#fff', fontSize: 11, lineHeight: 1, cursor: bothReady ? 'pointer' : 'not-allowed', display: (approachLocked || !isFirstPlayer) ? 'none' : 'flex', alignItems: 'center', justifyContent: 'center', opacity: bothReady ? 1 : 0.5 }}
+                              >✓</button>
+                            )
+                          })()}
                           {slotSymbol(gameState.approachPanels[0].planeSlots, 40)}
                           <div style={{ position: 'absolute', top: 71, left: 0, right: 0, bottom: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
                             {Array.from({ length: destPlanes }).map((_, ti) => (
                               <img key={ti} src={planeTokenImg} draggable={false} style={{ width: 39, height: 39, userSelect: 'none' }} />
                             ))}
                           </div>
-                          {!approachLocked && (
+                          {canEditApproach && (
                             <div style={{ position: 'absolute', bottom: 26, right: 6, display: 'flex', flexDirection: 'column', gap: 1 }}>
                               <button onClick={(e) => { e.stopPropagation(); dispatch({ type: 'SET_APPROACH_PLANES', index: 0, value: destPlanes + 1 }) }} style={planeBtnStyle}>+</button>
                               <button onClick={(e) => { e.stopPropagation(); dispatch({ type: 'SET_APPROACH_PLANES', index: 0, value: destPlanes - 1 }) }} style={planeBtnStyle}>−</button>
@@ -980,19 +1454,18 @@ export default function App() {
                               <div style={{ position: 'relative', zIndex: 5, height: PANEL_GAP + 12, marginTop: -6, marginBottom: -6, background: dist === 3
                                 ? `linear-gradient(to bottom, ${PANEL_GAP_COLOR} 9px, #b8ccce 10px, #c2d2d0 11px, #c2d2d0 12px, #b8ccce 13px, ${PANEL_GAP_COLOR} 14px)`
                                 : `linear-gradient(to bottom, ${PANEL_GAP_COLOR} 10px, #b8ccce 10px, #b8ccce 11px, #c2d2d0 11px, #c2d2d0 12px, #b8ccce 12px, #b8ccce 13px, ${PANEL_GAP_COLOR} 13px)` }} />
-                              {!approachLocked && <>
+                              {canEditApproach && <>
                                 <button onClick={(e) => { e.stopPropagation(); dispatch({ type: 'ADD_APPROACH_PANEL' }); setApproachPos(p => ({ ...p, y: p.y - BLANK_H - PANEL_GAP })) }} style={{ ...btnBase, top: -18, borderRadius: '3px 0 0 0' }}>+</button>
                                 <button onClick={(e) => { e.stopPropagation(); if (gameState.approachPanels.length > 2) { dispatch({ type: 'REMOVE_APPROACH_PANEL' }); setApproachPos(p => ({ ...p, y: p.y + BLANK_H + PANEL_GAP })) } }} style={{ ...btnBase, top: 0, borderRadius: '0 0 0 3px', borderTop: 'none' }}>−</button>
                               </>}
                               <img src={blankPanelImg} draggable={false} style={{ width: BLANK_W, height: BLANK_H, display: 'block', userSelect: 'none' }} />
-                              <div style={{ position: 'absolute', bottom: 4, right: 6, color: '#fff', fontSize: 15, fontWeight: 'bold', fontFamily: 'monospace', pointerEvents: 'none', textShadow: '0 1px 3px #000' }}>{dist}</div>
                               {slotSymbol(panel.planeSlots)}
                               <div style={{ position: 'absolute', top: 33, left: 0, right: 0, bottom: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
                                 {Array.from({ length: planes }).map((_, ti) => (
                                   <img key={ti} src={planeTokenImg} draggable={false} style={{ width: 39, height: 39, userSelect: 'none' }} />
                                 ))}
                               </div>
-                              {!approachLocked && (
+                              {canEditApproach && (
                                 <div style={{ position: 'absolute', bottom: 22, right: 6, display: 'flex', flexDirection: 'column', gap: 1 }}>
                                   <button onClick={(e) => { e.stopPropagation(); dispatch({ type: 'SET_APPROACH_PLANES', index: panelIndex, value: planes + 1 }) }} style={planeBtnStyle}>+</button>
                                   <button onClick={(e) => { e.stopPropagation(); dispatch({ type: 'SET_APPROACH_PLANES', index: panelIndex, value: planes - 1 }) }} style={planeBtnStyle}>−</button>
@@ -1075,7 +1548,7 @@ export default function App() {
             {COFFEE_POS.map((pos, i) => (
               <div
                 key={`coffee-${i}`}
-                onClick={() => { if (!setupPhase && gameState.coffeeTokens[i]) setCoffeeChoice({ tokenIndex: i }) }}
+                onClick={() => { if (!setupPhase && isMyTurn && gameState.coffeeTokens[i]) setCoffeeChoice({ tokenIndex: i }) }}
                 style={{
                   position: 'absolute', left: pos.x, top: pos.y,
                   width: COFFEE_W, height: COFFEE_H,
@@ -1093,11 +1566,11 @@ export default function App() {
               src={rerollImg}
               draggable={false}
               onClick={() => {
-                if (!setupPhase && gameState.rerollToken) {
+                if (!setupPhase && isMyTurn && gameState.rerollToken) {
                   dispatch({ type: 'SET_REROLL_TOKEN', value: false })
                   setRerollGranted(true)
                   // Notify remote client to also grant reroll
-                  doc.transact(() => sharedMap.set('rerollGranted', Date.now()), clientIdRef.current)
+                  fbWrite('/rerollGranted', clientIdRef.current)
                 }
               }}
               style={{
@@ -1107,7 +1580,7 @@ export default function App() {
                 width: Math.round(px(87)),
                 height: Math.round(px(102)),
                 opacity: gameState.rerollToken ? 1 : 0,
-                cursor: 'pointer',
+                cursor: (!setupPhase && isMyTurn && gameState.rerollToken) ? 'pointer' : 'default',
                 userSelect: 'none',
               }}
             />
@@ -1170,24 +1643,46 @@ export default function App() {
             {gameState.altitude === 1 && <img src={altitude1000Img} draggable={false} style={{ position:'absolute', left:388, top:26, width:197, height:103, userSelect:'none', zIndex:20 }} />}
             {gameState.altitude === 0 && <img src={altitude0Img}    draggable={false} style={{ position:'absolute', left:390, top:28, width:196, height:103, userSelect:'none', zIndex:20 }} />}
 
+            {/* Tap-to-place targets — when a tray die is selected, highlight every
+                valid tray; tapping one drops the die there. */}
+            {selectedDie && !placed[selectedDie] && TRAYS
+              .filter(t => validateSnap(t, selectedDie, { brakes: gameState.brakes, flaps: gameState.flaps, landingGear: gameState.landingGear, coffeeTokens: gameState.coffeeTokens }, trayDice, values))
+              .map(t => (
+                <div
+                  key={`tap-${t.name}`}
+                  onClick={() => tapPlaceSelected(t)}
+                  style={{
+                    position: 'absolute', left: t.x, top: t.y, width: SQUARE, height: SQUARE,
+                    borderRadius: 8, outline: '3px solid #2ecc71', boxShadow: '0 0 12px 3px rgba(46,204,113,0.8)',
+                    background: 'rgba(46,204,113,0.15)', cursor: 'pointer', zIndex: 60,
+                  }}
+                />
+              ))}
+
             {/* Dice placed on the board. Press-drag to reposition; release off
-                the board to return to the tray. Sized to a board square. */}
+                the board to return to the tray. Tap once to select, again to
+                return to the tray. Sized to a board square. */}
             {ALL_DICE.filter(d => placed[d.id]).map(d => {
               const pos = placed[d.id]
               return (
                 <div
                   key={d.id}
+                  data-die
                   draggable={false}
                   onPointerDown={(e) => startDrag(e, d)}
+                  onClick={() => handlePlacedDieTap(d.id)}
                   style={{
                     position: 'absolute',
                     left: pos.x,
                     top: pos.y,
                     width: SQUARE,
                     height: SQUARE,
-                    cursor: 'grab',
+                    cursor: 'pointer',
                     touchAction: 'none',
                     userSelect: 'none',
+                    borderRadius: 8,
+                    outline: selectedDie === d.id ? '3px solid #2ecc71' : 'none',
+                    boxShadow: selectedDie === d.id ? '0 0 12px 3px rgba(46,204,113,0.8)' : 'none',
                     visibility: isHidden(d.id) ? 'hidden' : 'visible'
                   }}
                 >
@@ -1199,47 +1694,52 @@ export default function App() {
             })}
           </div>
         </div>
+        </div>
+       </div>
       </div>
 
-      {/* Blue dice tray — shown to Captain or solo player */}
+      {/* Each player sees ONLY their own colour's tray (solo sees both). The
+          board, tracks and tokens stay fully in sync via gameState; the dice
+          tray is the one per-player surface. */}
       {(myRole === null || myRole === 'blue') && (
         <DiceTray
           color="blue"
           dice={byColor('blue')}
           dieSize={SQUARE * scale}
           onPointerDown={isMyTurn ? startDrag : undefined}
-          onRoll={isMyTurn ? handleRoll : undefined}
+          onRoll={!setupPhase ? handleRoll : undefined}
           draggingId={drag && drag.moved ? drag.id : null}
           rollTriggers={dieTriggers}
           coffeeTriggers={coffeeTriggers}
           coffeeHighlight={myRole !== 'orange' && !!coffeeChoice && !coffeeChoice.dieId}
           onCoffeeSelect={(myRole !== 'orange' && !setupPhase) ? (e, d) => setCoffeeChoice({ tokenIndex: coffeeChoice.tokenIndex, dieId: d.id, popupX: e.clientX, popupY: e.clientY }) : undefined}
-          unrolledHighlight={(!setupPhase && isMyTurn) ? (id) => !rolledThisAlt.has(id) : undefined}
-          rerollHighlight={(!setupPhase && isMyTurn) ? (id) => rerollGranted && !rerollUsed.has(id) && rolledThisAlt.has(id) : undefined}
-          canRoll={(setupPhase || !isMyTurn) ? () => false : canRollDie}
-          onRollAll={isMyTurn ? () => handleRollAll('blue') : undefined}
-          rollAllDisabled={setupPhase || !isMyTurn}
+          unrolledHighlight={!setupPhase ? (id) => !rolledThisAlt.has(id) : undefined}
+          rerollHighlight={!setupPhase ? (id) => rerollGranted && !rerollUsed.has(id) && rolledThisAlt.has(id) : undefined}
+          canRoll={setupPhase ? () => false : (id) => !rolledThisAlt.has(id)}
+          selectedId={selectedDie}
+          onRollAll={() => handleRollAll('blue')}
+          rollAllDisabled={setupPhase}
         />
       )}
 
-      {/* Orange dice tray — shown to Co-Captain or solo player */}
       {(myRole === null || myRole === 'orange') && (
         <DiceTray
           color="orange"
           dice={byColor('orange')}
           dieSize={SQUARE * scale}
           onPointerDown={isMyTurn ? startDrag : undefined}
-          onRoll={isMyTurn ? handleRoll : undefined}
+          onRoll={!setupPhase ? handleRoll : undefined}
           draggingId={drag && drag.moved ? drag.id : null}
           rollTriggers={dieTriggers}
           coffeeTriggers={coffeeTriggers}
           coffeeHighlight={myRole !== 'blue' && !!coffeeChoice && !coffeeChoice.dieId}
           onCoffeeSelect={(myRole !== 'blue' && !setupPhase) ? (e, d) => setCoffeeChoice({ tokenIndex: coffeeChoice.tokenIndex, dieId: d.id, popupX: e.clientX, popupY: e.clientY }) : undefined}
-          unrolledHighlight={(!setupPhase && isMyTurn) ? (id) => !rolledThisAlt.has(id) : undefined}
-          rerollHighlight={(!setupPhase && isMyTurn) ? (id) => rerollGranted && !rerollUsed.has(id) && rolledThisAlt.has(id) : undefined}
-          canRoll={(setupPhase || !isMyTurn) ? () => false : canRollDie}
-          onRollAll={isMyTurn ? () => handleRollAll('orange') : undefined}
-          rollAllDisabled={setupPhase || !isMyTurn}
+          unrolledHighlight={!setupPhase ? (id) => !rolledThisAlt.has(id) : undefined}
+          rerollHighlight={!setupPhase ? (id) => rerollGranted && !rerollUsed.has(id) && rolledThisAlt.has(id) : undefined}
+          canRoll={setupPhase ? () => false : (id) => !rolledThisAlt.has(id)}
+          selectedId={selectedDie}
+          onRollAll={() => handleRollAll('orange')}
+          rollAllDisabled={setupPhase}
         />
       )}
 

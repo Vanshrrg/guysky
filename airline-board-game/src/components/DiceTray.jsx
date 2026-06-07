@@ -19,10 +19,11 @@ import Die from './Die'
 
 const NATIVE = 90 // Die's intrinsic size in px
 
-export default function DiceTray({ color = 'blue', dice = [], dieSize = NATIVE, onPointerDown, onRoll, draggingId, rollTriggers = {}, coffeeTriggers = {}, coffeeHighlight = false, onCoffeeSelect, rollHighlight, unrolledHighlight, rerollHighlight, canRoll, onRollAll, rollAllDisabled = false }) {
+export default function DiceTray({ color = 'blue', dice = [], dieSize = NATIVE, onPointerDown, onRoll, draggingId, rollTriggers = {}, coffeeTriggers = {}, coffeeHighlight = false, onCoffeeSelect, rollHighlight, unrolledHighlight, rerollHighlight, canRoll, onRollAll, rollAllDisabled = false, selectedId = null }) {
   const ratio = dieSize / NATIVE
 
   const getOutline = (id) => {
+    if (id === selectedId)        return '3px solid #2ecc71'
     if (coffeeHighlight)          return '3px solid #f1c40f'
     if (rerollHighlight?.(id))    return '3px solid #a855f7'
     if (unrolledHighlight?.(id))  return '3px solid #e74c3c'
@@ -30,6 +31,7 @@ export default function DiceTray({ color = 'blue', dice = [], dieSize = NATIVE, 
   }
 
   const getShadow = (id) => {
+    if (id === selectedId)        return '0 0 14px 5px rgba(46,204,113,0.85)'
     if (coffeeHighlight)          return '0 0 10px 3px rgba(241,196,15,0.7)'
     if (rerollHighlight?.(id))    return '0 0 14px 5px rgba(168,85,247,0.85)'
     if (unrolledHighlight?.(id))  return '0 0 14px 5px rgba(231,76,60,0.85)'
