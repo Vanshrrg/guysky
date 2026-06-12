@@ -33,15 +33,7 @@ import fund6Src from "../../object/fund6.png";
 import fund7Src from "../../object/fund7.png";
 import fund8Src from "../../object/fund8.png";
 import type { PreGameSetup } from "./PreGamePhase";
-
-function shuffle<T>(arr: T[]): T[] {
-  const a = [...arr];
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
-}
+import { BOARD_RATIO, CUBE_W, shuffle, defaultCubes, inBox } from "./boardGeometry";
 
 const MARKERS: {
   key: string; src: string; alt: string; def: MarkerState; tintColor?: string;
@@ -61,7 +53,6 @@ const CURE_INDICES = MARKERS.map((m, i) => m.curePos ? i : -1).filter(i => i >= 
 const COLOR_TO_CURE_IDX: Record<string, number> = { red: 0, yellow: 1, blue: 2, black: 3 };
 const LS_CURED = "epidemic.cured.v2";
 
-const CUBE_W = 1.67; // % of board width — same size for all 96 cubes
 const LS_CITY_INFECTION = "epidemic.cityInfection.v2"; // v2: per-color map
 const COLOR_TO_CUBE: Record<string, string> = {
   blue: "#0A00A1", yellow: "#FFFA73", black: "#1a1a1a", red: "#cc1111",
@@ -71,30 +62,6 @@ type DiseaseColor = typeof DISEASE_COLORS[number];
 type CityColorCounts = Partial<Record<DiseaseColor, number>>;
 type CityInfectionMap = Record<string, CityColorCounts>;
 const CUBE_COLORS = ["#1a1a1a", "#FFFA73", "#cc1111", "#0A00A1"] as const;
-
-// Seeded PRNG for deterministic pile positions
-function pr(seed: number) { const x = Math.sin(seed * 9301 + 49297) * 233280; return x - Math.floor(x); }
-
-function defaultCubes() {
-  const centers = [
-    { x: 20.52, y: 89.41 }, // black
-    { x: 3.21,  y: 89.41 }, // yellow
-    { x: 8.97,  y: 89.41 }, // red
-    { x: 14.77, y: 89.41 }, // blue
-  ];
-  const result: { x: number; y: number }[] = [];
-  for (let ci = 0; ci < 4; ci++) {
-    const { x, y } = centers[ci];
-    const pile = Array.from({ length: 24 }, (_, j) => {
-      const idx = ci * 24 + j;
-      return { x: x + (pr(idx * 2) - 0.5) * 3.2, y: y + (pr(idx * 2 + 1) - 0.5) * 4.5 };
-    });
-    // Sort back→front so cubes with higher y render last (on top)
-    pile.sort((a, b) => a.y - b.y);
-    result.push(...pile);
-  }
-  return result;
-}
 
 const LS_ERADICATED = "epidemic.eradicated.v2";
 const LS_OUTBREAK_POS = "epidemic.outbreak-pos.v1";
@@ -265,7 +232,6 @@ function loadCard(key: string, def: CardState): CardState {
   try { const r = localStorage.getItem(key); if (r) return JSON.parse(r); } catch { /* ignore */ }
   return def;
 }
-const BOARD_RATIO = 918 / 568;
 
 let OUTBREAK_TRACK: { x: number; y: number }[] = [
   { x: 3.87, y: 41.84 }, // 0
@@ -288,12 +254,6 @@ let INFECTION_TRACK: { x: number; y: number }[] = [
   { x: 93.10, y: 20.07 }, // 6
 ];
 
-/** Returns true if (px,py) falls inside the marker's bounding box with padding. */
-function inBox(px: number, py: number, cx: number, cy: number, w: number, pad = 1.6) {
-  const hw = (w / 2) * pad;
-  const hh = (w * BOARD_RATIO / 2) * pad;
-  return Math.abs(px - cx) <= hw && Math.abs(py - cy) <= hh;
-}
 
 function loadMarker(key: string, def: MarkerState): MarkerState {
   try { const r = localStorage.getItem(key); if (r) return { rot: 0, ...JSON.parse(r) }; }
