@@ -1820,8 +1820,8 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
           </div>
         ))}
 
-        {/* Player hand cards — stacked, draggable */}
-        {boardPxW > 0 && (activePlayers as readonly string[]).map(player => {
+        {/* Player hand cards — stacked, draggable — always render all 4 slots */}
+        {boardPxW > 0 && (['p1','p2','p3','p4'] as const).map(player => {
           const area = player === 'p1' ? HAND_P1 : player === 'p2' ? HAND_P2 : player === 'p3' ? HAND_P3 : HAND_P4;
           const cards = (handCards as Record<string,string[]>)[player] ?? [];
           if (cards.length === 0) return null;
