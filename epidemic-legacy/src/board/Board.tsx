@@ -338,10 +338,13 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   const boardRef = useRef<HTMLDivElement>(null);
   const [calibrating, setCalibrating] = useState(false);
   const [states, setStates] = useState<MarkerState[]>(() => MARKERS.map(m => loadMarker(m.key, m.def)));
-  const [cured, setCured] = useState<boolean[]>(() => CURE_INDICES.map(() => false));
-  const [eradicated, setEradicated] = useState<boolean[]>(() => CURE_INDICES.map(() => false));
-  const [outbreakPos, setOutbreakPos] = useState(0);
-  const [infectionPos, setInfectionPos] = useState(0);
+  // Month 0 is a fresh setup scenario — it never restores saved progress.
+  // All other scenarios (campaign months + board sandbox) persist these.
+  const persistGame = scenario !== "month0";
+  const [cured, setCured] = useState<boolean[]>(() => persistGame ? loadCured() : CURE_INDICES.map(() => false));
+  const [eradicated, setEradicated] = useState<boolean[]>(() => persistGame ? loadEradicated() : CURE_INDICES.map(() => false));
+  const [outbreakPos, setOutbreakPos] = useState(() => persistGame ? loadTrackPos(LS_OUTBREAK_POS, OUTBREAK_TRACK.length - 1) : 0);
+  const [infectionPos, setInfectionPos] = useState(() => persistGame ? loadTrackPos(LS_INFECTION_POS, INFECTION_TRACK.length - 1) : 0);
   const [cityInfection, setCityInfection] = useState<CityInfectionMap>(() => {
     try { const r = localStorage.getItem(LS_CITY_INFECTION); if (r) return JSON.parse(r); } catch { /* ignore */ }
     return {};
@@ -562,6 +565,13 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   useEffect(() => {
     localStorage.setItem(LS_PANIC_LEVELS, JSON.stringify(panicLevels));
   }, [panicLevels]);
+
+  // Persist cure / eradication / outbreak-rate / infection-rate progress so a
+  // reload restores the game. Skipped in Month 0 (always a fresh setup).
+  useEffect(() => { if (persistGame) localStorage.setItem(LS_CURED, JSON.stringify(cured)); }, [cured, persistGame]);
+  useEffect(() => { if (persistGame) localStorage.setItem(LS_ERADICATED, JSON.stringify(eradicated)); }, [eradicated, persistGame]);
+  useEffect(() => { if (persistGame) localStorage.setItem(LS_OUTBREAK_POS, String(outbreakPos)); }, [outbreakPos, persistGame]);
+  useEffect(() => { if (persistGame) localStorage.setItem(LS_INFECTION_POS, String(infectionPos)); }, [infectionPos, persistGame]);
 
   // Auto-complete objective 0 when all 4 diseases are cured
   useEffect(() => {
@@ -3076,6 +3086,10 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                 <button onClick={() => {
                   localStorage.removeItem(LS_CITY_INFECTION);
                   localStorage.removeItem(LS_HAND_CARDS);
+                  localStorage.removeItem(LS_CURED);
+                  localStorage.removeItem(LS_ERADICATED);
+                  localStorage.removeItem(LS_OUTBREAK_POS);
+                  localStorage.removeItem(LS_INFECTION_POS);
                   onRestart();
                 }} style={{
                   padding: "8px 22px", fontSize: 13,
@@ -3089,6 +3103,10 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                 <button onClick={() => {
                   localStorage.removeItem(LS_CITY_INFECTION);
                   localStorage.removeItem(LS_HAND_CARDS);
+                  localStorage.removeItem(LS_CURED);
+                  localStorage.removeItem(LS_ERADICATED);
+                  localStorage.removeItem(LS_OUTBREAK_POS);
+                  localStorage.removeItem(LS_INFECTION_POS);
                   onMainMenu();
                 }} style={{
                   padding: "8px 22px", fontSize: 13,
