@@ -1,36 +1,2849 @@
-// The board surface. The board image is intentionally NOT wired in yet — a new
-// board art file will be added later. For now this renders an empty,
-// percentage-based, aspect-locked frame that cities and objects layer on top of
-// (SPEC §6: everything placed by percentage so the board scales).
+import { useRef, useState, useEffect } from "react";
+import boardArt from "../../object/newboard2.png";
+import outbreakSrc from "../../object/outbreak marker.png";
+import cureSrc from "../../object/cure marker.png";
+import infectionRateSrc from "../../object/infection rate marker.png";
+import infectionCardBackSrc from "../../object/infectioncardback.png";
+import playerCardBackSrc from "../../object/playercard back.png";
+import epidemicCardSrc from "../../object/epidemic.png";
+import objectiveSrc from "../../object/objective1.png";
+import researchSrc from "../../object/research.png";
+import panicLevel1Src from "../../object/paniclevel1.png";
+import panicLevel2Src from "../../object/paniclevel2.png";
+import panicLevel3Src from "../../object/paniclevel3.png";
+import panicLevel4Src from "../../object/paniclevel4.png";
+import panicLevel5Src from "../../object/paniclevel5.png";
+const PANIC_LEVEL_SRCS = ["", panicLevel1Src, panicLevel2Src, panicLevel3Src, panicLevel4Src, panicLevel5Src];
+import { CityLayer, loadRoadblocks, saveRoadblocks, edgeKey, type RoadblockState } from "./CityLayer";
+import { BoardMarker, CubeSvg, type MarkerState } from "./BoardMarker";
+import { CITIES } from "./cities";
+import { InfectionCard } from "./InfectionCard";
+import { PlayerCard } from "./PlayerCard";
+import medicSrc from "../../object/medic.png";
+import scientistSrc from "../../object/scientist.png";
+import researcherSrc from "../../object/researcher.png";
+import generalistSrc from "../../object/generalist.png";
+import dispatcherSrc from "../../object/dispatcher.png";
+import fund1Src from "../../object/fund1.png";
+import fund2Src from "../../object/fund2.png";
+import fund3Src from "../../object/fund3.png";
+import fund4Src from "../../object/fund4.png";
+import fund5Src from "../../object/fund5.png";
+import fund6Src from "../../object/fund6.png";
+import fund7Src from "../../object/fund7.png";
+import fund8Src from "../../object/fund8.png";
+import type { PreGameSetup } from "./PreGamePhase";
 
-export function Board() {
+function shuffle<T>(arr: T[]): T[] {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+const MARKERS: {
+  key: string; src: string; alt: string; def: MarkerState; tintColor?: string;
+  curePos?: { x: number; y: number }; fixed?: boolean;
+}[] = [
+  { key: "epidemic.marker.outbreak.v2",      src: outbreakSrc,      alt: "Outbreak marker",         def: { x: 3.87,  y: 41.84, w: 2.20, rot: -45 }, fixed: true },
+  { key: "epidemic.marker.cure.v2",          src: cureSrc,          alt: "Cure marker",             def: { x: 8.97,  y: 96.60, w: 2.34, rot: 0 }, curePos: { x: 9.27,  y: 72.82 }, fixed: true },
+  { key: "epidemic.marker.infectionrate.v2", src: infectionRateSrc, alt: "Infection rate marker",   def: { x: 72.72, y: 20.62, w: 2.79, rot: 0 }, fixed: true },
+  { key: "epidemic.marker.cure-yellow.v2",   src: cureSrc,          alt: "Cure marker (yellow)",    def: { x: 3.21,  y: 96.42, w: 2.34, rot: 0 }, tintColor: "#FFFA73", curePos: { x: 3.30,  y: 72.91 }, fixed: true },
+  { key: "epidemic.marker.cure-darkblue.v2", src: cureSrc,          alt: "Cure marker (dark blue)", def: { x: 14.77, y: 96.73, w: 2.34, rot: 0 }, tintColor: "#0A00A1", curePos: { x: 14.82, y: 72.73 }, fixed: true },
+  { key: "epidemic.marker.cure-black.v2",    src: cureSrc,          alt: "Cure marker (black)",     def: { x: 20.55, y: 96.78, w: 2.34, rot: 0 }, tintColor: "#1a1a1a", curePos: { x: 20.52, y: 72.82 }, fixed: true },
+];
+
+const CURE_INDICES = MARKERS.map((m, i) => m.curePos ? i : -1).filter(i => i >= 0);
+// Maps DiseaseColor → index in CURE_INDICES (ci)
+// Order mirrors MARKERS: ci0=red(no tint), ci1=yellow, ci2=blue, ci3=black
+const COLOR_TO_CURE_IDX: Record<string, number> = { red: 0, yellow: 1, blue: 2, black: 3 };
+const LS_CURED = "epidemic.cured.v2";
+
+const CUBE_W = 1.67; // % of board width — same size for all 96 cubes
+const LS_CITY_INFECTION = "epidemic.cityInfection.v2"; // v2: per-color map
+const COLOR_TO_CUBE: Record<string, string> = {
+  blue: "#0A00A1", yellow: "#FFFA73", black: "#1a1a1a", red: "#cc1111",
+};
+const DISEASE_COLORS = ["black", "yellow", "red", "blue"] as const;
+type DiseaseColor = typeof DISEASE_COLORS[number];
+type CityColorCounts = Partial<Record<DiseaseColor, number>>;
+type CityInfectionMap = Record<string, CityColorCounts>;
+const LS_CUBES = "epidemic.cubes.v3";
+const CUBE_COLORS = ["#1a1a1a", "#FFFA73", "#cc1111", "#0A00A1"] as const;
+
+// Seeded PRNG for deterministic pile positions
+function pr(seed: number) { const x = Math.sin(seed * 9301 + 49297) * 233280; return x - Math.floor(x); }
+
+function defaultCubes() {
+  const centers = [
+    { x: 20.52, y: 89.41 }, // black
+    { x: 3.21,  y: 89.41 }, // yellow
+    { x: 8.97,  y: 89.41 }, // red
+    { x: 14.77, y: 89.41 }, // blue
+  ];
+  const result: { x: number; y: number }[] = [];
+  for (let ci = 0; ci < 4; ci++) {
+    const { x, y } = centers[ci];
+    const pile = Array.from({ length: 24 }, (_, j) => {
+      const idx = ci * 24 + j;
+      return { x: x + (pr(idx * 2) - 0.5) * 3.2, y: y + (pr(idx * 2 + 1) - 0.5) * 4.5 };
+    });
+    // Sort back→front so cubes with higher y render last (on top)
+    pile.sort((a, b) => a.y - b.y);
+    result.push(...pile);
+  }
+  return result;
+}
+
+function loadCubes(): { x: number; y: number }[] {
+  try { const r = localStorage.getItem(LS_CUBES); if (r) return JSON.parse(r); } catch { /* ignore */ }
+  return defaultCubes();
+}
+
+
+const LS_ERADICATED = "epidemic.eradicated.v2";
+const LS_OUTBREAK_POS = "epidemic.outbreak-pos.v1";
+const LS_INFECTION_POS = "epidemic.infection-pos.v1";
+
+type CardState = { x: number; y: number; w: number };
+const HAND_P1 = { x: -4.56,  y: 52.58, w: 9.37, h: 61.66 };
+const HAND_P2 = { x: 104.67, y: 50.17, w: 9.45, h: 61.93 };
+const HAND_P3 = { x: -4.56,  y: 122.0, w: 9.37, h: 61.66 };
+const HAND_P4 = { x: 104.67, y: 122.0, w: 9.45, h: 61.93 };
+const LS_HAND_CARDS = "epidemic.hand-cards.v1";
+type HandCards = { p1: string[]; p2: string[]; p3: string[]; p4: string[] };
+function loadHandCards(): HandCards {
+  try { const r = localStorage.getItem(LS_HAND_CARDS); if (r) return { p1: [], p2: [], p3: [], p4: [], ...JSON.parse(r) }; } catch { /* ignore */ }
+  return { p1: [], p2: [], p3: [], p4: [] };
+}
+const LS_CARD_INFECTION = "epidemic.card.infection";
+const LS_CARD_PLAYER = "epidemic.card.player";
+const DEF_CARD_INFECTION: CardState = { x: 75.98, y: 9.04, w: 11.59 };
+const DEF_CARD_PLAYER: CardState = { x: 74.18, y: 89.26, w: 8.38 };
+const LS_CARD_INFECTION_DISCARD = "epidemic.card.infection-discard";
+const LS_CARD_PLAYER_DISCARD = "epidemic.card.player-discard";
+const DEF_CARD_INFECTION_DISCARD: CardState = { x: 89.44, y: 8.55, w: 11.59 };
+const DEF_CARD_PLAYER_DISCARD: CardState = { x: 84.73, y: 89.55, w: 8.38 };
+const PANIC_W = 1.49;
+const PANIC_TRAY_POS: Record<string, { x: number; y: number }> = {
+  "san-francisco":   { x: 17.36, y: 39.70 },
+  "chicago":         { x: 22.26, y: 33.95 },
+  "montreal":        { x: 28.66, y: 33.13 },
+  "new-york":        { x: 36.62, y: 38.01 },
+  "washington":      { x: 36.03, y: 42.46 },
+  "atlanta":         { x: 24.98, y: 44.12 },
+  "london":          { x: 47.21, y: 26.97 },
+  "madrid":          { x: 44.85, y: 37.21 },
+  "paris":           { x: 50.92, y: 37.56 },
+  "essen":           { x: 51.64, y: 26.93 },
+  "milan":           { x: 57.81, y: 33.23 },
+  "st-petersburg":   { x: 62.48, y: 26.93 },
+  "los-angeles":     { x: 15.61, y: 47.43 },
+  "mexico-city":     { x: 22.02, y: 54.71 },
+  "miami":           { x: 31.77, y: 49.24 },
+  "bogota":          { x: 31.14, y: 58.49 },
+  "lima":            { x: 25.57, y: 72.47 },
+  "santiago":        { x: 26.59, y: 84.36 },
+  "buenos-aires":    { x: 34.73, y: 84.54 },
+  "sao-paulo":       { x: 40.46, y: 74.34 },
+  "lagos":           { x: 49.46, y: 59.12 },
+  "kinshasa":        { x: 53.93, y: 66.42 },
+  "khartoum":        { x: 60.96, y: 56.50 },
+  "johannesburg":    { x: 60.76, y: 75.65 },
+  "algiers":         { x: 50.53, y: 45.87 },
+  "cairo":           { x: 56.83, y: 45.14 },
+  "istanbul":        { x: 57.58, y: 38.19 },
+  "moscow":          { x: 62.51, y: 32.27 },
+  "baghdad":         { x: 64.77, y: 46.78 },
+  "riyadh":          { x: 64.99, y: 55.86 },
+  "tehran":          { x: 70.25, y: 37.07 },
+  "karachi":         { x: 67.82, y: 47.02 },
+  "delhi":           { x: 76.18, y: 43.47 },
+  "mumbai":          { x: 68.81, y: 55.36 },
+  "chennai":         { x: 73.71, y: 60.66 },
+  "kolkata":         { x: 77.43, y: 47.81 },
+  "beijing":         { x: 81.43, y: 35.29 },
+  "seoul":           { x: 90.38, y: 33.35 },
+  "tokyo":           { x: 95.13, y: 39.78 },
+  "osaka":           { x: 95.93, y: 44.59 },
+  "shanghai":        { x: 81.49, y: 43.20 },
+  "taipei":          { x: 89.66, y: 49.23 },
+  "hong-kong":       { x: 82.38, y: 53.62 },
+  "bangkok":         { x: 78.61, y: 55.57 },
+  "manila":          { x: 92.61, y: 60.18 },
+  "jakarta":         { x: 78.68, y: 69.63 },
+  "sydney":          { x: 93.06, y: 84.53 },
+};
+const RESEARCH_W = 2.19;
+const LS_TOKEN_P1 = "epidemic.token-p1.v1";
+const LS_TOKEN_P2 = "epidemic.token-p2.v1";
+const DEF_TOKEN_P1: CardState = { x: 51.21, y: 57.25, w: 2.42 };
+const DEF_TOKEN_P2: CardState = { x: 53.00, y: 57.25, w: 2.42 };
+const TOKEN_COLORS = { p1: "#e8479a", p2: "#e8720a" } as const;
+const TOKEN_COLORS_ALL: Record<string, string> = {
+  p1: "#e8479a", p2: "#e8720a", p3: "#f0f0f0", p4: "#1a2a8a",
+};
+const LS_TOKEN_P3 = "epidemic.token-p3.v1";
+const LS_TOKEN_P4 = "epidemic.token-p4.v1";
+const DEF_TOKEN_P3: CardState = { x: 55.00, y: 57.25, w: 2.42 };
+const DEF_TOKEN_P4: CardState = { x: 57.00, y: 57.25, w: 2.42 };
+const ROLE_IMGS: Record<string, string> = {
+  medic: medicSrc, scientist: scientistSrc, researcher: researcherSrc,
+  generalist: generalistSrc, dispatcher: dispatcherSrc,
+};
+const FUND_IMGS: Record<string, string> = {
+  fund1: fund1Src, fund2: fund2Src, fund3: fund3Src, fund4: fund4Src,
+  fund5: fund5Src, fund6: fund6Src, fund7: fund7Src, fund8: fund8Src,
+};
+const LS_RESEARCH_STATIONS = "epidemic.research-stations.v1";
+const LS_RESEARCH_POS = "epidemic.research-pos.v1";
+function loadResearchStations(): Set<string> {
+  try { const r = localStorage.getItem(LS_RESEARCH_STATIONS); if (r) return new Set(JSON.parse(r)); } catch { /* ignore */ }
+  return new Set();
+}
+function loadResearchPos(): Record<string, { x: number; y: number }> {
+  try { const r = localStorage.getItem(LS_RESEARCH_POS); if (r) return JSON.parse(r); } catch { /* ignore */ }
+  return {};
+}
+const LS_PANIC_LEVELS = "epidemic.panic-levels.v1";
+function loadPanicLevels(): Record<string, number> {
+  try { const r = localStorage.getItem(LS_PANIC_LEVELS); if (r) return JSON.parse(r); } catch { /* ignore */ }
+  return {};
+}
+const LS_HCMC_TRAY = "epidemic.panic-tray.hcmc.v1";
+const DEF_HCMC = { x: 85.88, y: 60.93 };
+function loadHcmc(): { x: number; y: number } {
+  try { const r = localStorage.getItem(LS_HCMC_TRAY); if (r) return JSON.parse(r); } catch { /* ignore */ }
+  return DEF_HCMC;
+}
+
+const OBJECTIVE_SLOTS = [
+  { x: 7.02,  y: 8.62, w: 11.09 },
+  { x: 19.09, y: 8.51, w: 11.09 },
+  { x: 31.45, y: 8.27, w: 11.09 },
+  { x: 43.82, y: 8.39, w: 11.09 },
+  { x: 56.04, y: 8.62, w: 11.09 },
+];
+
+const INFECTION_RATE_VALUES = [2, 2, 2, 3, 3, 4, 4];
+type TurnPhase = "actions" | "draw" | "discard" | "infect";
+interface TurnStateData {
+  currentPlayerIndex: number;
+  actionsRemaining: number;
+  phase: TurnPhase;
+  pendingCharter: boolean;
+  pendingShuttle: boolean;
+  drawCount: number;
+  infectCount: number;
+}
+const LS_TURN = "epidemic.turn.v1";
+const LS_PLAYER_CITIES = "epidemic.player-cities.v1";
+function loadTurnState(): TurnStateData {
+  try { const r = localStorage.getItem(LS_TURN); if (r) return JSON.parse(r); } catch { /* ignore */ }
+  return { currentPlayerIndex: 0, actionsRemaining: 4, phase: "actions", pendingCharter: false, pendingShuttle: false, drawCount: 0, infectCount: 0 };
+}
+function loadPlayerCities(count: number): string[] {
+  try { const r = localStorage.getItem(LS_PLAYER_CITIES); if (r) return JSON.parse(r); } catch { /* ignore */ }
+  return Array(count).fill("atlanta");
+}
+
+// Bump this whenever any DEF_CARD_* default position changes.
+const CARD_SCHEMA_V = "4";
+const LS_CARD_SCHEMA = "epidemic.cardSchema";
+const CARD_LS_KEYS = [LS_CARD_INFECTION, LS_CARD_PLAYER, LS_CARD_INFECTION_DISCARD, LS_CARD_PLAYER_DISCARD];
+if (localStorage.getItem(LS_CARD_SCHEMA) !== CARD_SCHEMA_V) {
+  CARD_LS_KEYS.forEach(k => localStorage.removeItem(k));
+  localStorage.setItem(LS_CARD_SCHEMA, CARD_SCHEMA_V);
+}
+
+function loadCard(key: string, def: CardState): CardState {
+  try { const r = localStorage.getItem(key); if (r) return JSON.parse(r); } catch { /* ignore */ }
+  return def;
+}
+const BOARD_RATIO = 918 / 568;
+
+let OUTBREAK_TRACK: { x: number; y: number }[] = [
+  { x: 3.87, y: 41.84 }, // 0
+  { x: 6.70, y: 45.22 }, // 1
+  { x: 3.82, y: 48.35 }, // 2
+  { x: 6.70, y: 51.66 }, // 3
+  { x: 3.88, y: 54.98 }, // 4
+  { x: 6.65, y: 58.02 }, // 5
+  { x: 3.88, y: 60.89 }, // 6
+  { x: 6.65, y: 64.11 }, // 7
+  { x: 3.82, y: 67.16 }, // 8
+];
+let INFECTION_TRACK: { x: number; y: number }[] = [
+  { x: 72.72, y: 20.62 }, // 0
+  { x: 76.07, y: 20.47 }, // 1
+  { x: 79.46, y: 20.34 }, // 2
+  { x: 82.83, y: 20.33 }, // 3
+  { x: 86.20, y: 20.24 }, // 4
+  { x: 89.63, y: 20.07 }, // 5
+  { x: 93.10, y: 20.07 }, // 6
+];
+
+/** Returns true if (px,py) falls inside the marker's bounding box with padding. */
+function inBox(px: number, py: number, cx: number, cy: number, w: number, pad = 1.6) {
+  const hw = (w / 2) * pad;
+  const hh = (w * BOARD_RATIO / 2) * pad;
+  return Math.abs(px - cx) <= hw && Math.abs(py - cy) <= hh;
+}
+
+function loadMarker(key: string, def: MarkerState): MarkerState {
+  try { const r = localStorage.getItem(key); if (r) return { rot: 0, ...JSON.parse(r) }; }
+  catch { /* ignore */ }
+  return def;
+}
+
+function loadTrackPos(key: string, max: number): number {
+  try { const r = localStorage.getItem(key); if (r !== null) return Math.min(max, Math.max(0, Number(r))); }
+  catch { /* ignore */ }
+  return 0;
+}
+
+function loadCured(): boolean[] {
+  try { const r = localStorage.getItem(LS_CURED); if (r) return JSON.parse(r); }
+  catch { /* ignore */ }
+  return CURE_INDICES.map(() => false);
+}
+
+function loadEradicated(): boolean[] {
+  try { const r = localStorage.getItem(LS_ERADICATED); if (r) return JSON.parse(r); }
+  catch { /* ignore */ }
+  return CURE_INDICES.map(() => false);
+}
+
+const SCENARIO_LABELS: Record<string, string> = {
+  board: "Board",
+  month0: "Month 0",
+  jan: "January", feb: "February", mar: "March", apr: "April",
+  may: "May", jun: "June", jul: "July", aug: "August",
+  sep: "September", oct: "October", nov: "November", dec: "December",
+};
+
+export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month0", onInfectionDone, onChooseRoles, onResumeRoles, onRestart, onMainMenu }: {
+  setup?: PreGameSetup;
+  fundingCards?: string[];   // passed before setup is ready (deal phase)
+  scenario?: string;
+  onInfectionDone?: () => void;
+  onChooseRoles?: () => void;
+  onResumeRoles?: () => void;
+  onRestart?: () => void;
+  onMainMenu?: () => void;
+}) {
+  const boardRef = useRef<HTMLDivElement>(null);
+  const [calibrating, setCalibrating] = useState(false);
+  const [states, setStates] = useState<MarkerState[]>(() => MARKERS.map(m => loadMarker(m.key, m.def)));
+  const [cured, setCured] = useState<boolean[]>(() => CURE_INDICES.map(() => false));
+  const [eradicated, setEradicated] = useState<boolean[]>(() => CURE_INDICES.map(() => false));
+  const [outbreakPos, setOutbreakPos] = useState(0);
+  const [infectionPos, setInfectionPos] = useState(0);
+  const [cityInfection, setCityInfection] = useState<CityInfectionMap>(() => {
+    try { const r = localStorage.getItem(LS_CITY_INFECTION); if (r) return JSON.parse(r); } catch { /* ignore */ }
+    return {};
+  });
+  const [outbreakQueue, setOutbreakQueue] = useState<{ cityId: string; color: DiseaseColor }[]>([]);
+  const [outbreakAlready, setOutbreakAlready] = useState<Set<string>>(new Set());
+  const [epidemicState, setEpidemicState] = useState<{ phase: 'infect' | 'intensify'; infectedCityId: string | null; infectedColor: DiseaseColor | null } | null>(null);
+  // 9 → 0: first 3 draws place 3 cubes (red), next 3 place 2 (orange), last 3 place 1 (yellow)
+  // Only month0 runs the initial infection phase; other scenarios skip it.
+  const [setupRemaining, setSetupRemaining] = useState<number>(() =>
+    (scenario === "month0" && !setup) ? 9 : 0
+  );
+  const [cubes, setCubes] = useState<{ x: number; y: number }[]>(defaultCubes);
+  const [cubeZ, setCubeZ] = useState<number[]>(() => Array(96).fill(0));
+  const zCounter = useRef(0);
+  // Card pile positions persist (calibration data)
+  const [cardInfection, setCardInfection] = useState<CardState>(() => loadCard(LS_CARD_INFECTION, DEF_CARD_INFECTION));
+  const [cardPlayer, setCardPlayer] = useState<CardState>(() => loadCard(LS_CARD_PLAYER, DEF_CARD_PLAYER));
+  const [cardInfectionDiscard, setCardInfectionDiscard] = useState<CardState>(() => loadCard(LS_CARD_INFECTION_DISCARD, DEF_CARD_INFECTION_DISCARD));
+  const [cardPlayerDiscard, setCardPlayerDiscard] = useState<CardState>(() => loadCard(LS_CARD_PLAYER_DISCARD, DEF_CARD_PLAYER_DISCARD));
+  const [hcmcTray, setHcmcTray] = useState<{ x: number; y: number }>(() => loadHcmc());
+  // 0 when epidemics are embedded in the deck (deal/game phases); 5 for raw board view
+  const [epidemicCount, setEpidemicCount] = useState(5); // standalone pile, rendered below player deck
+  const [tokenP1, setTokenP1] = useState<CardState>(() => loadCard(LS_TOKEN_P1, DEF_TOKEN_P1));
+  const [tokenP2, setTokenP2] = useState<CardState>(() => loadCard(LS_TOKEN_P2, DEF_TOKEN_P2));
+  const [tokenP3, setTokenP3] = useState<CardState>(() => loadCard(LS_TOKEN_P3, DEF_TOKEN_P3));
+  const [tokenP4, setTokenP4] = useState<CardState>(() => loadCard(LS_TOKEN_P4, DEF_TOKEN_P4));
+  const [roleHover, setRoleHover] = useState<string | null>(null);
+
+  // P1 = first token placed, P2 = second, etc. — order from setup
+  const activePlayers = setup
+    ? (['p1','p2','p3','p4'] as const).slice(0, setup.playerOrder.length)
+    : (['p1', 'p2'] as const);
+
+  // Dynamic color per player slot based on placement order
+  const playerColors: Record<string, string> = setup
+    ? Object.fromEntries(setup.playerOrder.map((p, i) => [`p${i + 1}`, p.color]))
+    : { p1: "#e8479a", p2: "#e8720a", p3: "#f0f0f0", p4: "#1a2a8a" };
+  const [handCards, setHandCards] = useState<HandCards>(loadHandCards);
+  const [handHover, setHandHover] = useState<{ player: string; idx: number; x: number; y: number } | null>(null);
+  const [handDrag, setHandDrag] = useState<{ player: string; idx: number; x: number; y: number } | null>(null);
+  const saveHandCards = (next: HandCards) => { setHandCards(next); localStorage.setItem(LS_HAND_CARDS, JSON.stringify(next)); };
+  const handStackOffset = (area: typeof HAND_P1, count: number) =>
+    count <= 1 ? 0 : Math.min(4, (area.h - area.w * BOARD_RATIO) / (count - 1));
+  const [roadblocks, setRoadblocks] = useState<Record<string, RoadblockState>>(loadRoadblocks);
+  const [researchStations, setResearchStations] = useState<Set<string>>(() => loadResearchStations());
+  const [researchPos, setResearchPos] = useState<Record<string, { x: number; y: number }>>(() => loadResearchPos());
+  const [panicLevels, setPanicLevels] = useState<Record<string, number>>(() => loadPanicLevels());
+  const [cityMenu, setCityMenu] = useState<{ cityId: string; x: number; y: number } | null>(null);
+  const [cityMenuHover, setCityMenuHover] = useState<string | null>(null);
+  const cityMenuHoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const setCityMenuHoverDelayed = (val: string | null) => {
+    if (cityMenuHoverTimer.current) clearTimeout(cityMenuHoverTimer.current);
+    if (val !== null) { setCityMenuHover(val); return; }
+    cityMenuHoverTimer.current = setTimeout(() => setCityMenuHover(null), 150);
+  };
+  const [objectiveCount, setObjectiveCount] = useState(1);
+  const [objectiveCompleted, setObjectiveCompleted] = useState<boolean[]>([false]);
+  const [objMenu, setObjMenu] = useState<{ x: number; y: number; idx: number } | null>(null);
+  const [infectDeck, setInfectDeck] = useState<string[]>(() => shuffle(CITIES.map(c => c.id)));
+  const [infectDiscard, setInfectDiscard] = useState<string[]>([]);
+  const [playerDeck, setPlayerDeck] = useState<string[]>(() => {
+    // City (+ event) cards only — no embedded epidemics.
+    // Epidemic standalone pile (epidemicCount=5) sits below visually.
+    const fc = setup?.fundingCards ?? [];
+    return shuffle([...CITIES.map(c => c.id), ...fc]);
+  });
+  const [playerFlipped, setPlayerFlipped] = useState<Set<string>>(() => new Set());
+  const [playerDiscard, setPlayerDiscard] = useState<string[]>([]);
+  const [playerDrag, setPlayerDrag] = useState<{ cityId: string; x: number; y: number } | null>(null);
+  const [boardPxW, setBoardPxW] = useState(0);
+  const [showDiscardPopup, setShowDiscardPopup] = useState(false);
+  const [showPlayerDiscardPopup, setShowPlayerDiscardPopup] = useState(false);
+  const [discardCardMenu, setDiscardCardMenu] = useState<{ cityId: string; x: number; y: number } | null>(null);
+  const [playerDeckMenu, setPlayerDeckMenu] = useState<{ x: number; y: number } | null>(null);
+  const [discardMenu, setDiscardMenu] = useState<{ x: number; y: number } | null>(null);
+  const [deckMenu, setDeckMenu] = useState<{ x: number; y: number } | null>(null);
+  const [forecastCards, setForecastCards] = useState<string[] | null>(null);
+  const [forecastDragIdx, setForecastDragIdx] = useState<number | null>(null);
+  const [dismissedResult, setDismissedResult] = useState<string | null>(null);
+  // Turn system — only active during game phase (setup present)
+  const [turnState, setTurnState_] = useState<TurnStateData>(() => loadTurnState());
+  const saveTurnState = (next: TurnStateData) => { setTurnState_(next); localStorage.setItem(LS_TURN, JSON.stringify(next)); };
+  const [playerCities, setPlayerCities_] = useState<string[]>(() => setup ? loadPlayerCities(setup.playerOrder.length) : []);
+  const savePlayerCities = (next: string[]) => { setPlayerCities_(next); localStorage.setItem(LS_PLAYER_CITIES, JSON.stringify(next)); };
+  const [highlightCities, setHighlightCities] = useState<string[]>([]);
+  const [selectedHandCards, setSelectedHandCards] = useState<string[]>([]);
+  const [cureSelecting, setCureSelecting] = useState(false);
+  const [pendingDiscardMenu, setPendingDiscardMenu] = useState<{ cityId: string; player: string; idx: number; x: number; y: number } | null>(null);
+  const [rsActionMenu, setRsActionMenu] = useState<{ cityId: string; x: number; y: number } | null>(null);
+
+  // Turn helpers (must come after all useState declarations)
+  const currentPlayerKey: string = setup ? ((['p1','p2','p3','p4'] as const).slice(0, setup.playerOrder.length)[turnState.currentPlayerIndex] ?? 'p1') : 'p1';
+  const currentPlayerCityId: string = playerCities[turnState.currentPlayerIndex] ?? "atlanta";
+  const consumeAction = (ts: TurnStateData): TurnStateData => {
+    const remaining = ts.actionsRemaining - 1;
+    if (remaining <= 0) return { ...ts, actionsRemaining: 0, phase: "draw", drawCount: 0 };
+    return { ...ts, actionsRemaining: remaining };
+  };
+  const snapPawnToCity = (playerKey: string, cityId: string) => {
+    const city = CITIES.find(c => c.id === cityId);
+    if (!city || !setup) return;
+    const pi = (['p1','p2','p3','p4'] as const).indexOf(playerKey as 'p1'|'p2'|'p3'|'p4');
+    if (pi < 0) return;
+    const offsets: [number, number][] = [[-1, 0], [1, 0], [-1, 1.5], [1, 1.5]];
+    const [dx, dy] = offsets[pi] ?? [0, 0];
+    const pos = { x: city.pos.x + dx, y: city.pos.y + dy, w: 2.42 };
+    const setters = [setTokenP1, setTokenP2, setTokenP3, setTokenP4];
+    const lsKeys = [LS_TOKEN_P1, LS_TOKEN_P2, LS_TOKEN_P3, LS_TOKEN_P4];
+    setters[pi](pos); localStorage.setItem(lsKeys[pi], JSON.stringify(pos));
+  };
+  const nearestCity = (px: number, py: number): string | null => {
+    let bestId: string | null = null; let bestDist = 8;
+    for (const c of CITIES) {
+      const dx = px - c.pos.x; const dy = py - c.pos.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < bestDist) { bestDist = dist; bestId = c.id; }
+    }
+    return bestId;
+  };
+  const advanceTurn = () => {
+    if (!setup) return;
+    const nextIdx = (turnState.currentPlayerIndex + 1) % setup.playerOrder.length;
+    saveTurnState({ currentPlayerIndex: nextIdx, actionsRemaining: 4, phase: "actions", pendingCharter: false, pendingShuttle: false, drawCount: 0, infectCount: 0 });
+    setHighlightCities([]); setSelectedHandCards([]); setCureSelecting(false);
+  };
+  const currentPlayerHand = (): string[] => (handCards as Record<string, string[]>)[currentPlayerKey] ?? [];
+
+  // Month 0 setup: place research station + all player tokens at Atlanta
+  useEffect(() => {
+    if (!setup || scenario !== "month0") return;
+    const atlanta = CITIES.find(c => c.id === "atlanta");
+    if (!atlanta) return;
+    const { x, y } = atlanta.pos;
+
+    // Research station at Atlanta
+    setResearchStations(prev => {
+      if (prev.has("atlanta")) return prev;
+      const next = new Set(prev); next.add("atlanta");
+      localStorage.setItem(LS_RESEARCH_STATIONS, JSON.stringify([...next]));
+      return next;
+    });
+
+    // All active player tokens at Atlanta (slight offset so they don't stack perfectly)
+    const offsets = [[-1, 0], [1, 0], [-1, 1.5], [1, 1.5]];
+    const tokenSetters = [
+      { set: setTokenP1, lsKey: LS_TOKEN_P1 },
+      { set: setTokenP2, lsKey: LS_TOKEN_P2 },
+      { set: setTokenP3, lsKey: LS_TOKEN_P3 },
+      { set: setTokenP4, lsKey: LS_TOKEN_P4 },
+    ];
+    setup.playerOrder.forEach((_, pi) => {
+      const [dx, dy] = offsets[pi] ?? [0, 0];
+      const pos = { x: x + dx, y: y + dy, w: 2.42 };
+      tokenSetters[pi].set(pos);
+      localStorage.setItem(tokenSetters[pi].lsKey, JSON.stringify(pos));
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [setup]);
+
+  // Auto-complete objective 0 when all 4 diseases are cured
+  useEffect(() => {
+    if (cured.length === 4 && cured.every(Boolean)) {
+      setObjectiveCompleted(prev => {
+        if (prev[0]) return prev; // already marked
+        const next = [...prev];
+        next[0] = true;
+        return next;
+      });
+    }
+  }, [cured]);
+
+  // When funding cards are confirmed (deal phase): rebuild deck with city + event cards
+  const prevFcKey = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (fundingCardsProp === undefined) return;
+    const key = fundingCardsProp.join(',');
+    if (key === prevFcKey.current) return;
+    prevFcKey.current = key;
+    // Deck = shuffled city + event cards only; standalone epidemic pile (count=5) stays below
+    setPlayerDeck(shuffle([...CITIES.map(c => c.id), ...fundingCardsProp]));
+    setEpidemicCount(5);
+    setPlayerFlipped(new Set());
+  }, [fundingCardsProp]);
+
+  useEffect(() => {
+    if (!boardRef.current) return;
+    const ro = new ResizeObserver(e => setBoardPxW(e[0].contentRect.width));
+    ro.observe(boardRef.current);
+    return () => ro.disconnect();
+  }, []);
+
+  const shuffleDeck = () => {
+    setInfectDeck(shuffle(infectDeck));
+    setDeckMenu(null);
+  };
+
+  const openForecast = () => {
+    const top6 = infectDeck.slice(-6).reverse(); // top card first
+    setForecastCards(top6);
+    setDeckMenu(null);
+  };
+
+  const confirmForecast = () => {
+    if (!forecastCards) return;
+    // forecastCards[0] = will be drawn first = goes on top of deck (last element)
+    const base = infectDeck.slice(0, infectDeck.length - forecastCards.length);
+    const newDeck = [...base, ...forecastCards.slice().reverse()];
+    setInfectDeck(newDeck);
+    setForecastCards(null);
+  };
+
+  const shuffleDiscardOntoDeck = () => {
+    setInfectDeck(prev => [...prev, ...shuffle(infectDiscard)]);
+    setInfectDiscard([]);
+    setDiscardMenu(null);
+    if (epidemicState) {
+      // Step 3 complete — auto-discard epidemic card and clear state
+      setEpidemicState(null);
+      setEpidemicCount(c => c - 1);
+      setPlayerFlipped(prev => { const n = new Set(prev); n.delete("epidemic"); return n; });
+      setPlayerDiscard(prev => [...prev, "epidemic"]);
+    }
+  };
+
+  const drawInfectionCard = () => {
+    if (infectDeck.length === 0) return;
+    // Count infection draws during infect phase
+    if (setup && turnState.phase === "infect") {
+      const target = INFECTION_RATE_VALUES[infectionPos] ?? 2;
+      const next = turnState.infectCount + 1;
+      saveTurnState({ ...turnState, infectCount: next });
+      // Note: advanceTurn is called via "End Infection" button after all N drawn
+      if (next >= target) {
+        // Will show End Infection button via render logic — no auto-advance
+      }
+    }
+    const newDeck = [...infectDeck];
+    const drawn = newDeck.pop()!;
+    setInfectDeck(newDeck);
+    setInfectDiscard(prev => [...prev, drawn]);
+
+    const city = CITIES.find(c => c.id === drawn);
+    if (city) {
+      const color = city.color as DiseaseColor;
+      const cur = cityInfection[drawn]?.[color] ?? 0;
+
+      if (setupRemaining > 0) {
+        // Initial infection phase: place N cubes at once
+        const cubes = setupRemaining > 6 ? 3 : setupRemaining > 3 ? 2 : 1;
+        const next = { ...cityInfection, [drawn]: { ...cityInfection[drawn], [color]: Math.min(3, cur + cubes) } };
+        saveCityInfection(next);
+        setSetupRemaining(prev => prev - 1);
+      } else {
+        // Normal infection: skip if eradicated
+        if (!isColorEradicated(color)) {
+          if (cur >= 3) {
+            triggerOutbreak(drawn, color, new Set());
+          } else {
+            if (totalOfColor(cityInfection, color) < 24) {
+              saveCityInfection({ ...cityInfection, [drawn]: { ...cityInfection[drawn], [color]: cur + 1 } });
+            }
+          }
+        }
+      }
+    }
+  };
+
+  const update = (i: number) => (s: MarkerState) => {
+    setStates(prev => { const next = [...prev]; next[i] = s; return next; });
+    localStorage.setItem(MARKERS[i].key, JSON.stringify(s));
+  };
+
+  const effectiveState = (i: number): MarkerState => {
+    if (i === 0 && OUTBREAK_TRACK[outbreakPos]?.x !== 0)
+      return { ...states[i], ...OUTBREAK_TRACK[outbreakPos] };
+    if (i === 2 && INFECTION_TRACK[infectionPos]?.x !== 0)
+      return { ...states[i], ...INFECTION_TRACK[infectionPos] };
+    const ci = CURE_INDICES.indexOf(i);
+    if (ci >= 0 && cured[ci] && MARKERS[i].curePos)
+      return { ...states[i], ...MARKERS[i].curePos };
+    return states[i];
+  };
+
+  // Click on a cure START or CURE space to move that token there.
+  const handleBoardClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (calibrating) return;
+    const r = boardRef.current?.getBoundingClientRect();
+    if (!r) return;
+    const px = ((e.clientX - r.left) / r.width) * 100;
+    const py = ((e.clientY - r.top) / r.height) * 100;
+
+    // Outbreak track: click any of the 9 positions
+    const obW = states[0].w; // use outbreak marker's size
+    for (let i = 0; i < OUTBREAK_TRACK.length; i++) {
+      const p = OUTBREAK_TRACK[i];
+      if (p.x === 0 && p.y === 0) continue; // not calibrated yet
+      if (inBox(px, py, p.x, p.y, obW)) {
+        setOutbreakPos(i);
+        return;
+      }
+    }
+
+    // Infection rate track: click any of the 7 positions
+    const irW = states[2].w;
+    for (let i = 0; i < INFECTION_TRACK.length; i++) {
+      const p = INFECTION_TRACK[i];
+      if (p.x === 0 && p.y === 0) continue;
+      if (inBox(px, py, p.x, p.y, irW)) {
+        setInfectionPos(i);
+        return;
+      }
+    }
+
+    for (let ci = 0; ci < CURE_INDICES.length; ci++) {
+      const mi = CURE_INDICES[ci];
+      const m = MARKERS[mi];
+      if (!m.curePos) continue;
+      const startPos = states[mi];
+
+      if (inBox(px, py, startPos.x, startPos.y, startPos.w)) {
+        setCured(prev => { const n = [...prev]; n[ci] = false; return n; });
+        setEradicated(prev => { const n = [...prev]; n[ci] = false; return n; });
+        return;
+      }
+      if (inBox(px, py, m.curePos.x, m.curePos.y, startPos.w)) {
+        setCured(prev => { const n = [...prev]; n[ci] = true; return n; });
+        return;
+      }
+    }
+  };
+
+  const saveCityInfection = (next: CityInfectionMap) => {
+    setCityInfection(next);
+    localStorage.setItem(LS_CITY_INFECTION, JSON.stringify(next));
+  };
+
+  // Total cubes of a color across all cities
+  const totalOfColor = (inf: CityInfectionMap, color: DiseaseColor) =>
+    Object.values(inf).reduce((sum, cc) => sum + (cc[color] ?? 0), 0);
+
+  // Trigger an outbreak: advances marker, marks city as already-outbroken,
+  // queues all eligible neighbors as manual cube-placement targets.
+  const triggerOutbreak = (cityId: string, color: DiseaseColor, baseAlready: Set<string>) => {
+    if (isColorEradicated(color)) return;
+    setOutbreakPos(prev => Math.min(OUTBREAK_TRACK.length - 1, prev + 1));
+    const city = CITIES.find(c => c.id === cityId);
+    if (!city) return;
+    const newAlready = new Set([...baseAlready, cityId]);
+    setOutbreakAlready(newAlready);
+    const targets = city.neighbors.filter(nid => !newAlready.has(nid));
+    if (targets.length > 0) {
+      setOutbreakQueue(prev => {
+        const newEntries = targets
+          .filter(tid => !prev.some(q => q.cityId === tid && q.color === color))
+          .map(tid => ({ cityId: tid, color }));
+        return [...prev, ...newEntries];
+      });
+    }
+  };
+
+  // Player manually clicks a highlighted chain city to place 1 cube there.
+  const handleChainClick = (cityId: string, color: DiseaseColor) => {
+    // Remove from queue
+    setOutbreakQueue(prev => prev.filter(q => !(q.cityId === cityId && q.color === color)));
+    if (isColorEradicated(color)) return;
+    const cur = cityInfection[cityId]?.[color] ?? 0;
+    if (cur >= 3) {
+      // City already full → chain outbreak from here
+      triggerOutbreak(cityId, color, outbreakAlready);
+    } else {
+      // Place 1 cube
+      if (totalOfColor(cityInfection, color) < 24) {
+        saveCityInfection({ ...cityInfection, [cityId]: { ...cityInfection[cityId], [color]: cur + 1 } });
+      }
+    }
+  };
+
+  const handleCityClick = (cityId: string) => {
+    if (outbreakQueue.length > 0) return; // block clicks during chain resolution
+
+    if (setup && turnState.phase === "actions") {
+      if (turnState.pendingCharter) {
+        // Charter flight: fly to any city
+        const nextCities = [...playerCities]; nextCities[turnState.currentPlayerIndex] = cityId;
+        savePlayerCities(nextCities); snapPawnToCity(currentPlayerKey, cityId);
+        setHighlightCities([]);
+        saveTurnState(consumeAction({ ...turnState, pendingCharter: false }));
+        return;
+      }
+      if (turnState.pendingShuttle) {
+        // Shuttle flight: only valid if target has a research station
+        if (!researchStations.has(cityId) || cityId === currentPlayerCityId) return;
+        const nextCities = [...playerCities]; nextCities[turnState.currentPlayerIndex] = cityId;
+        savePlayerCities(nextCities); snapPawnToCity(currentPlayerKey, cityId);
+        setHighlightCities([]);
+        saveTurnState(consumeAction({ ...turnState, pendingShuttle: false }));
+        return;
+      }
+      // No pending action: block manual cube placement in game phase
+      return;
+    }
+
+    // Pre-game / board mode: manual cube placement
+    const city = CITIES.find(c => c.id === cityId);
+    if (!city) return;
+    const color = city.color as DiseaseColor;
+    if (isColorEradicated(color)) return;
+    const cur = cityInfection[cityId]?.[color] ?? 0;
+    if (cur >= 3) {
+      triggerOutbreak(cityId, color, new Set());
+    } else {
+      if (totalOfColor(cityInfection, color) >= 24) return;
+      saveCityInfection({ ...cityInfection, [cityId]: { ...cityInfection[cityId], [color]: cur + 1 } });
+    }
+  };
+
+  const isColorEradicated = (color: DiseaseColor) => {
+    const ci = COLOR_TO_CURE_IDX[color];
+    return ci !== undefined && eradicated[ci];
+  };
+
+  const handleCityRightClick = (cityId: string, forceColor?: DiseaseColor) => {
+    const city = CITIES.find(c => c.id === cityId);
+    if (!city) return;
+    const color = forceColor ?? (city.color as DiseaseColor);
+    const cur = cityInfection[cityId]?.[color] ?? 0;
+    if (cur <= 0) return;
+
+    if (setup) {
+      // In game phase: cube removal only via Treat Disease action
+      if (turnState.phase !== "actions") return;
+      if (cityId !== currentPlayerCityId) return; // must be in same city
+      const ci = COLOR_TO_CURE_IDX[color];
+      const isDiseaseCured = ci !== undefined && cured[ci];
+      if (isDiseaseCured) {
+        // Remove all cubes of this color
+        const next = { ...cityInfection, [cityId]: { ...cityInfection[cityId], [color]: 0 } };
+        saveCityInfection(next);
+        if (ci !== undefined && !eradicated[ci] && totalOfColor(next, color) === 0) {
+          setEradicated(prev => { const n = [...prev]; n[ci] = true; return n; });
+        }
+      } else {
+        const next = { ...cityInfection, [cityId]: { ...cityInfection[cityId], [color]: cur - 1 } };
+        saveCityInfection(next);
+        if (ci !== undefined && cured[ci] && !eradicated[ci] && totalOfColor(next, color) === 0) {
+          setEradicated(prev => { const n = [...prev]; n[ci] = true; return n; });
+        }
+      }
+      saveTurnState(consumeAction(turnState));
+      return;
+    }
+
+    // Pre-game / board mode: free removal
+    const next = { ...cityInfection, [cityId]: { ...cityInfection[cityId], [color]: cur - 1 } };
+    saveCityInfection(next);
+    const ci = COLOR_TO_CURE_IDX[color];
+    if (ci !== undefined && cured[ci] && !eradicated[ci] && totalOfColor(next, color) === 0) {
+      setEradicated(prev => { const n = [...prev]; n[ci] = true; return n; });
+    }
+  };
+
+  const triggerEpidemic = () => {
+    // Step 1 — Increase: advance infection rate marker
+    setInfectionPos(prev => Math.min(prev + 1, INFECTION_TRACK.length - 1));
+    // Step 2 — Infect: wait for player to draw the bottom card manually
+    setEpidemicState({ phase: 'infect', infectedCityId: null, infectedColor: null });
+  };
+
+  // Called when player draws the bottom card during epidemic infect phase
+  const epidemicInfect = (cityId: string) => {
+    const city = CITIES.find(c => c.id === cityId);
+    if (!city) { setEpidemicState(prev => prev ? { ...prev, phase: 'intensify' } : null); return; }
+    const color = city.color as DiseaseColor;
+    // Eradicated: skip cube placement, go straight to intensify
+    if (isColorEradicated(color)) {
+      setEpidemicState({ phase: 'intensify', infectedCityId: cityId, infectedColor: color });
+      return;
+    }
+    const cur = cityInfection[cityId]?.[color] ?? 0;
+    if (cur === 0) {
+      const total = totalOfColor(cityInfection, color);
+      const canPlace = Math.min(3, 24 - total);
+      const inf = { ...cityInfection, [cityId]: { ...cityInfection[cityId], [color]: canPlace } };
+      saveCityInfection(inf);
+    } else {
+      const toAdd = 3 - cur;
+      let updatedInf = cityInfection;
+      if (toAdd > 0) {
+        const total = totalOfColor(cityInfection, color);
+        const canPlace = Math.min(toAdd, 24 - total);
+        updatedInf = { ...cityInfection, [cityId]: { ...cityInfection[cityId], [color]: cur + canPlace } };
+      }
+      if (updatedInf !== cityInfection) saveCityInfection(updatedInf);
+      triggerOutbreak(cityId, color, new Set());
+    }
+    setEpidemicState({ phase: 'intensify', infectedCityId: cityId, infectedColor: color });
+  };
+
+  // Cubes of each color on cities (order: black, yellow, red, blue)
+  const placedPerColor = DISEASE_COLORS.map(color => totalOfColor(cityInfection, color));
+
+  const allObjectivesDone = objectiveCount > 0 && objectiveCompleted.slice(0, objectiveCount).every(Boolean);
+  const cubesExhausted = placedPerColor.some(count => count >= 24);
+  const playerDeckEmpty = playerDeck.length === 0 && epidemicCount === 0;
+  const outbreakMaxed = outbreakPos >= OUTBREAK_TRACK.length - 1;
+  const gameResult: 'win' | 'lose' | null = allObjectivesDone ? 'win'
+    : (outbreakMaxed || playerDeckEmpty || cubesExhausted) ? 'lose'
+    : null;
+  const loseReason = outbreakMaxed ? "Too many outbreaks!"
+    : playerDeckEmpty ? "Player deck exhausted!"
+    : "Disease cubes exhausted!";
+
   return (
-    <div
-      style={{
-        position: "relative",
-        width: "100%",
-        maxWidth: 1100,
-        aspectRatio: "600 / 420",
-        margin: "0 auto",
-        background: "#0e2030",
-        border: "1px solid #1d3b54",
-        borderRadius: 6,
-      }}
-    >
+    <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+      <style>{`
+        @keyframes chainPulse {
+          from { opacity: 0.55; transform: translate(-50%, -50%) scale(0.88); }
+          to   { opacity: 1;    transform: translate(-50%, -50%) scale(1.08); }
+        }
+      `}</style>
+
+      {onInfectionDone && (setupRemaining > 0 || setupRemaining === 0) && !setup && (() => {
+        const done = setupRemaining === 0;
+        const phase = setupRemaining > 6 ? 1 : setupRemaining > 3 ? 2 : 3;
+        const cubes = phase === 1 ? 3 : phase === 2 ? 2 : 1;
+        const color = done ? "#44bb66" : phase === 1 ? "#ff4444" : phase === 2 ? "#ff8800" : "#ffcc00";
+        const drawn = 9 - setupRemaining;
+        return (
+          <div style={{
+            marginBottom: 6, padding: "7px 14px",
+            background: "#0d0d0d", border: `1px solid ${color}`,
+            borderRadius: 6, color, fontSize: 12,
+            fontFamily: "system-ui, sans-serif",
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 16,
+          }}>
+            {done ? (
+              <>
+                <span>✓ Initial infection complete</span>
+                <button onClick={onInfectionDone} style={{
+                  padding: "4px 16px", fontSize: 12, borderRadius: 5, cursor: "pointer",
+                  background: "#1a4a2a", border: "1px solid #44bb66", color: "#88ffaa",
+                  fontWeight: 700,
+                }}>
+                  Choose Funding Cards →
+                </button>
+              </>
+            ) : (
+              <>
+                <span>
+                  Initial Infection — click the infection deck &nbsp;·&nbsp;
+                  Place <strong>{cubes} cube{cubes > 1 ? "s" : ""}</strong> per city &nbsp;·&nbsp;
+                  {drawn}/9 cards drawn
+                </span>
+              </>
+            )}
+          </div>
+        );
+      })()}
+
+      {onChooseRoles && (
+        <div style={{
+          marginBottom: 6, padding: "7px 16px",
+          background: "#0d1a10", border: "1px solid #44bb66",
+          borderRadius: 6, color: "#88ffaa", fontSize: 12,
+          fontFamily: "system-ui, sans-serif",
+          display: "flex", alignItems: "center", justifyContent: "center", gap: 16,
+        }}>
+          <span>Cards ready — deal manually to each player, then choose roles</span>
+          <button onClick={onChooseRoles} style={{
+            padding: "4px 16px", fontSize: 12, borderRadius: 5, cursor: "pointer",
+            background: "#1a4a2a", border: "1px solid #44bb66", color: "#88ffaa", fontWeight: 700,
+          }}>
+            Choose Roles →
+          </button>
+        </div>
+      )}
+
+      {onResumeRoles && (
+        <div style={{ marginBottom: 6, display: "flex", justifyContent: "center" }}>
+          <button onClick={onResumeRoles} style={{
+            padding: "6px 20px", fontSize: 12, borderRadius: 5, cursor: "pointer",
+            background: "#0d1b2e", border: "1px solid #3a6aaa", color: "#7bc4ff",
+            fontWeight: 600,
+          }}>
+            ↩ Resume Role Selection
+          </button>
+        </div>
+      )}
+
+      {epidemicState && (
+        <div style={{
+          marginBottom: 6, padding: "8px 16px",
+          background: "#1a0a00", border: "1px solid #cc6600",
+          borderRadius: 6, fontFamily: "system-ui, sans-serif", fontSize: 12,
+          display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap",
+        }}>
+          <span style={{ color: "#ff9933", fontWeight: 700, fontSize: 14 }}>☣ EPIDEMIC</span>
+          {epidemicState.phase === 'infect' ? (
+            <span style={{ color: "#cc8844" }}>
+              Step 2 — Right-click the <strong>infection deck</strong> → <strong>Draw Bottom</strong>
+            </span>
+          ) : (
+            <>
+              {epidemicState.infectedCityId && (() => {
+                const city = CITIES.find(c => c.id === epidemicState.infectedCityId);
+                const colorHex: Record<string, string> = { black: "#aaa", yellow: "#ffe44d", red: "#ff6666", blue: "#66aaff" };
+                return (
+                  <span style={{ color: "#ddc" }}>
+                    <strong>{city?.name ?? epidemicState.infectedCityId}</strong>&nbsp;infected —&nbsp;
+                    <span style={{ color: colorHex[epidemicState.infectedColor ?? ""] }}>
+                      +3 {epidemicState.infectedColor}
+                    </span>
+                  </span>
+                );
+              })()}
+              <span style={{ color: "#cc8844" }}>
+                Step 3 — Right-click the <strong>infection discard</strong> → Shuffle to Intensify
+              </span>
+              <button
+                onClick={() => {
+                  setEpidemicState(null);
+                  setEpidemicCount(c => c - 1);
+                  setPlayerFlipped(prev => { const n = new Set(prev); n.delete("epidemic"); return n; });
+                  setPlayerDiscard(prev => [...prev, "epidemic"]);
+                }}
+                style={{
+                  marginLeft: "auto", padding: "4px 14px", fontSize: 11,
+                  background: "#0a1a2a", border: "1px solid #336699", color: "#88bbdd",
+                  borderRadius: 5, cursor: "pointer", whiteSpace: "nowrap",
+                }}>
+                One Quiet Night — Skip
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
+      {outbreakQueue.length > 0 && (
+        <div style={{
+          marginBottom: 6, padding: "6px 14px",
+          background: "#2a0808", border: "1px solid #dc3d3d",
+          borderRadius: 6, color: "#ff8080", fontSize: 12,
+          fontFamily: "system-ui, sans-serif", textAlign: "center",
+        }}>
+          ⚠ Chain Reaction — left-click each glowing city to place 1 cube &nbsp;({outbreakQueue.length} remaining)
+        </div>
+      )}
+
+      {/* Turn Panel — shown during game phase */}
+      {setup && (() => {
+        const player = setup.playerOrder[turnState.currentPlayerIndex];
+        const ROLE_NAMES: Record<string, string> = { medic: "Medic", scientist: "Scientist", researcher: "Researcher", generalist: "Generalist", dispatcher: "Dispatcher" };
+        const playerName = (player?.roleId ? ROLE_NAMES[player.roleId] : null) ?? `Player ${turnState.currentPlayerIndex + 1}`;
+        const pColor = playerColors[currentPlayerKey] ?? "#fff";
+        const infectTarget = INFECTION_RATE_VALUES[infectionPos] ?? 2;
+        const infectionDone = turnState.infectCount >= infectTarget;
+
+        let instruction = "";
+        if (turnState.phase === "actions") {
+          if (turnState.pendingCharter) instruction = "Charter Flight — click any city";
+          else if (turnState.pendingShuttle) instruction = "Shuttle Flight — click a highlighted station";
+          else if (cureSelecting) {
+            const canConfirm = (() => {
+              for (const col of DISEASE_COLORS) {
+                const ci = COLOR_TO_CURE_IDX[col];
+                if (ci === undefined || cured[ci]) continue;
+                const sel = selectedHandCards.filter(id => CITIES.find(c => c.id === id)?.color === col);
+                if (sel.length >= 5) return col;
+              }
+              return null;
+            })();
+            instruction = canConfirm
+              ? `Select 5 ${canConfirm} cards then confirm (${selectedHandCards.length} selected)`
+              : `Select 5 cards of the same color (${selectedHandCards.length} selected)`;
+          }
+          else instruction = "Drag your pawn or use a card action";
+        } else if (turnState.phase === "draw") {
+          instruction = `Draw 2 player cards (${turnState.drawCount}/2) — flip then drag to hand`;
+        } else if (turnState.phase === "discard") {
+          instruction = "Hand limit — drag excess cards to discard (keep 7)";
+        } else if (turnState.phase === "infect") {
+          instruction = infectionDone ? "All infection cards drawn" : `Draw ${infectTarget} infection cards (${turnState.infectCount}/${infectTarget})`;
+        }
+
+        const canConfirmCure = (() => {
+          if (!cureSelecting) return null;
+          for (const col of DISEASE_COLORS) {
+            const ci = COLOR_TO_CURE_IDX[col];
+            if (ci === undefined || cured[ci]) continue;
+            const sel = selectedHandCards.filter(id => CITIES.find(c => c.id === id)?.color === col);
+            if (sel.length >= 5) return col as DiseaseColor;
+          }
+          return null;
+        })();
+
+        return (
+          <div style={{
+            marginBottom: 6, padding: "8px 14px",
+            background: "#0a1520", border: `1px solid ${pColor}55`,
+            borderRadius: 6, fontFamily: "system-ui, sans-serif", fontSize: 12,
+            display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+              <div style={{ width: 12, height: 12, borderRadius: "50%", background: pColor, flexShrink: 0 }} />
+              <span style={{ color: pColor, fontWeight: 700 }}>{playerName}</span>
+            </div>
+            {turnState.phase === "actions" && (
+              <div style={{ display: "flex", gap: 3 }}>
+                {Array.from({ length: 4 }, (_, pi) => (
+                  <div key={pi} style={{
+                    width: 10, height: 10, borderRadius: "50%",
+                    background: pi < turnState.actionsRemaining ? pColor : "#334",
+                    border: `1px solid ${pColor}88`,
+                  }} />
+                ))}
+              </div>
+            )}
+            <span style={{ color: "#8ab", flex: 1 }}>{instruction}</span>
+            {cureSelecting && canConfirmCure && (
+              <button onClick={() => {
+                const sel5 = selectedHandCards.filter(id => CITIES.find(c => c.id === id)?.color === canConfirmCure).slice(0, 5);
+                const hand = currentPlayerHand();
+                const newHand = hand.filter(id => !sel5.includes(id));
+                saveHandCards({ ...handCards, [currentPlayerKey]: newHand });
+                setPlayerDiscard(prev => [...prev, ...sel5]);
+                const ci = COLOR_TO_CURE_IDX[canConfirmCure]!;
+                setCured(prev => { const n = [...prev]; n[ci] = true; return n; });
+                setCureSelecting(false); setSelectedHandCards([]);
+                saveTurnState(consumeAction(turnState));
+              }} style={{
+                padding: "3px 10px", fontSize: 11, borderRadius: 4, cursor: "pointer",
+                background: "#1a3a1a", border: "1px solid #4a9a4a", color: "#88dd88",
+              }}>Confirm Cure</button>
+            )}
+            {cureSelecting && (
+              <button onClick={() => { setCureSelecting(false); setSelectedHandCards([]); }}
+                style={{ padding: "3px 8px", fontSize: 11, borderRadius: 4, cursor: "pointer", background: "#2a1a1a", border: "1px solid #884444", color: "#cc8888" }}>
+                Cancel
+              </button>
+            )}
+            {turnState.phase === "actions" && !cureSelecting && (
+              <button onClick={() => saveTurnState({ ...turnState, actionsRemaining: 0, phase: "draw", drawCount: 0 })}
+                style={{ padding: "3px 10px", fontSize: 11, borderRadius: 4, cursor: "pointer", background: "#111e2e", border: "1px solid #336", color: "#778" }}>
+                Skip Turn
+              </button>
+            )}
+            {turnState.phase === "discard" && (() => {
+              const hand = currentPlayerHand();
+              return hand.length <= 7 ? (
+                <button onClick={() => saveTurnState({ ...turnState, phase: "infect", infectCount: 0 })}
+                  style={{ padding: "3px 10px", fontSize: 11, borderRadius: 4, cursor: "pointer", background: "#1a3a1a", border: "1px solid #4a9a4a", color: "#88dd88" }}>
+                  Continue →
+                </button>
+              ) : null;
+            })()}
+            {turnState.phase === "infect" && infectionDone && (
+              <button onClick={advanceTurn}
+                style={{ padding: "3px 10px", fontSize: 11, borderRadius: 4, cursor: "pointer", background: "#1a2a1a", border: "1px solid #4a7a4a", color: "#88cc88" }}>
+                End Infection →
+              </button>
+            )}
+          </div>
+        );
+      })()}
+
+      <div style={{ marginBottom: 10, textAlign: "center" }}>
+        <span style={{
+          fontSize: 22, fontWeight: 700, letterSpacing: 3,
+          color: "#c8ddf7", fontFamily: "system-ui, sans-serif",
+          textTransform: "uppercase", textShadow: "0 0 18px #3af8",
+        }}>
+          {SCENARIO_LABELS[scenario] ?? scenario}
+        </span>
+      </div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 6, alignItems: "center" }}>
+        <span style={{ fontSize: 10, color: "#556", fontFamily: "monospace" }}>build 2025-06-11j</span>
+        <button onClick={() => setCalibrating(v => !v)}>
+          {calibrating ? "Done calibrating" : "Calibrate markers"}
+        </button>
+        {calibrating && (
+          <>
+            <button onClick={() => {
+              const text = [
+                `token p1: { x: ${tokenP1.x.toFixed(2)}, y: ${tokenP1.y.toFixed(2)}, w: ${tokenP1.w.toFixed(2)} }`,
+                `token p2: { x: ${tokenP2.x.toFixed(2)}, y: ${tokenP2.y.toFixed(2)}, w: ${tokenP2.w.toFixed(2)} }`,
+              ].join("\n");
+              navigator.clipboard.writeText(text).then(() => alert("Copied!")).catch(() => window.prompt("Tokens", text));
+            }}>Copy tokens</button>
+            <span style={{ color: "#9ab", fontSize: 12, alignSelf: "center" }}>Drag to move · drag ↘ corner to resize</span>
+          </>
+        )}
+      </div>
+
       <div
+        ref={boardRef}
+        onClick={handleBoardClick}
+        onContextMenu={e => e.preventDefault()}
         style={{
-          position: "absolute",
-          inset: 0,
-          display: "grid",
-          placeItems: "center",
-          color: "#5a7a93",
-          fontFamily: "monospace",
+          position: "relative",
+          width: "100%",
+          aspectRatio: "918 / 568",
+          borderRadius: 6,
+          cursor: calibrating ? "grab" : "default",
         }}
       >
-        Board placeholder — drop new board art here
+        <div style={{ position: "absolute", inset: 0, overflow: "hidden", borderRadius: 6 }}>
+          <img
+            src={boardArt}
+            alt="Epidemic board"
+            draggable={false}
+            style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "fill", userSelect: "none", pointerEvents: "none" }}
+          />
+        </div>
+        <CityLayer
+          roadblocks={roadblocks}
+          onRoadblockChange={rb => { setRoadblocks(rb); saveRoadblocks(rb); }}
+          onCityClick={calibrating ? undefined : (cityId) => handleCityClick(cityId)}
+          onCityRightClick={calibrating ? undefined : (cityId, e) => {
+            if (e.type === "contextmenu") {
+              e.preventDefault();
+              if (setup) return; // no city menu during game phase
+              setCityMenu({ cityId, x: e.clientX, y: e.clientY });
+            }
+          }}
+          highlightCities={highlightCities.length > 0 ? highlightCities : undefined}
+          highlightClickOnly={turnState.pendingShuttle}
+        />
+
+        {/* City infection cubes — multi-color, up to 3 per color */}
+        {(() => {
+          const hx = CUBE_W * 0.34;
+          const sy = CUBE_W * BOARD_RATIO * 0.36;
+          const LAYOUTS: [number, number][][] = [
+            [[0, 0]],
+            [[-hx, 0], [hx, 0]],
+            [[-hx, 0], [hx, 0], [0, -sy]],
+          ];
+          return CITIES.flatMap(c => {
+            const cityColors = DISEASE_COLORS.filter(col => (cityInfection[c.id]?.[col] ?? 0) > 0);
+            if (cityColors.length === 0) return [];
+            // Offset each color group along x so they don't overlap
+            const groupSpacing = CUBE_W * 1.15;
+            const totalW = (cityColors.length - 1) * groupSpacing;
+            return cityColors.flatMap((col, gi) => {
+              const count = cityInfection[c.id]![col]!;
+              const cubeColor = COLOR_TO_CUBE[col];
+              const gx = -totalW / 2 + gi * groupSpacing;
+              return LAYOUTS[count - 1].map(([dx, dy], i) => (
+                <div key={`${c.id}-${col}-${i}`}
+                  onContextMenu={e => {
+                    e.preventDefault(); e.stopPropagation();
+                    handleCityRightClick(c.id, col as DiseaseColor);
+                  }}
+                  style={{
+                    position: "absolute",
+                    left: `${c.pos.x + dx + gx}%`,
+                    top: `calc(${c.pos.y + dy}% - 15px)`,
+                    width: `${CUBE_W}%`, aspectRatio: "1",
+                    transform: "translate(-50%, -50%)",
+                    pointerEvents: "auto",
+                    cursor: "context-menu",
+                    zIndex: 12 + i,
+                  }}>
+                  <CubeSvg color={cubeColor} />
+                </div>
+              ));
+            });
+          });
+        })()}
+
+        {/* 96 draggable disease cubes (24 per color) — front cubes hidden when placed on cities */}
+        {cubes.map((cube, i) => {
+          const ci = Math.floor(i / 24);
+          const j = i % 24;
+          if (j >= 24 - Math.min(24, placedPerColor[ci])) return null;
+          const color = CUBE_COLORS[ci];
+          const onCubeDown = (e: React.PointerEvent<HTMLDivElement>) => {
+            if (calibrating) return;
+            e.stopPropagation();
+            e.preventDefault();
+            const el = e.currentTarget; el.setPointerCapture(e.pointerId);
+            const z = ++zCounter.current;
+            setCubeZ(prev => { const n = [...prev]; n[i] = z; return n; });
+            const r = boardRef.current!.getBoundingClientRect();
+            const sx = e.clientX; const sy = e.clientY; const ox = cube.x; const oy = cube.y;
+            const onMove = (ev: PointerEvent) => {
+              const nx = ox + ((ev.clientX - sx) / r.width) * 100;
+              const ny = oy + ((ev.clientY - sy) / r.height) * 100;
+              setCubes(prev => { const n = [...prev]; n[i] = { x: nx, y: ny }; return n; });
+            };
+            const onUp = () => {
+              el.removeEventListener("pointermove", onMove as any);
+              el.removeEventListener("pointerup", onUp);
+              setCubes(prev => prev);
+            };
+            el.addEventListener("pointermove", onMove as any); el.addEventListener("pointerup", onUp);
+          };
+          return (
+            <div key={`cube-${i}`} onPointerDown={onCubeDown} style={{
+              position: "absolute",
+              left: `${cube.x}%`, top: `${cube.y}%`,
+              width: `${CUBE_W}%`, aspectRatio: "1",
+              transform: "translate(-50%, -50%)",
+              cursor: calibrating ? "default" : "grab",
+              zIndex: cubeZ[i] + 5,
+              touchAction: "none", userSelect: "none",
+            }}>
+              <CubeSvg color={color} />
+            </div>
+          );
+        })}
+
+        {/* Infection draw pile — stacked visual */}
+        {(() => {
+          const card = cardInfection;
+          const save = (c: CardState) => { setCardInfection(c); localStorage.setItem(LS_CARD_INFECTION, JSON.stringify(c)); };
+          const layers = Math.max(0, Math.min(infectDeck.length, 10));
+          const step = 0.10;
+          const onDragDown = calibrating ? (e: React.PointerEvent<HTMLDivElement>) => {
+            e.stopPropagation(); e.preventDefault();
+            const el = e.currentTarget; el.setPointerCapture(e.pointerId);
+            const r = boardRef.current!.getBoundingClientRect();
+            const sx = e.clientX; const sy = e.clientY; const ox = card.x; const oy = card.y;
+            const onMove = (ev: PointerEvent) => save({ ...card, x: ox + ((ev.clientX - sx) / r.width) * 100, y: oy + ((ev.clientY - sy) / r.height) * 100 });
+            const onUp = () => { el.removeEventListener("pointermove", onMove as any); el.removeEventListener("pointerup", onUp); };
+            el.addEventListener("pointermove", onMove as any); el.addEventListener("pointerup", onUp);
+          } : undefined;
+          const onResizeDown = calibrating ? (e: React.PointerEvent<HTMLDivElement>) => {
+            e.stopPropagation(); e.preventDefault();
+            const el = e.currentTarget; el.setPointerCapture(e.pointerId);
+            const r = boardRef.current!.getBoundingClientRect();
+            const sx = e.clientX; const ow = card.w;
+            const onMove = (ev: PointerEvent) => save({ ...card, w: Math.max(2, ow + ((ev.clientX - sx) / r.width) * 100) });
+            const onUp = () => { el.removeEventListener("pointermove", onMove as any); el.removeEventListener("pointerup", onUp); };
+            el.addEventListener("pointermove", onMove as any); el.addEventListener("pointerup", onUp);
+          } : undefined;
+          return Array.from({ length: layers }, (_, i) => {
+            const isTop = i === layers - 1;
+            const offset = i * step;
+            return (
+              <div key={`inf-deck-${i}`}
+                onPointerDown={isTop ? onDragDown : undefined}
+                onClick={isTop && !calibrating ? drawInfectionCard : undefined}
+                onContextMenu={isTop && !calibrating ? (e) => { e.preventDefault(); setDeckMenu({ x: e.clientX, y: e.clientY }); } : undefined}
+                style={{
+                  position: "absolute",
+                  left: `${card.x + offset}%`, top: `${card.y - offset * BOARD_RATIO}%`,
+                  width: `${card.w}%`,
+                  transform: "translate(-50%, -50%)",
+                  zIndex: 9 + i,
+                  cursor: calibrating && isTop ? "grab" : isTop ? "pointer" : "default",
+                  outline: calibrating && isTop ? "2px dashed #fff" : "none",
+                  boxSizing: "border-box",
+                  boxShadow: isTop && setupRemaining > 0
+                    ? `0 0 0 2px ${setupRemaining > 6 ? "#ff3333" : setupRemaining > 3 ? "#ff8800" : "#ffcc00"}, 0 0 16px 4px ${setupRemaining > 6 ? "#ff333388" : setupRemaining > 3 ? "#ff880088" : "#ffcc0088"}`
+                    : isTop && epidemicState?.phase === 'infect'
+                    ? "0 0 0 2px #ff9933, 0 0 16px 4px #ff993366"
+                    : "none",
+                  borderRadius: (isTop && setupRemaining > 0) || (isTop && epidemicState?.phase === 'infect') ? 4 : 0,
+                }}>
+                <img src={infectionCardBackSrc} alt="" draggable={false}
+                  style={{ width: "100%", height: "auto", display: "block", userSelect: "none", pointerEvents: "none" }} />
+                {calibrating && isTop && (
+                  <div onPointerDown={onResizeDown}
+                    style={{ position: "absolute", bottom: 0, right: 0, width: 10, height: 10, background: "#fff", cursor: "se-resize" }} />
+                )}
+              </div>
+            );
+          });
+        })()}
+
+        {/* Player deck ghost — always-present right-click target even when deck is empty */}
+        <div
+          onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setPlayerDeckMenu({ x: e.clientX, y: e.clientY }); }}
+          style={{
+            position: "absolute",
+            left: `${cardPlayer.x}%`, top: `${cardPlayer.y}%`,
+            width: `${cardPlayer.w}%`, aspectRatio: "2.5/3.5",
+            transform: "translate(-50%, -50%)",
+            zIndex: 8,
+            cursor: "context-menu",
+          }}
+        />
+
+        {/* Player draw pile — stacked face-down */}
+        {(() => {
+          const card = cardPlayer;
+          const save = (c: CardState) => { setCardPlayer(c); localStorage.setItem(LS_CARD_PLAYER, JSON.stringify(c)); };
+          const layers = Math.max(0, Math.min(playerDeck.length, 10));
+          const step = 0.10;
+          const onDragDown = calibrating ? (e: React.PointerEvent<HTMLDivElement>) => {
+            e.stopPropagation(); e.preventDefault();
+            const el = e.currentTarget; el.setPointerCapture(e.pointerId);
+            const r = boardRef.current!.getBoundingClientRect();
+            const sx = e.clientX; const sy = e.clientY; const ox = card.x; const oy = card.y;
+            const onMove = (ev: PointerEvent) => save({ ...card, x: ox + ((ev.clientX - sx) / r.width) * 100, y: oy + ((ev.clientY - sy) / r.height) * 100 });
+            const onUp = () => { el.removeEventListener("pointermove", onMove as any); el.removeEventListener("pointerup", onUp); };
+            el.addEventListener("pointermove", onMove as any); el.addEventListener("pointerup", onUp);
+          } : undefined;
+          const onResizeDown = calibrating ? (e: React.PointerEvent<HTMLDivElement>) => {
+            e.stopPropagation(); e.preventDefault();
+            const el = e.currentTarget; el.setPointerCapture(e.pointerId);
+            const r = boardRef.current!.getBoundingClientRect();
+            const sx = e.clientX; const ow = card.w;
+            const onMove = (ev: PointerEvent) => save({ ...card, w: Math.max(2, ow + ((ev.clientX - sx) / r.width) * 100) });
+            const onUp = () => { el.removeEventListener("pointermove", onMove as any); el.removeEventListener("pointerup", onUp); };
+            el.addEventListener("pointermove", onMove as any); el.addEventListener("pointerup", onUp);
+          } : undefined;
+          return Array.from({ length: layers }, (_, i) => {
+            const isTop = i === layers - 1;
+            const offset = i * step;
+            const cityId = playerDeck[playerDeck.length - layers + i];
+            const isEpidemic = cityId === "epidemic";
+            const isFunding = FUND_IMGS[cityId] !== undefined;
+            const city = (isEpidemic || isFunding) ? null : CITIES.find(c => c.id === cityId);
+            const faceUp = isTop && playerFlipped.has(cityId);
+            const pxW = boardPxW > 0 ? (card.w / 100) * boardPxW : 0;
+
+            const onTopDown = isTop && !calibrating ? (e: React.PointerEvent<HTMLDivElement>) => {
+              if (e.button !== 0) return;
+              e.stopPropagation(); e.preventDefault();
+              const el = e.currentTarget; el.setPointerCapture(e.pointerId);
+              const r = boardRef.current!.getBoundingClientRect();
+              const startX = e.clientX; const startY = e.clientY;
+              let moved = false;
+              const deck = playerDeck; const disc = playerDiscard;
+              const toPct = (ev: PointerEvent) => ({
+                x: ((ev.clientX - r.left) / r.width) * 100,
+                y: ((ev.clientY - r.top) / r.height) * 100,
+              });
+              const onMove = (ev: PointerEvent) => {
+                if (!moved && Math.hypot(ev.clientX - startX, ev.clientY - startY) > 6) moved = true;
+                if (moved) setPlayerDrag({ cityId, ...toPct(ev) });
+              };
+              const onUp = (ev: PointerEvent) => {
+                el.removeEventListener("pointermove", onMove as any);
+                el.removeEventListener("pointerup", onUp);
+                setPlayerDrag(null);
+                if (!moved) {
+                  // tap = flip
+                  setPlayerFlipped(prev => {
+                    const n = new Set(prev);
+                    if (n.has(cityId)) n.delete(cityId); else n.add(cityId);
+                    return n;
+                  });
+                  return;
+                }
+                // dragged — allow drop to hand (face-down or face-up) or discard (face-up only)
+                const pos = toPct(ev);
+                const nearDiscard = Math.abs(pos.x - cardPlayerDiscard.x) < 10 && Math.abs(pos.y - cardPlayerDiscard.y) < 10;
+                const nearP1 = pos.x < 5;
+                const nearP2 = pos.x > 95;
+                const inDrawPhase = setup && turnState.phase === "draw" && faceUp;
+                const completeOneDraw = () => {
+                  if (!inDrawPhase) return;
+                  const newCount = turnState.drawCount + 1;
+                  if (newCount >= 2) {
+                    // Check hand limit
+                    const hand = (handCards as Record<string,string[]>)[currentPlayerKey] ?? [];
+                    const phase: TurnPhase = (hand.length + (cityId !== "epidemic" ? 1 : 0)) > 7 ? "discard" : "infect";
+                    saveTurnState({ ...turnState, drawCount: newCount, phase, infectCount: 0 });
+                  } else {
+                    saveTurnState({ ...turnState, drawCount: newCount });
+                  }
+                };
+                if (faceUp && nearDiscard) {
+                  setPlayerDeck(deck.slice(0, -1)); setPlayerDiscard([...disc, cityId]);
+                  setPlayerFlipped(prev => { const n = new Set(prev); n.delete(cityId); return n; });
+                  if (inDrawPhase && cityId === "epidemic") completeOneDraw(); // epidemic dragged to discard counts
+                } else if (nearP1 || nearP2) {
+                  const player = inDrawPhase ? currentPlayerKey : (nearP1 ? 'p1' : 'p2');
+                  setPlayerDeck(deck.slice(0, -1));
+                  setPlayerFlipped(prev => { const n = new Set(prev); n.delete(cityId); return n; });
+                  const dest = (handCards as Record<string,string[]>)[player] ?? [];
+                  saveHandCards({ ...handCards, [player]: [...dest, cityId] });
+                  completeOneDraw();
+                }
+              };
+              el.addEventListener("pointermove", onMove as any);
+              el.addEventListener("pointerup", onUp);
+            } : (isTop ? onDragDown : undefined);
+
+            return (
+              <div key={`player-deck-${i}`}
+                onPointerDown={onTopDown}
+                onContextMenu={isTop && !calibrating ? e => { e.preventDefault(); e.stopPropagation(); setPlayerDeckMenu({ x: e.clientX, y: e.clientY }); } : undefined}
+                style={{
+                  position: "absolute",
+                  left: `${card.x + offset}%`, top: `${card.y - offset * BOARD_RATIO}%`,
+                  width: `${card.w}%`,
+                  transform: "translate(-50%, -50%)",
+                  zIndex: 9 + i,
+                  cursor: isTop && !calibrating ? "grab" : calibrating && isTop ? "grab" : "default",
+                  outline: calibrating && isTop ? "2px dashed #fff" : "none",
+                  boxSizing: "border-box",
+                  opacity: playerDrag?.cityId === cityId ? 0.35 : 1,
+                }}>
+                {faceUp && pxW > 0
+                  ? (isEpidemic
+                      ? <div style={{ width: "100%", aspectRatio: "2.5/3.5", overflow: "hidden" }}><img src={epidemicCardSrc} alt="Epidemic" draggable={false} style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: "bottom", display: "block", pointerEvents: "none" }} /></div>
+                      : isFunding
+                      ? <div style={{ width: "100%", aspectRatio: "2.5/3.5", overflow: "hidden", position: "relative" }}><img src={FUND_IMGS[cityId]} draggable={false} style={{ position: "absolute", bottom: 0, left: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: "bottom", display: "block", pointerEvents: "none" }} /></div>
+                      : <PlayerCard city={city!} width={pxW} />)
+                  : <img src={playerCardBackSrc} alt="" draggable={false}
+                      style={{ width: "100%", height: "auto", display: "block", userSelect: "none", pointerEvents: "none" }} />
+                }
+                {calibrating && isTop && (
+                  <div onPointerDown={onResizeDown}
+                    style={{ position: "absolute", bottom: 0, right: 0, width: 10, height: 10, background: "#fff", cursor: "se-resize" }} />
+                )}
+              </div>
+            );
+          });
+        })()}
+
+        {/* Epidemic standalone pile — hidden (epidemicCount used only for shuffle logic) */}
+        {false && epidemicCount > 0 && boardPxW > 0 && (() => {
+          const card = cardPlayer;
+          const eStep = 0.06;
+          const epidemicFaceUp = playerFlipped.has("epidemic");
+          const onTopDown = (e: React.PointerEvent<HTMLDivElement>) => {
+            if (calibrating || e.button !== 0) return;
+            e.stopPropagation(); e.preventDefault();
+            const el = e.currentTarget; el.setPointerCapture(e.pointerId);
+            const r = boardRef.current!.getBoundingClientRect();
+            const toPct = (ev: PointerEvent) => ({ x: ((ev.clientX - r.left) / r.width) * 100, y: ((ev.clientY - r.top) / r.height) * 100 });
+            let moved = false;
+            const sx = e.clientX; const sy = e.clientY;
+            const onMove = (ev: PointerEvent) => {
+              if (!moved && Math.hypot(ev.clientX - sx, ev.clientY - sy) > 6) moved = true;
+              if (moved && epidemicFaceUp) setPlayerDrag({ cityId: "epidemic", ...toPct(ev) });
+            };
+            const onUp = (ev: PointerEvent) => {
+              el.removeEventListener("pointermove", onMove as any);
+              el.removeEventListener("pointerup", onUp);
+              setPlayerDrag(null);
+              if (!moved) {
+                if (!epidemicFaceUp) {
+                  // Flip face-up → trigger epidemic sequence
+                  setPlayerFlipped(prev => { const n = new Set(prev); n.add("epidemic"); return n; });
+                  triggerEpidemic();
+                } else {
+                  setPlayerFlipped(prev => { const n = new Set(prev); n.delete("epidemic"); return n; });
+                }
+                return;
+              }
+              if (!epidemicFaceUp) return;
+              const pos = toPct(ev);
+              const nearDiscard = Math.abs(pos.x - cardPlayerDiscard.x) < 10 && Math.abs(pos.y - cardPlayerDiscard.y) < 10;
+              const nearP1 = pos.x < 5;
+              const nearP2 = pos.x > 95;
+              if (nearDiscard) {
+                setEpidemicCount(c => c - 1);
+                setPlayerFlipped(prev => { const n = new Set(prev); n.delete("epidemic"); return n; });
+                setPlayerDiscard(prev => [...prev, "epidemic"]);
+              } else if (nearP1 || nearP2) {
+                const player = nearP1 ? 'p1' : 'p2';
+                setEpidemicCount(c => c - 1);
+                setPlayerFlipped(prev => { const n = new Set(prev); n.delete("epidemic"); return n; });
+                saveHandCards({ ...handCards, [player]: [...handCards[player], "epidemic"] });
+              }
+            };
+            el.addEventListener("pointermove", onMove as any);
+            el.addEventListener("pointerup", onUp);
+          };
+          // Epidemic pile sits below the player deck — base is card height below deck centre
+          const cardH = (card.w / 100) * (3.5 / 2.5) / BOARD_RATIO * 100; // % board height
+          const baseDown = cardH * 0.85; // shift down ~85% of one card height
+          return Array.from({ length: epidemicCount }, (_, i) => {
+            const isTop = i === epidemicCount - 1;
+            const offset = i * eStep;
+            return (
+              <div key={`epidemic-${i}`}
+                onPointerDown={isTop ? onTopDown : undefined}
+                onContextMenu={isTop ? e => { e.preventDefault(); e.stopPropagation(); setPlayerDeckMenu({ x: e.clientX, y: e.clientY }); } : undefined}
+                style={{
+                  position: "absolute",
+                  left: `${card.x + offset}%`,
+                  top: `${card.y + baseDown + offset * BOARD_RATIO}%`,
+                  width: `${card.w}%`,
+                  transform: "translate(-50%, -50%)",
+                  zIndex: 7 + i,  /* below player deck (zIndex 9+) */
+                  cursor: isTop ? (epidemicFaceUp ? "grab" : "pointer") : "default",
+                  touchAction: "none", userSelect: "none",
+                  opacity: isTop && playerDrag?.cityId === "epidemic" ? 0.25 : 1,
+                }}>
+                {isTop && epidemicFaceUp
+                  ? <div style={{ width: "100%", aspectRatio: "2.5/3.5", overflow: "hidden" }}><img src={epidemicCardSrc} alt="Epidemic" draggable={false} style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: "bottom", display: "block", pointerEvents: "none" }} /></div>
+                  : <img src={playerCardBackSrc} alt="" draggable={false} style={{ width: "100%", height: "auto", display: "block", pointerEvents: "none" }} />
+                }
+              </div>
+            );
+          });
+        })()}
+
+        {/* Player discard pile — fanned face-up */}
+        {playerDiscard.length > 0 && boardPxW > 0 && (() => {
+          const card = cardPlayerDiscard;
+          const pxW = (card.w / 100) * boardPxW;
+          const step = 0.10;
+          const layers = Math.min(playerDiscard.length, 10);
+          const visible = playerDiscard.slice(-layers);
+          return visible.map((cid, i) => {
+            const isEpidemic = cid === "epidemic";
+            const isFunding = FUND_IMGS[cid] !== undefined;
+            const city = (isEpidemic || isFunding) ? null : CITIES.find(c => c.id === cid);
+            if (!city && !isEpidemic && !isFunding) return null;
+            const offset = i * step;
+            const isTop = i === layers - 1;
+            return (
+              <div key={`player-discard-${i}`}
+                onClick={isTop ? () => setShowPlayerDiscardPopup(v => !v) : undefined}
+                style={{
+                  position: "absolute",
+                  left: `${card.x + offset}%`, top: `${card.y - offset * BOARD_RATIO}%`,
+                  width: `${card.w}%`, transform: "translate(-50%, -50%)",
+                  zIndex: 11 + i, boxSizing: "border-box",
+                  cursor: isTop ? "pointer" : "default",
+                }}>
+                {city
+                  ? <PlayerCard city={city} width={pxW} />
+                  : isFunding
+                  ? <div style={{ width: "100%", aspectRatio: "2.5/3.5", overflow: "hidden", position: "relative" }}><img src={FUND_IMGS[cid]} draggable={false} style={{ position: "absolute", bottom: 0, left: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: "bottom", display: "block", pointerEvents: "none" }} /></div>
+                  : <div style={{ width: "100%", aspectRatio: "2.5/3.5", overflow: "hidden" }}><img src={epidemicCardSrc} alt="Epidemic" draggable={false} style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: "bottom", display: "block", pointerEvents: "none" }} /></div>
+                }
+              </div>
+            );
+          });
+        })()}
+
+        {/* Floating player card during drag */}
+        {playerDrag && boardPxW > 0 && (() => {
+          const isDragEpidemic = playerDrag.cityId === "epidemic";
+          const isDragFunding = FUND_IMGS[playerDrag.cityId] !== undefined;
+          const isDragFaceUp = playerFlipped.has(playerDrag.cityId);
+          const city = (isDragEpidemic || isDragFunding) ? null : CITIES.find(c => c.id === playerDrag.cityId);
+          if (!city && !isDragEpidemic && !isDragFunding) return null;
+          const pxW = (cardPlayer.w / 100) * boardPxW;
+          return (
+            <div style={{
+              position: "absolute",
+              left: `${playerDrag.x}%`, top: `${playerDrag.y}%`,
+              width: `${cardPlayer.w}%`,
+              transform: "translate(-50%, -50%)",
+              zIndex: 200, pointerEvents: "none",
+              filter: "drop-shadow(0 6px 20px #000e)",
+            }}>
+              {!isDragFaceUp
+                ? <img src={playerCardBackSrc} alt="" draggable={false} style={{ width: "100%", height: "auto", display: "block", pointerEvents: "none" }} />
+                : isDragEpidemic
+                ? <div style={{ width: "100%", aspectRatio: "2.5/3.5", overflow: "hidden" }}><img src={epidemicCardSrc} alt="Epidemic" draggable={false} style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: "bottom", display: "block", pointerEvents: "none" }} /></div>
+                : isDragFunding
+                ? <div style={{ width: "100%", aspectRatio: "2.5/3.5", overflow: "hidden", position: "relative" }}><img src={FUND_IMGS[playerDrag.cityId]} draggable={false} style={{ position: "absolute", bottom: 0, left: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: "bottom", display: "block", pointerEvents: "none" }} /></div>
+                : <PlayerCard city={city!} width={pxW} />
+              }
+            </div>
+          );
+        })()}
+
+        {/* Infection discard pile — fanned face up */}
+        {infectDiscard.length > 0 && boardPxW > 0 && (() => {
+          const card = cardInfectionDiscard;
+          const pxW = (card.w / 100) * boardPxW;
+          const step = 0.10;
+          const layers = Math.min(infectDiscard.length, 10);
+          // Show last `layers` cards; index 0 = oldest visible (base), last = top
+          const visible = infectDiscard.slice(-layers);
+          return visible.map((cityId, i) => {
+            const city = CITIES.find(c => c.id === cityId);
+            if (!city) return null;
+            const offset = i * step;
+            const isTop = i === layers - 1;
+            const onDragDown = calibrating && isTop ? (e: React.PointerEvent<HTMLDivElement>) => {
+              e.stopPropagation(); e.preventDefault();
+              const el = e.currentTarget; el.setPointerCapture(e.pointerId);
+              const r = boardRef.current!.getBoundingClientRect();
+              const sx = e.clientX; const sy = e.clientY; const ox = card.x; const oy = card.y;
+              const save = (c: CardState) => { setCardInfectionDiscard(c); localStorage.setItem(LS_CARD_INFECTION_DISCARD, JSON.stringify(c)); };
+              const onMove = (ev: PointerEvent) => save({ ...card, x: ox + ((ev.clientX - sx) / r.width) * 100, y: oy + ((ev.clientY - sy) / r.height) * 100 });
+              const onUp = () => { el.removeEventListener("pointermove", onMove as any); el.removeEventListener("pointerup", onUp); };
+              el.addEventListener("pointermove", onMove as any); el.addEventListener("pointerup", onUp);
+            } : undefined;
+            return (
+              <div key={`inf-discard-${i}`}
+                onPointerDown={onDragDown}
+                onClick={isTop && !calibrating ? () => setShowDiscardPopup(true) : undefined}
+                onContextMenu={isTop && !calibrating ? (e) => { e.preventDefault(); setDiscardMenu({ x: e.clientX, y: e.clientY }); } : undefined}
+                style={{
+                  position: "absolute",
+                  left: `${card.x + offset}%`, top: `${card.y - offset * BOARD_RATIO}%`,
+                  width: `${card.w}%`, transform: "translate(-50%, -50%)",
+                  cursor: calibrating && isTop ? "grab" : isTop ? "pointer" : "default",
+                  zIndex: 11 + i,
+                  outline: calibrating && isTop ? "2px dashed #fff" : "none",
+                  boxSizing: "border-box",
+                  boxShadow: isTop && epidemicState ? "0 0 0 2px #ff9933, 0 0 16px 4px #ff993366" : "none",
+                  borderRadius: isTop && epidemicState ? 4 : 0,
+                }}>
+                <InfectionCard city={city} width={pxW} />
+              </div>
+            );
+          });
+        })()}
+
+        {/* Player hand areas — drop-target highlight in calibrate mode */}
+        {calibrating && (['p1', 'p2', 'p3', 'p4'] as const).filter(p => (activePlayers as readonly string[]).includes(p)).map(player => {
+          const area = player === 'p1' ? HAND_P1 : player === 'p2' ? HAND_P2 : player === 'p3' ? HAND_P3 : HAND_P4;
+          const label = player === 'p1' ? 'Player 1' : player === 'p2' ? 'Player 2' : player === 'p3' ? 'Player 3' : 'Player 4';
+          return (
+            <div key={player} style={{
+              position: "absolute",
+              left: `${area.x}%`, top: `${area.y}%`,
+              width: `${area.w}%`, height: `${area.h}%`,
+              transform: "translate(-50%, -50%)",
+              zIndex: 6, border: "2px dashed #4af", boxSizing: "border-box",
+              display: "flex", alignItems: "flex-start", justifyContent: "center", paddingTop: 4,
+              pointerEvents: "none",
+            }}>
+              <span style={{ color: "#4af", fontSize: 10, fontFamily: "monospace", userSelect: "none" }}>{label}</span>
+            </div>
+          );
+        })}
+
+        {/* Panic trays — one per city, visible in calibrate mode; only HCMC is draggable */}
+        {calibrating && CITIES.map(city => {
+          const isHcmc = city.id === "ho-chi-minh-city";
+          const t = isHcmc ? hcmcTray : (PANIC_TRAY_POS[city.id] ?? { x: city.pos.x, y: city.pos.y });
+          const onDragDown = isHcmc ? (e: React.PointerEvent<HTMLDivElement>) => {
+            e.stopPropagation(); e.preventDefault();
+            const el = e.currentTarget; el.setPointerCapture(e.pointerId);
+            const r = boardRef.current!.getBoundingClientRect();
+            const sx = e.clientX; const sy = e.clientY; const ox = t.x; const oy = t.y;
+            const onMove = (ev: PointerEvent) => {
+              const nx = +(ox + ((ev.clientX - sx) / r.width) * 100).toFixed(2);
+              const ny = +(oy + ((ev.clientY - sy) / r.height) * 100).toFixed(2);
+              setHcmcTray({ x: nx, y: ny });
+              localStorage.setItem(LS_HCMC_TRAY, JSON.stringify({ x: nx, y: ny }));
+            };
+            const onUp = () => { el.removeEventListener("pointermove", onMove as any); el.removeEventListener("pointerup", onUp); };
+            el.addEventListener("pointermove", onMove as any); el.addEventListener("pointerup", onUp);
+          } : undefined;
+          return (
+            <div key={`ptray-${city.id}`}
+              onPointerDown={onDragDown}
+              style={{
+                position: "absolute",
+                left: `${t.x}%`, top: `${t.y}%`,
+                width: `${PANIC_W}%`, aspectRatio: "1",
+                transform: "translate(-50%, -50%)",
+                zIndex: 7,
+                cursor: isHcmc ? "grab" : "default",
+                border: `1.5px dashed ${isHcmc ? "#f80" : "#f804"}`,
+                boxSizing: "border-box",
+              }}>
+              <span style={{
+                position: "absolute", bottom: "100%", left: "50%",
+                transform: "translateX(-50%)",
+                color: isHcmc ? "#f80" : "#f806",
+                fontSize: 5, fontFamily: "monospace", userSelect: "none",
+                pointerEvents: "none", whiteSpace: "nowrap", lineHeight: 1.2,
+              }}>
+                {city.name}
+              </span>
+            </div>
+          );
+        })}
+
+        {/* Research station tokens — draggable */}
+        {CITIES.filter(c => researchStations.has(c.id)).map(city => {
+          const pos = researchPos[city.id] ?? { x: city.pos.x, y: city.pos.y };
+          const onDragDown = (e: React.PointerEvent<HTMLDivElement>) => {
+            if (calibrating) return;
+            e.stopPropagation(); e.preventDefault();
+            const el = e.currentTarget; el.setPointerCapture(e.pointerId);
+            const r = boardRef.current!.getBoundingClientRect();
+            const sx = e.clientX; const sy = e.clientY; const ox = pos.x; const oy = pos.y;
+            const onMove = (ev: PointerEvent) => {
+              const nx = +(ox + ((ev.clientX - sx) / r.width) * 100).toFixed(2);
+              const ny = +(oy + ((ev.clientY - sy) / r.height) * 100).toFixed(2);
+              const next = { ...researchPos, [city.id]: { x: nx, y: ny } };
+              setResearchPos(next);
+              localStorage.setItem(LS_RESEARCH_POS, JSON.stringify(next));
+            };
+            const onUp = () => { el.removeEventListener("pointermove", onMove as any); el.removeEventListener("pointerup", onUp); };
+            el.addEventListener("pointermove", onMove as any); el.addEventListener("pointerup", onUp);
+          };
+          const isPlayerRS = setup && city.id === currentPlayerCityId && turnState.phase === "actions";
+          return (
+            <div key={`rs-${city.id}`} onPointerDown={onDragDown}
+              onClick={e => {
+                if (!isPlayerRS) return;
+                e.stopPropagation();
+                // Check available actions
+                const canShuttle = researchStations.size > 1;
+                const hand = currentPlayerHand();
+                const canCure = DISEASE_COLORS.some(col => {
+                  const ci = COLOR_TO_CURE_IDX[col]; if (ci === undefined || cured[ci]) return false;
+                  return hand.filter(id => CITIES.find(c2 => c2.id === id)?.color === col).length >= 5;
+                });
+                if (!canShuttle && !canCure) return;
+                setRsActionMenu({ cityId: city.id, x: e.clientX, y: e.clientY });
+              }}
+              onContextMenu={e => {
+                if (setup) return; // disable RS removal in game phase
+                e.preventDefault(); e.stopPropagation();
+                const next = new Set(researchStations); next.delete(city.id);
+                setResearchStations(next);
+                localStorage.setItem(LS_RESEARCH_STATIONS, JSON.stringify([...next]));
+              }}
+              style={{
+                position: "absolute",
+                left: `${pos.x}%`, top: `${pos.y}%`,
+                width: `${RESEARCH_W}%`, aspectRatio: "1",
+                transform: "translate(-50%, -50%)",
+                zIndex: 20,
+                cursor: isPlayerRS ? "pointer" : calibrating ? "default" : "grab",
+                touchAction: "none", userSelect: "none",
+                boxShadow: isPlayerRS ? "0 0 0 2px #ffdd44, 0 0 10px 3px #ffdd4488" : "none",
+              }}>
+              <img src={researchSrc} alt="Research station" draggable={false}
+                style={{ width: "100%", height: "100%", objectFit: "fill", display: "block", pointerEvents: "none" }} />
+            </div>
+          );
+        })}
+
+        {/* Panic level stickers — rendered on each city's tray */}
+        {CITIES.map(city => {
+          const level = panicLevels[city.id] ?? 0;
+          if (level === 0) return null;
+          const t = city.id === "ho-chi-minh-city" ? hcmcTray : (PANIC_TRAY_POS[city.id] ?? { x: city.pos.x, y: city.pos.y });
+          return (
+            <div key={`panic-${city.id}`} style={{
+              position: "absolute",
+              left: `${t.x}%`, top: `${t.y}%`,
+              width: `${PANIC_W}%`, aspectRatio: "1",
+              transform: "translate(-50%, -50%)",
+              zIndex: 9,
+              pointerEvents: "none",
+            }}>
+              <img src={PANIC_LEVEL_SRCS[level]} alt={`Panic ${level}`} draggable={false}
+                style={{ width: "100%", height: "100%", objectFit: "fill", display: "block", userSelect: "none" }} />
+            </div>
+          );
+        })}
+
+        {/* Objective cards — fill slots 1..objectiveCount */}
+        {OBJECTIVE_SLOTS.slice(0, objectiveCount).map((slot, i) => (
+          <div key={`objective-${i}`}
+            onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setObjMenu({ x: e.clientX, y: e.clientY, idx: i }); }}
+            style={{
+              position: "absolute",
+              left: `${slot.x}%`, top: `${slot.y}%`,
+              width: `${slot.w}%`,
+              transform: "translate(-50%, -50%)",
+              zIndex: 8,
+              cursor: "context-menu",
+            }}>
+            <img src={objectiveSrc} alt="Objective" draggable={false}
+              style={{ width: "100%", height: "auto", display: "block", userSelect: "none", pointerEvents: "none" }} />
+            {objectiveCompleted[i] && (
+              <div style={{
+                position: "absolute", inset: 0,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                pointerEvents: "none",
+              }}>
+                <span style={{ fontSize: "4vw", color: "#22dd44", textShadow: "0 0 8px #000, 0 0 4px #000", lineHeight: 1 }}>✓</span>
+              </div>
+            )}
+          </div>
+        ))}
+
+        {/* Player hand cards — stacked, draggable */}
+        {boardPxW > 0 && (activePlayers as readonly string[]).map(player => {
+          const area = player === 'p1' ? HAND_P1 : player === 'p2' ? HAND_P2 : player === 'p3' ? HAND_P3 : HAND_P4;
+          const cards = (handCards as Record<string,string[]>)[player] ?? [];
+          if (cards.length === 0) return null;
+          const areaTop = area.y - area.h / 2;
+          const stackOffset = handStackOffset(area, cards.length);
+          const pxW = (area.w / 100) * boardPxW;
+          return cards.map((cityId, i) => {
+            const isFundingHand = FUND_IMGS[cityId] !== undefined;
+            const city = (cityId === "epidemic" || isFundingHand) ? null : CITIES.find(c => c.id === cityId);
+            if (!city && cityId !== "epidemic" && !isFundingHand) return null;
+            const isDragging = handDrag?.player === player && handDrag.idx === i;
+            const isSelected = cureSelecting && selectedHandCards.includes(cityId);
+            const onCardDown = (e: React.PointerEvent<HTMLDivElement>) => {
+              if (calibrating) return;
+              // In game phase: only current player can drag their own cards
+              if (setup && player !== currentPlayerKey) return;
+              e.stopPropagation(); e.preventDefault();
+              const el = e.currentTarget; el.setPointerCapture(e.pointerId);
+              const r = boardRef.current!.getBoundingClientRect();
+              const toPct = (ev: PointerEvent) => ({ x: ((ev.clientX - r.left) / r.width) * 100, y: ((ev.clientY - r.top) / r.height) * 100 });
+              let moved = false;
+              const sx = e.clientX; const sy = e.clientY;
+              const onMove = (ev: PointerEvent) => {
+                if (!moved && Math.hypot(ev.clientX - sx, ev.clientY - sy) > 6) moved = true;
+                if (moved) { setHandDrag({ player, idx: i, ...toPct(ev) }); setHandHover(null); }
+              };
+              const onUp = (ev: PointerEvent) => {
+                el.removeEventListener("pointermove", onMove as any);
+                el.removeEventListener("pointerup", onUp);
+                setHandDrag(null);
+                if (!moved) {
+                  // Tap: toggle card selection for cure (game phase only)
+                  if (setup && cureSelecting) {
+                    setSelectedHandCards(prev =>
+                      prev.includes(cityId) ? prev.filter(id => id !== cityId) : [...prev, cityId]
+                    );
+                  }
+                  return;
+                }
+                const pos = toPct(ev);
+                const current = (handCards as Record<string,string[]>)[player] ?? [];
+                const nearDiscard = Math.abs(pos.x - cardPlayerDiscard.x) < 10 && Math.abs(pos.y - cardPlayerDiscard.y) < 10;
+                // Determine all player hand areas for target detection
+                const HAND_AREAS: Record<string, typeof HAND_P1> = { p1: HAND_P1, p2: HAND_P2, p3: HAND_P3, p4: HAND_P4 };
+                const otherPlayer = (activePlayers as readonly string[]).find(pk =>
+                  pk !== player && Math.abs(pos.x - HAND_AREAS[pk].x) < 8
+                );
+
+                if (nearDiscard && setup && turnState.phase === "actions") {
+                  // Game phase: intercept discard for flight/build actions
+                  const isFundCard = FUND_IMGS[cityId] !== undefined;
+                  const isEpidemicCard = cityId === "epidemic";
+                  if (!isFundCard && !isEpidemicCard) {
+                    if (cityId === currentPlayerCityId) {
+                      // Charter Flight or Build Research Station — show popup
+                      setPendingDiscardMenu({ cityId, player, idx: i, x: ev.clientX, y: ev.clientY });
+                      return;
+                    } else {
+                      // Direct Flight — fly to card's city
+                      const destCity = CITIES.find(c => c.id === cityId);
+                      if (destCity) {
+                        const nextCities = [...playerCities]; nextCities[turnState.currentPlayerIndex] = cityId;
+                        savePlayerCities(nextCities); snapPawnToCity(player, cityId);
+                        saveHandCards({ ...handCards, [player]: current.filter((_, j) => j !== i) });
+                        setPlayerDiscard(prev => [...prev, cityId]);
+                        saveTurnState(consumeAction(turnState));
+                        return;
+                      }
+                    }
+                  }
+                  // Fund/epidemic card: plain discard
+                  saveHandCards({ ...handCards, [player]: current.filter((_, j) => j !== i) });
+                  setPlayerDiscard(prev => [...prev, cityId]);
+                  return;
+                }
+
+                if (nearDiscard && !setup) {
+                  // Pre-game: free discard
+                  saveHandCards({ ...handCards, [player]: current.filter((_, j) => j !== i) });
+                  setPlayerDiscard(prev => [...prev, cityId]);
+                  return;
+                }
+
+                if (otherPlayer && setup && turnState.phase === "actions") {
+                  // Share Knowledge: valid if both players in same city and card matches giver's city
+                  const giverCity = currentPlayerCityId;
+                  const receiverIdx = (['p1','p2','p3','p4'] as const).indexOf(otherPlayer as 'p1'|'p2'|'p3'|'p4');
+                  const receiverCity = playerCities[receiverIdx] ?? "atlanta";
+                  const valid = giverCity === receiverCity && cityId === giverCity;
+                  if (valid) {
+                    const receiverCards = (handCards as Record<string,string[]>)[otherPlayer] ?? [];
+                    saveHandCards({ ...handCards, [player]: current.filter((_, j) => j !== i), [otherPlayer]: [...receiverCards, cityId] });
+                    saveTurnState(consumeAction(turnState));
+                    return;
+                  }
+                  // Invalid share: snap back (just do nothing — card stays)
+                  return;
+                }
+
+                if (otherPlayer && !setup) {
+                  // Pre-game free transfer between hands
+                  const destCards = (handCards as Record<string,string[]>)[otherPlayer] ?? [];
+                  saveHandCards({ ...handCards, [player]: current.filter((_, j) => j !== i), [otherPlayer]: [...destCards, cityId] });
+                  return;
+                }
+
+                // Reorder within same hand
+                const area = HAND_AREAS[player as keyof typeof HAND_AREAS] ?? HAND_P1;
+                const areaT = area.y - area.h / 2;
+                const so = handStackOffset(area, current.length);
+                const targetIdx = Math.max(0, Math.min(current.length - 1, Math.round((pos.y - areaT) / (so || 1))));
+                if (targetIdx !== i) {
+                  const next = [...current]; next.splice(i, 1); next.splice(targetIdx, 0, cityId);
+                  saveHandCards({ ...handCards, [player]: next });
+                }
+              };
+              el.addEventListener("pointermove", onMove as any);
+              el.addEventListener("pointerup", onUp);
+            };
+            return (
+              <div key={`hand-${player}-${cityId}-${i}`}
+                onPointerDown={onCardDown}
+                onMouseEnter={e => { if (!handDrag) setHandHover({ player, idx: i, x: e.clientX, y: e.clientY }); }}
+                onMouseLeave={() => setHandHover(null)}
+                style={{
+                  position: "absolute",
+                  left: `${area.x}%`,
+                  top: `${areaTop + i * stackOffset}%`,
+                  width: `${area.w}%`,
+                  transform: "translateX(-50%)",
+                  zIndex: 15 + i,
+                  cursor: "grab",
+                  opacity: isDragging ? 0.25 : 1,
+                  touchAction: "none", userSelect: "none",
+                  outline: isSelected ? "3px solid #ffdd44" : "none",
+                  borderRadius: isSelected ? 4 : 0,
+                  boxShadow: isSelected ? "0 0 12px 3px #ffdd44aa" : "none",
+                }}>
+                {city
+                  ? <PlayerCard city={city} width={pxW} />
+                  : isFundingHand
+                  ? <div style={{ width: "100%", aspectRatio: "2.5/3.5", overflow: "hidden", position: "relative" }}><img src={FUND_IMGS[cityId]} draggable={false} style={{ position: "absolute", bottom: 0, left: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: "bottom", display: "block", pointerEvents: "none" }} /></div>
+                  : <div style={{ width: "100%", aspectRatio: "2.5/3.5", overflow: "hidden" }}><img src={epidemicCardSrc} alt="Epidemic" draggable={false} style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: "bottom", display: "block", pointerEvents: "none" }} /></div>
+                }
+              </div>
+            );
+          });
+        })}
+
+        {/* Player tokens — P1 pink, P2 blue */}
+        {([
+          { key: 'p1', token: tokenP1, setToken: setTokenP1, lsKey: LS_TOKEN_P1 },
+          { key: 'p2', token: tokenP2, setToken: setTokenP2, lsKey: LS_TOKEN_P2 },
+          { key: 'p3', token: tokenP3, setToken: setTokenP3, lsKey: LS_TOKEN_P3 },
+          { key: 'p4', token: tokenP4, setToken: setTokenP4, lsKey: LS_TOKEN_P4 },
+        ] as { key: string; token: CardState; setToken: (c: CardState) => void; lsKey: string }[])
+        .filter(({ key }) => (activePlayers as readonly string[]).includes(key))
+        .map(({ key, token: t, setToken, lsKey }) => {
+          const color = playerColors[key];
+          const save = (c: CardState) => { setToken(c); localStorage.setItem(lsKey, JSON.stringify(c)); };
+          const aspectH = t.w * BOARD_RATIO * 1.5;
+          const isCurrentPlayerToken = setup && key === currentPlayerKey && turnState.phase === "actions";
+          const onDragDown = (e: React.PointerEvent<HTMLDivElement>) => {
+            if (calibrating) return;
+            if (setup && !isCurrentPlayerToken) return; // lock other players' pawns
+            e.stopPropagation(); e.preventDefault();
+            const el = e.currentTarget; el.setPointerCapture(e.pointerId);
+            const r = boardRef.current!.getBoundingClientRect();
+            const sx = e.clientX; const sy = e.clientY; const ox = t.x; const oy = t.y;
+            const onMove = (ev: PointerEvent) => save({ ...t, x: ox + ((ev.clientX - sx) / r.width) * 100, y: oy + ((ev.clientY - sy) / r.height) * 100 });
+            const onUp = (ev: PointerEvent) => {
+              el.removeEventListener("pointermove", onMove as any); el.removeEventListener("pointerup", onUp);
+              if (!setup || !isCurrentPlayerToken) return;
+              const dropX = ox + ((ev.clientX - sx) / r.width) * 100;
+              const dropY = oy + ((ev.clientY - sy) / r.height) * 100;
+              const targetId = nearestCity(dropX, dropY);
+              const currentCity = CITIES.find(c2 => c2.id === currentPlayerCityId);
+              const isNeighbor = targetId && (currentCity?.neighbors.includes(targetId) ?? false);
+              if (isNeighbor && targetId) {
+                const pi = (['p1','p2','p3','p4'] as const).indexOf(key as 'p1'|'p2'|'p3'|'p4');
+                const offsets: [number,number][] = [[-1,0],[1,0],[-1,1.5],[1,1.5]];
+                const [dx, dy] = offsets[pi] ?? [0, 0];
+                const city = CITIES.find(c2 => c2.id === targetId)!;
+                save({ ...t, x: city.pos.x + dx, y: city.pos.y + dy });
+                const nextCities = [...playerCities]; nextCities[turnState.currentPlayerIndex] = targetId;
+                savePlayerCities(nextCities);
+                saveTurnState(consumeAction(turnState));
+              } else {
+                save({ ...t, x: ox, y: oy }); // snap back
+              }
+            };
+            el.addEventListener("pointermove", onMove as any); el.addEventListener("pointerup", onUp);
+          };
+          const onResizeDown = calibrating ? (e: React.PointerEvent<HTMLDivElement>) => {
+            e.stopPropagation(); e.preventDefault();
+            const el = e.currentTarget; el.setPointerCapture(e.pointerId);
+            const r = boardRef.current!.getBoundingClientRect();
+            const sx = e.clientX; const ow = t.w;
+            const onMove = (ev: PointerEvent) => save({ ...t, w: Math.max(0.5, ow + ((ev.clientX - sx) / r.width) * 100) });
+            const onUp = () => { el.removeEventListener("pointermove", onMove as any); el.removeEventListener("pointerup", onUp); };
+            el.addEventListener("pointermove", onMove as any); el.addEventListener("pointerup", onUp);
+          } : undefined;
+          return (
+            <div key={key} onPointerDown={onDragDown}
+              style={{
+                position: "absolute",
+                left: `${t.x}%`, top: `${t.y}%`,
+                width: `${t.w}%`, height: `${aspectH}%`,
+                transform: "translate(-50%, -50%)",
+                zIndex: 25,
+                cursor: calibrating ? "default" : "grab",
+                outline: calibrating ? "2px dashed #fff" : "none",
+                boxSizing: "border-box",
+                touchAction: "none", userSelect: "none",
+                filter: "drop-shadow(0 3px 6px #0008)",
+              }}>
+              <svg viewBox="0 0 100 150" style={{ width: "100%", height: "100%", display: "block", pointerEvents: "none" }}>
+                <path d="M 36,50 C 18,68 10,105 12,132 Q 12,148 50,148 Q 88,148 88,132 C 90,105 82,68 64,50 Z" fill={color} stroke={color === "#f0f0f0" ? "#999" : "none"} strokeWidth={color === "#f0f0f0" ? 1.5 : 0} />
+                <ellipse cx="50" cy="50" rx="15" ry="8" fill={color} />
+                <circle cx="50" cy="28" r="24" fill={color} stroke={color === "#f0f0f0" ? "#999" : "none"} strokeWidth={color === "#f0f0f0" ? 1.5 : 0} />
+                <circle cx="40" cy="20" r="7" fill="rgba(255,255,255,0.30)" />
+              </svg>
+              {calibrating && (
+                <div onPointerDown={onResizeDown}
+                  style={{ position: "absolute", bottom: 0, right: 0, width: 10, height: 10, background: "#fff", cursor: "se-resize" }} />
+              )}
+            </div>
+          );
+        })}
+
+        {/* Hovered hand card — overlay above all */}
+        {handHover && boardPxW > 0 && (() => {
+          const area = handHover.player === 'p1' ? HAND_P1 : handHover.player === 'p2' ? HAND_P2 : handHover.player === 'p3' ? HAND_P3 : HAND_P4;
+          const cards = (handCards as Record<string,string[]>)[handHover.player] ?? [];
+          const cityId = cards[handHover.idx];
+          const isFundH = FUND_IMGS[cityId] !== undefined;
+          const city = (cityId === "epidemic" || isFundH) ? null : CITIES.find(c => c.id === cityId);
+          if (!city && cityId !== "epidemic" && !isFundH) return null;
+          const areaTop = area.y - area.h / 2;
+          const stackOffset = handStackOffset(area, cards.length);
+          const pxW = (area.w / 100) * boardPxW;
+          return (
+            <div style={{
+              position: "absolute",
+              left: `${area.x}%`,
+              top: `${areaTop + handHover.idx * stackOffset}%`,
+              width: `${area.w}%`,
+              transform: "translateX(-50%)",
+              zIndex: 400,
+              pointerEvents: "none",
+            }}>
+              {city
+                ? <PlayerCard city={city} width={pxW} />
+                : isFundH
+                ? <div style={{ width: "100%", aspectRatio: "2.5/3.5", overflow: "hidden", position: "relative" }}><img src={FUND_IMGS[cityId]} draggable={false} style={{ position: "absolute", bottom: 0, left: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: "bottom", display: "block" }} /></div>
+                : <div style={{ width: "100%", aspectRatio: "2.5/3.5", overflow: "hidden" }}><img src={epidemicCardSrc} alt="Epidemic" draggable={false} style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: "bottom", display: "block" }} /></div>
+              }
+            </div>
+          );
+        })()}
+
+        {/* Floating dragged hand card */}
+        {handDrag && boardPxW > 0 && (() => {
+          const area = handDrag.player === 'p1' ? HAND_P1 : handDrag.player === 'p2' ? HAND_P2 : handDrag.player === 'p3' ? HAND_P3 : HAND_P4;
+          const cityId = ((handCards as Record<string,string[]>)[handDrag.player] ?? [])[handDrag.idx];
+          const isFundDrag = FUND_IMGS[cityId] !== undefined;
+          const city = (cityId === "epidemic" || isFundDrag) ? null : CITIES.find(c => c.id === cityId);
+          if (!city && cityId !== "epidemic" && !isFundDrag) return null;
+          const pxW = (area.w / 100) * boardPxW;
+          return (
+            <div style={{
+              position: "absolute",
+              left: `${handDrag.x}%`, top: `${handDrag.y}%`,
+              width: `${area.w}%`,
+              transform: "translate(-50%, -50%)",
+              zIndex: 500, pointerEvents: "none",
+              filter: "drop-shadow(0 6px 20px #000e)",
+            }}>
+              {city
+                ? <PlayerCard city={city} width={pxW} />
+                : isFundDrag
+                ? <div style={{ width: "100%", aspectRatio: "2.5/3.5", overflow: "hidden", position: "relative" }}><img src={FUND_IMGS[cityId]} draggable={false} style={{ position: "absolute", bottom: 0, left: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: "bottom", display: "block" }} /></div>
+                : <div style={{ width: "100%", aspectRatio: "2.5/3.5", overflow: "hidden" }}><img src={epidemicCardSrc} alt="Epidemic" draggable={false} style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: "bottom", display: "block" }} /></div>
+              }
+            </div>
+          );
+        })()}
+
+        {/* Character icons — small role thumbnail in each active player's hand area, hover shows full role card */}
+        {(activePlayers as readonly string[]).map(pid => {
+          const area = pid === 'p1' ? HAND_P1 : pid === 'p2' ? HAND_P2 : pid === 'p3' ? HAND_P3 : HAND_P4;
+          const pidIndex = ['p1','p2','p3','p4'].indexOf(pid);
+          const roleId = setup?.playerOrder[pidIndex]?.roleId ?? null;
+          const roleSrc = roleId ? ROLE_IMGS[roleId] : null;
+          if (!roleSrc) return null;
+          const color = playerColors[pid];
+          const isLeft = pid === 'p1' || pid === 'p3';
+          const iconY = area.y - area.h / 2 - 10;
+          return (
+            <div
+              key={`char-icon-${pid}`}
+              style={{
+                position: "absolute",
+                left: `${area.x}%`,
+                top: `${iconY}%`,
+                transform: "translateX(-50%)",
+                zIndex: 35,
+                cursor: "default",
+              }}
+              onMouseEnter={() => setRoleHover(pid)}
+              onMouseLeave={() => setRoleHover(null)}
+            >
+              <div style={{
+                width: 48,
+                height: 48,
+                borderRadius: 8,
+                overflow: "hidden",
+                border: `2.5px solid ${color}`,
+                boxShadow: `0 0 14px ${color}88`,
+              }}>
+                <img
+                  src={roleSrc}
+                  draggable={false}
+                  style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: "top center", display: "block", pointerEvents: "none", userSelect: "none" }}
+                />
+              </div>
+              {roleHover === pid && (
+                <div style={{
+                  position: "absolute",
+                  top: 0,
+                  ...(isLeft ? { left: "calc(100% + 8px)" } : { right: "calc(100% + 8px)" }),
+                  zIndex: 600,
+                  pointerEvents: "none",
+                }}>
+                  <img
+                    src={roleSrc}
+                    draggable={false}
+                    style={{ width: 180, height: "auto", borderRadius: 10, boxShadow: "0 8px 36px #000e", display: "block", userSelect: "none" }}
+                  />
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        {/* P3 / P4 hand card areas — empty for now; show calibrate outline when calibrating */}
+        {boardPxW > 0 && (['p3', 'p4'] as const).filter(p => (activePlayers as readonly string[]).includes(p)).map(player => {
+          const area = player === 'p3' ? HAND_P3 : HAND_P4;
+          const cards = handCards[player as keyof typeof handCards] as string[] | undefined ?? [];
+          if (!calibrating && cards.length === 0) return null;
+          const areaTop = area.y - area.h / 2;
+          return (
+            <div key={`hand-area-${player}`}>
+              {calibrating && (
+                <div style={{
+                  position: "absolute",
+                  left: `${area.x}%`, top: `${areaTop}%`,
+                  width: `${area.w}%`, height: `${area.h}%`,
+                  transform: "translateX(-50%)",
+                  zIndex: 6, border: "2px dashed #4af", boxSizing: "border-box",
+                  display: "flex", alignItems: "flex-start", justifyContent: "center", paddingTop: 4,
+                  pointerEvents: "none",
+                }}>
+                  <span style={{ color: "#4af", fontSize: 10, fontFamily: "monospace", userSelect: "none" }}>
+                    {player === 'p3' ? 'Player 3' : 'Player 4'}
+                  </span>
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        {/* Chain outbreak city highlights — click to resolve */}
+        {outbreakQueue.map(({ cityId, color }) => {
+          const city = CITIES.find(c => c.id === cityId);
+          if (!city) return null;
+          const cubeColor = COLOR_TO_CUBE[color];
+          return (
+            <div
+              key={`chain-${cityId}`}
+              onClick={e => { e.stopPropagation(); handleChainClick(cityId, color); }}
+              style={{
+                position: "absolute",
+                left: `${city.pos.x}%`,
+                top: `${city.pos.y}%`,
+                width: `${CUBE_W * 4}%`,
+                aspectRatio: "1",
+                transform: "translate(-50%, -50%)",
+                borderRadius: "50%",
+                border: `2.5px solid ${cubeColor}`,
+                boxShadow: `0 0 12px 4px ${cubeColor}99, inset 0 0 8px ${cubeColor}44`,
+                cursor: "pointer",
+                zIndex: 80,
+                animation: "chainPulse 0.9s ease-in-out infinite alternate",
+              }}
+            />
+          );
+        })}
+
+        {MARKERS.map((m, i) => {
+          const ci = CURE_INDICES.indexOf(i);
+          const isCured = ci >= 0 && cured[ci];
+          return (
+            <BoardMarker
+              key={m.key}
+              src={m.src}
+              alt={m.alt}
+              aspectRatio={1}
+              state={calibrating && !m.fixed ? states[i] : effectiveState(i)}
+              calibrating={calibrating && !m.fixed}
+              onChange={update(i)}
+              tintColor={m.tintColor}
+              eradicated={ci >= 0 ? eradicated[ci] : false}
+              eradicatedColor={m.tintColor === "#FFFA73" ? "#666" : "white"}
+              onActivate={isCured && !calibrating ? () => {
+                setEradicated(prev => {
+                  const next = [...prev];
+                  next[ci] = !next[ci];
+                  return next;
+                });
+              } : undefined}
+            />
+          );
+        })}
       </div>
-      {/* Overlay layer for cities + objects (added later). */}
-      <div style={{ position: "absolute", inset: 0, pointerEvents: "none" }} />
+
+      {/* City context menu */}
+      {cityMenu && (() => {
+        const city = CITIES.find(c => c.id === cityMenu.cityId);
+        if (!city) return null;
+        const level = panicLevels[cityMenu.cityId] ?? 0;
+        const setLevel = (n: number) => {
+          const clamped = Math.max(0, Math.min(5, n));
+          const next = { ...panicLevels, [cityMenu.cityId]: clamped };
+          setPanicLevels(next);
+          localStorage.setItem(LS_PANIC_LEVELS, JSON.stringify(next));
+        };
+        const hasStation = researchStations.has(cityMenu.cityId);
+        const canAdd = !hasStation && researchStations.size < 6;
+        const menuStyle: React.CSSProperties = {
+          background: "#111418", borderRadius: 5,
+          boxShadow: "0 4px 20px #000c", minWidth: 110, overflow: "visible",
+          fontFamily: "system-ui, sans-serif", fontSize: 12,
+        };
+        const itemStyle = (active: boolean): React.CSSProperties => ({
+          padding: "7px 10px", color: active ? "#e8e8e8" : "#888",
+          cursor: "default", display: "flex", justifyContent: "space-between",
+          alignItems: "center", gap: 8, userSelect: "none",
+          background: "transparent", borderRadius: 3,
+          transition: "background 0.1s",
+        });
+        const subStyle: React.CSSProperties = {
+          ...menuStyle,
+          position: "absolute", left: "100%", top: 0, marginLeft: 4,
+        };
+        return (
+          <div onClick={() => { setCityMenu(null); setCityMenuHover(null); }}
+            style={{ position: "fixed", inset: 0, zIndex: 999 }}>
+            <div onClick={e => e.stopPropagation()}
+              style={{ position: "fixed", left: cityMenu.x, top: cityMenu.y, ...menuStyle, padding: 3 }}>
+
+              {/* Building */}
+              <div style={{ position: "relative" }}
+                onMouseEnter={() => setCityMenuHoverDelayed("building")}
+                onMouseLeave={() => setCityMenuHoverDelayed(null)}>
+                <div style={{ ...itemStyle(true), background: cityMenuHover === "building" ? "#23282f" : "transparent" }}>
+                  Building <span style={{ fontSize: 9, color: "#555" }}>▶</span>
+                </div>
+                {cityMenuHover === "building" && (
+                  <div style={subStyle} onClick={e => e.stopPropagation()}
+                    onMouseEnter={() => setCityMenuHoverDelayed("building")}
+                    onMouseLeave={() => setCityMenuHoverDelayed(null)}>
+                    <div style={{ padding: 3 }}>
+                      <div
+                        onClick={hasStation
+                          ? () => { const n = new Set(researchStations); n.delete(cityMenu.cityId); setResearchStations(n); localStorage.setItem(LS_RESEARCH_STATIONS, JSON.stringify([...n])); setCityMenu(null); setCityMenuHover(null); }
+                          : canAdd
+                          ? () => { const n = new Set(researchStations); n.add(cityMenu.cityId); setResearchStations(n); localStorage.setItem(LS_RESEARCH_STATIONS, JSON.stringify([...n])); setCityMenu(null); setCityMenuHover(null); }
+                          : undefined}
+                        style={{ ...itemStyle(hasStation || canAdd), color: hasStation ? "#6ddc6d" : canAdd ? "#e8e8e8" : "#444", cursor: hasStation || canAdd ? "pointer" : "default" }}
+                        onMouseEnter={e => { if (hasStation || canAdd) e.currentTarget.style.background = "#23282f"; }}
+                        onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+                        Research Station {hasStation ? "✓" : ""}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Panic */}
+              <div style={{ position: "relative" }}
+                onMouseEnter={() => setCityMenuHoverDelayed("panic")}
+                onMouseLeave={() => setCityMenuHoverDelayed(null)}>
+                <div style={{ ...itemStyle(true), background: cityMenuHover === "panic" ? "#23282f" : "transparent" }}>
+                  Panic <span style={{ fontSize: 9, color: "#555" }}>▶</span>
+                </div>
+                {cityMenuHover === "panic" && (
+                  <div style={subStyle} onClick={e => e.stopPropagation()}
+                    onMouseEnter={() => setCityMenuHoverDelayed("panic")}
+                    onMouseLeave={() => setCityMenuHoverDelayed(null)}>
+                    <div style={{ padding: 3 }}>
+                      {[["−", level > 0, () => setLevel(level - 1)], ["+", level < 5, () => setLevel(level + 1)]].map(([label, enabled, action]) => (
+                        <div key={label as string}
+                          onClick={e => { e.stopPropagation(); if (enabled) (action as () => void)(); }}
+                          style={{ padding: "7px 14px", color: enabled ? "#e8e8e8" : "#444", cursor: enabled ? "pointer" : "default", borderRadius: 3 }}
+                          onMouseEnter={e => { if (enabled) e.currentTarget.style.background = "#23282f"; }}
+                          onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+                          {label as string}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Objective card context menu */}
+      {objMenu && (
+        <div onClick={() => setObjMenu(null)}
+          style={{ position: "fixed", inset: 0, zIndex: 999 }}>
+          <div onClick={e => e.stopPropagation()}
+            style={{
+              position: "fixed", left: objMenu.x, top: objMenu.y,
+              background: "#1a2550", border: "1px solid #445", borderRadius: 6,
+              boxShadow: "0 4px 16px #000a", zIndex: 1000, minWidth: 150, overflow: "hidden",
+            }}>
+            {[
+              {
+                label: objectiveCompleted[objMenu.idx] ? "✓ Completed" : "Completed",
+                action: () => {
+                  setObjectiveCompleted(prev => { const n = [...prev]; n[objMenu.idx] = !n[objMenu.idx]; return n; });
+                  setObjMenu(null);
+                },
+              },
+              {
+                label: "Destroy",
+                action: () => {
+                  const idx = objMenu.idx;
+                  setObjectiveCompleted(prev => { const n = [...prev]; n.splice(idx, 1); return n; });
+                  setObjectiveCount(prev => prev - 1);
+                  setObjMenu(null);
+                },
+                color: "#f66",
+              },
+            ].map(({ label, action, color }) => (
+              <div key={label} onClick={action}
+                style={{ padding: "10px 16px", color: color ?? "#cde", fontSize: 13, cursor: "pointer", fontFamily: "monospace" }}
+                onMouseEnter={e => (e.currentTarget.style.background = "#2a3d7a")}
+                onMouseLeave={e => (e.currentTarget.style.background = "transparent")}>
+                {label}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Infection deck context menu */}
+      {deckMenu && (
+        <div onClick={() => setDeckMenu(null)}
+          style={{ position: "fixed", inset: 0, zIndex: 999 }}>
+          <div onClick={e => e.stopPropagation()}
+            style={{
+              position: "fixed", left: deckMenu.x, top: deckMenu.y,
+              background: "#1a2550", border: "1px solid #445", borderRadius: 6,
+              boxShadow: "0 4px 16px #000a", zIndex: 1000, minWidth: 140, overflow: "hidden",
+            }}>
+            {[
+              { label: "Shuffle", action: shuffleDeck },
+              { label: "Forecast", action: openForecast },
+              { label: "Draw Bottom", action: () => {
+                if (infectDeck.length === 0) return;
+                const bottom = infectDeck[0];
+                setInfectDeck(infectDeck.slice(1));
+                setInfectDiscard(prev => [...prev, bottom]);
+                setDeckMenu(null);
+                if (epidemicState?.phase === 'infect') epidemicInfect(bottom);
+              }},
+            ].map(({ label, action }) => (
+              <div key={label} onClick={action}
+                style={{ padding: "10px 16px", color: "#cde", fontSize: 13, cursor: "pointer", fontFamily: "monospace" }}
+                onMouseEnter={e => (e.currentTarget.style.background = "#2a3d7a")}
+                onMouseLeave={e => (e.currentTarget.style.background = "transparent")}>
+                {label}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Forecast popup */}
+      {forecastCards && boardPxW > 0 && (
+        <div onClick={() => setForecastCards(null)}
+          style={{ position: "fixed", inset: 0, background: "#000b", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}>
+          <div onClick={e => e.stopPropagation()}
+            style={{ background: "#0c1335", border: "2px solid #334", borderRadius: 10, padding: 20 }}>
+            <div style={{ color: "#aac", fontSize: 12, fontFamily: "monospace", marginBottom: 12 }}>
+              Forecast — drag to reorder, top card drawn first
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center" }}>
+              {forecastCards.map((cityId, i) => {
+                const city = CITIES.find(c => c.id === cityId);
+                if (!city) return null;
+                const isDragging = forecastDragIdx === i;
+                return (
+                  <div key={cityId}
+                    draggable
+                    onDragStart={() => setForecastDragIdx(i)}
+                    onDragOver={e => e.preventDefault()}
+                    onDrop={() => {
+                      if (forecastDragIdx === null || forecastDragIdx === i) return;
+                      setForecastCards(prev => {
+                        if (!prev) return prev;
+                        const next = [...prev];
+                        [next[forecastDragIdx], next[i]] = [next[i], next[forecastDragIdx]];
+                        return next;
+                      });
+                      setForecastDragIdx(null);
+                    }}
+                    onDragEnd={() => setForecastDragIdx(null)}
+                    style={{
+                      opacity: isDragging ? 0.4 : 1,
+                      cursor: "grab",
+                      outline: isDragging ? "2px dashed #88f" : "none",
+                      borderRadius: 6,
+                    }}>
+                    <div style={{ color: "#88a", fontSize: 10, fontFamily: "monospace", textAlign: "center", marginBottom: 3 }}>
+                      {i === 0 ? "▲ top" : `${i + 1}`}
+                    </div>
+                    <InfectionCard city={city} width={120} />
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ textAlign: "center", marginTop: 14 }}>
+              <button onClick={confirmForecast}
+                style={{ fontSize: 20, background: "#1e3575", border: "2px solid #48f", color: "#cef", borderRadius: 8, padding: "4px 24px", cursor: "pointer" }}>
+                ✓
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Infection discard context menu */}
+      {discardMenu && (
+        <div onClick={() => setDiscardMenu(null)}
+          style={{ position: "fixed", inset: 0, zIndex: 999 }}>
+          <div onClick={e => e.stopPropagation()}
+            style={{
+              position: "fixed", left: discardMenu.x, top: discardMenu.y,
+              background: "#1a2550", border: "1px solid #445", borderRadius: 6,
+              boxShadow: "0 4px 16px #000a", zIndex: 1000, minWidth: 140, overflow: "hidden",
+            }}>
+            <div
+              onClick={shuffleDiscardOntoDeck}
+              style={{
+                padding: "10px 16px", color: "#cde", fontSize: 13, cursor: "pointer",
+                fontFamily: "monospace",
+              }}
+              onMouseEnter={e => (e.currentTarget.style.background = "#2a3d7a")}
+              onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+            >
+              Shuffle
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Infection discard popup */}
+      {showPlayerDiscardPopup && (
+        <div
+          onClick={() => setShowPlayerDiscardPopup(false)}
+          style={{
+            position: "fixed", inset: 0, background: "#000a",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            zIndex: 1000,
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: "#0c1335", border: "2px solid #334",
+              borderRadius: 10, padding: 20, maxWidth: "90vw", maxHeight: "80vh",
+              overflowY: "auto",
+            }}
+          >
+            <div style={{ color: "#aac", fontSize: 13, marginBottom: 12, fontFamily: "monospace" }}>
+              Player Discard — {playerDiscard.length} card{playerDiscard.length !== 1 ? "s" : ""}
+              <button onClick={() => setShowPlayerDiscardPopup(false)}
+                style={{ float: "right", background: "none", border: "1px solid #556", color: "#aac", cursor: "pointer", borderRadius: 4, padding: "2px 8px" }}>
+                ✕
+              </button>
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+              {[...playerDiscard].reverse().map((cityId, i) => {
+                const isFundPopup = FUND_IMGS[cityId] !== undefined;
+                const city = (cityId === "epidemic" || isFundPopup) ? null : CITIES.find(c => c.id === cityId);
+                if (!city && cityId !== "epidemic" && !isFundPopup) return null;
+                return (
+                  <div key={`pdpopup-${i}`}
+                    onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setDiscardCardMenu({ cityId, x: e.clientX, y: e.clientY }); }}
+                    style={{ cursor: "context-menu" }}>
+                    {city
+                      ? <PlayerCard city={city} width={110} />
+                      : isFundPopup
+                      ? <div style={{ width: 110, aspectRatio: "2.5/3.5", overflow: "hidden", position: "relative" }}><img src={FUND_IMGS[cityId]} draggable={false} style={{ position: "absolute", bottom: 0, left: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: "bottom", display: "block" }} /></div>
+                      : <div style={{ width: 110, aspectRatio: "2.5/3.5", overflow: "hidden" }}><img src={epidemicCardSrc} alt="Epidemic" draggable={false} style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: "bottom", display: "block" }} /></div>
+                    }
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Player deck right-click menu */}
+      {playerDeckMenu && (
+        <div onClick={() => setPlayerDeckMenu(null)}
+          style={{ position: "fixed", inset: 0, zIndex: 999 }}>
+          <div onClick={e => e.stopPropagation()}
+            style={{
+              position: "fixed", left: playerDeckMenu.x, top: playerDeckMenu.y,
+              background: "#111418", borderRadius: 5,
+              boxShadow: "0 4px 20px #000c", overflow: "hidden",
+              fontFamily: "system-ui, sans-serif", fontSize: 12, minWidth: 120, padding: 3,
+            }}>
+            {[
+              {
+                label: "Recall",
+                action: () => {
+                  const allCards = [...handCards.p1, ...handCards.p2, ...playerDiscard];
+                  const cityCards = allCards.filter(id => id !== "epidemic");
+                  const epidemicCards = allCards.filter(id => id === "epidemic").length;
+                  setPlayerDeck(prev => [...cityCards, ...prev]);
+                  setEpidemicCount(c => c + epidemicCards);
+                  setPlayerFlipped(prev => { const n = new Set(prev); n.delete("epidemic"); return n; });
+                  setPlayerFlipped(new Set());
+                  saveHandCards({ ...handCards, p1: [], p2: [], p3: [], p4: [] });
+                  setPlayerDiscard([]);
+                  setPlayerDeckMenu(null);
+                },
+              },
+              {
+                label: "Shuffle",
+                action: () => {
+                  // Count ALL epidemics: standalone stack + any already embedded in deck
+                  const embeddedEpidemics = playerDeck.filter(id => id === "epidemic").length;
+                  const totalEpidemics = epidemicCount + embeddedEpidemics;
+                  const cityCards = shuffle(playerDeck.filter(id => id !== "epidemic"));
+                  const numPiles = Math.max(1, Math.min(totalEpidemics || 5, 5));
+                  const base = Math.floor(cityCards.length / numPiles);
+                  const extras = cityCards.length % numPiles;
+                  // Build piles (extras piles get one extra card)
+                  const piles: string[][] = [];
+                  let idx = 0;
+                  for (let p = 0; p < numPiles; p++) {
+                    const size = base + (p < extras ? 1 : 0);
+                    piles.push(cityCards.slice(idx, idx + size));
+                    idx += size;
+                  }
+                  // Insert 1 epidemic per pile at a random position, then shuffle the pile
+                  // so the epidemic's position is fully random (prevents it from sitting at top)
+                  for (let p = 0; p < numPiles && p < totalEpidemics; p++) {
+                    const at = Math.floor(Math.random() * (piles[p].length + 1));
+                    piles[p].splice(at, 0, "epidemic");
+                    piles[p] = shuffle(piles[p]);
+                  }
+                  // Sort ascending by size (smaller piles at bottom = drawn last)
+                  piles.sort((a, b) => a.length - b.length);
+                  setPlayerDeck(piles.flat());
+                  setEpidemicCount(0);
+                  setPlayerFlipped(new Set());
+                  setPlayerDeckMenu(null);
+                },
+              },
+            ].map(({ label, action }) => (
+              <div key={label} onClick={action}
+                style={{ padding: "8px 14px", color: "#e8e8e8", cursor: "pointer", borderRadius: 3 }}
+                onMouseEnter={e => { e.currentTarget.style.background = "#23282f"; }}
+                onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+                {label}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Player discard card context menu — send to hand */}
+      {discardCardMenu && (
+        <div onClick={() => setDiscardCardMenu(null)}
+          style={{ position: "fixed", inset: 0, zIndex: 1100 }}>
+          <div onClick={e => e.stopPropagation()}
+            style={{
+              position: "fixed", left: discardCardMenu.x, top: discardCardMenu.y,
+              background: "#111418", borderRadius: 5,
+              boxShadow: "0 4px 20px #000c", overflow: "hidden",
+              fontFamily: "system-ui, sans-serif", fontSize: 12, minWidth: 110,
+            }}>
+            {discardCardMenu.cityId === "epidemic"
+              ? (
+                <div onClick={() => {
+                  setPlayerDiscard(prev => prev.filter(id => id !== "epidemic"));
+                  setEpidemicCount(c => c + 1);
+                  setPlayerFlipped(prev => { const n = new Set(prev); n.delete("epidemic"); return n; });
+                  setDiscardCardMenu(null);
+                }}
+                  style={{ padding: "8px 14px", color: "#e8e8e8", cursor: "pointer" }}
+                  onMouseEnter={e => { e.currentTarget.style.background = "#23282f"; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+                  Return to deck
+                </div>
+              )
+              : (['p1', 'p2'] as const).map(player => (
+              <div key={player}
+                onClick={() => {
+                  const cityId = discardCardMenu.cityId;
+                  setPlayerDiscard(prev => prev.filter(id => id !== cityId));
+                  saveHandCards({ ...handCards, [player]: [...handCards[player], cityId] });
+                  setDiscardCardMenu(null);
+                }}
+                style={{ padding: "8px 14px", color: "#e8e8e8", cursor: "pointer" }}
+                onMouseEnter={e => { e.currentTarget.style.background = "#23282f"; }}
+                onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+                {player === 'p1' ? 'Player 1' : 'Player 2'}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Charter Flight / Build Research Station popup */}
+      {pendingDiscardMenu && (
+        <div onClick={() => setPendingDiscardMenu(null)}
+          style={{ position: "fixed", inset: 0, zIndex: 1100 }}>
+          <div onClick={e => e.stopPropagation()}
+            style={{ position: "fixed", left: pendingDiscardMenu.x, top: pendingDiscardMenu.y,
+              background: "#111418", borderRadius: 5, boxShadow: "0 4px 20px #000c",
+              overflow: "hidden", fontFamily: "system-ui, sans-serif", fontSize: 12, minWidth: 160 }}>
+            {[
+              {
+                label: "Charter Flight",
+                action: () => {
+                  // Discard card, set pendingCharter, highlight all cities
+                  const { player, idx, cityId } = pendingDiscardMenu;
+                  const current = (handCards as Record<string,string[]>)[player] ?? [];
+                  saveHandCards({ ...handCards, [player]: current.filter((_, j) => j !== idx) });
+                  setPlayerDiscard(prev => [...prev, cityId]);
+                  setHighlightCities(CITIES.map(c => c.id));
+                  saveTurnState({ ...turnState, pendingCharter: true });
+                  setPendingDiscardMenu(null);
+                },
+              },
+              {
+                label: `Build Research Station${researchStations.has(pendingDiscardMenu.cityId) ? " (already here)" : researchStations.size >= 6 ? " (pool empty)" : ""}`,
+                disabled: researchStations.has(pendingDiscardMenu.cityId) || researchStations.size >= 6,
+                action: () => {
+                  const { player, idx, cityId } = pendingDiscardMenu;
+                  const current = (handCards as Record<string,string[]>)[player] ?? [];
+                  saveHandCards({ ...handCards, [player]: current.filter((_, j) => j !== idx) });
+                  setPlayerDiscard(prev => [...prev, cityId]);
+                  const next = new Set(researchStations); next.add(cityId);
+                  setResearchStations(next);
+                  localStorage.setItem(LS_RESEARCH_STATIONS, JSON.stringify([...next]));
+                  saveTurnState(consumeAction(turnState));
+                  setPendingDiscardMenu(null);
+                },
+              },
+            ].map(({ label, action, disabled }) => (
+              <div key={label} onClick={disabled ? undefined : action}
+                style={{ padding: "9px 14px", color: disabled ? "#555" : "#e8e8e8", cursor: disabled ? "default" : "pointer" }}
+                onMouseEnter={e => { if (!disabled) e.currentTarget.style.background = "#23282f"; }}
+                onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+                {label}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* RS Action menu — Shuttle Flight / Discover Cure */}
+      {rsActionMenu && (
+        <div onClick={() => setRsActionMenu(null)}
+          style={{ position: "fixed", inset: 0, zIndex: 1100 }}>
+          <div onClick={e => e.stopPropagation()}
+            style={{ position: "fixed", left: rsActionMenu.x, top: rsActionMenu.y,
+              background: "#111418", borderRadius: 5, boxShadow: "0 4px 20px #000c",
+              overflow: "hidden", fontFamily: "system-ui, sans-serif", fontSize: 12, minWidth: 150 }}>
+            {researchStations.size > 1 && (
+              <div onClick={() => {
+                const otherRS = [...researchStations].filter(id => id !== currentPlayerCityId);
+                setHighlightCities(otherRS);
+                saveTurnState({ ...turnState, pendingShuttle: true });
+                setRsActionMenu(null);
+              }}
+                style={{ padding: "9px 14px", color: "#e8e8e8", cursor: "pointer" }}
+                onMouseEnter={e => { e.currentTarget.style.background = "#23282f"; }}
+                onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+                Shuttle Flight
+              </div>
+            )}
+            {(() => {
+              const hand = currentPlayerHand();
+              const cureColor = DISEASE_COLORS.find(col => {
+                const ci = COLOR_TO_CURE_IDX[col]; if (ci === undefined || cured[ci]) return false;
+                return hand.filter(id => CITIES.find(c => c.id === id)?.color === col).length >= 5;
+              });
+              if (!cureColor) return null;
+              return (
+                <div onClick={() => {
+                  setCureSelecting(true); setSelectedHandCards([]);
+                  setRsActionMenu(null);
+                }}
+                  style={{ padding: "9px 14px", color: "#e8e8e8", cursor: "pointer" }}
+                  onMouseEnter={e => { e.currentTarget.style.background = "#23282f"; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+                  Discover Cure
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+      )}
+
+      {/* Win / Lose overlay */}
+      {gameResult !== null && gameResult !== dismissedResult && (
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 2000,
+          background: gameResult === 'win' ? "#00180088" : "#18000088",
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>
+          <div style={{
+            background: gameResult === 'win' ? "#0a2a14" : "#2a0a0a",
+            border: `2px solid ${gameResult === 'win' ? "#3ddc6d" : "#dc3d3d"}`,
+            borderRadius: 14, padding: "36px 52px",
+            textAlign: "center", boxShadow: "0 8px 48px #000e",
+            fontFamily: "system-ui, sans-serif",
+          }}>
+            <div style={{ fontSize: 56, marginBottom: 8 }}>
+              {gameResult === 'win' ? "🏆" : "💀"}
+            </div>
+            <div style={{ fontSize: 28, fontWeight: 700, color: gameResult === 'win' ? "#3ddc6d" : "#dc3d3d", marginBottom: 8 }}>
+              {gameResult === 'win' ? "You Win!" : "Game Over"}
+            </div>
+            {gameResult === 'lose' && (
+              <div style={{ fontSize: 14, color: "#cc8888", marginBottom: 16 }}>{loseReason}</div>
+            )}
+            {gameResult === 'win' && (
+              <div style={{ fontSize: 14, color: "#88cc88", marginBottom: 16 }}>All objectives completed!</div>
+            )}
+            <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
+              <button
+                onClick={() => setDismissedResult(gameResult)}
+                style={{
+                  padding: "8px 22px", fontSize: 13,
+                  background: "transparent",
+                  border: `1px solid ${gameResult === 'win' ? "#3ddc6d" : "#dc3d3d"}`,
+                  color: gameResult === 'win' ? "#3ddc6d" : "#dc3d3d",
+                  borderRadius: 6, cursor: "pointer",
+                }}>
+                Continue
+              </button>
+              {onRestart && (
+                <button onClick={() => {
+                  localStorage.removeItem(LS_CITY_INFECTION);
+                  localStorage.removeItem(LS_HAND_CARDS);
+                  onRestart();
+                }} style={{
+                  padding: "8px 22px", fontSize: 13,
+                  background: "#1a2a1a", border: "1px solid #4a9a4a",
+                  color: "#88dd88", borderRadius: 6, cursor: "pointer",
+                }}>
+                  Restart
+                </button>
+              )}
+              {onMainMenu && (
+                <button onClick={() => {
+                  localStorage.removeItem(LS_CITY_INFECTION);
+                  localStorage.removeItem(LS_HAND_CARDS);
+                  onMainMenu();
+                }} style={{
+                  padding: "8px 22px", fontSize: 13,
+                  background: "#1a1a2a", border: "1px solid #4a4a8a",
+                  color: "#8888cc", borderRadius: 6, cursor: "pointer",
+                }}>
+                  Main Menu
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showDiscardPopup && (
+        <div
+          onClick={() => setShowDiscardPopup(false)}
+          style={{
+            position: "fixed", inset: 0, background: "#000a",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            zIndex: 1000,
+          }}
+        >
+          <div style={{
+              background: "#0c1335", border: "2px solid #334",
+              borderRadius: 10, padding: 20, maxWidth: "90vw", maxHeight: "80vh",
+              overflowY: "auto",
+            }}
+          >
+            <div style={{ color: "#aac", fontSize: 13, marginBottom: 12, fontFamily: "monospace" }}>
+              Infection Discard — {infectDiscard.length} card{infectDiscard.length !== 1 ? "s" : ""}
+              <button onClick={() => setShowDiscardPopup(false)}
+                style={{ float: "right", background: "none", border: "1px solid #556", color: "#aac", cursor: "pointer", borderRadius: 4, padding: "2px 8px" }}>
+                ✕
+              </button>
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+              {[...infectDiscard].reverse().map((cityId, i) => {
+                const city = CITIES.find(c => c.id === cityId);
+                if (!city) return null;
+                return <InfectionCard key={`popup-${i}`} city={city} width={140} />;
+              })}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
