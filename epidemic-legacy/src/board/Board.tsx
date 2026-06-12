@@ -14,7 +14,7 @@ import panicLevel3Src from "../../object/paniclevel3.png";
 import panicLevel4Src from "../../object/paniclevel4.png";
 import panicLevel5Src from "../../object/paniclevel5.png";
 const PANIC_LEVEL_SRCS = ["", panicLevel1Src, panicLevel2Src, panicLevel3Src, panicLevel4Src, panicLevel5Src];
-import { CityLayer, loadRoadblocks, saveRoadblocks, edgeKey, type RoadblockState } from "./CityLayer";
+import { CityLayer, loadRoadblocks, saveRoadblocks, type RoadblockState } from "./CityLayer";
 import { BoardMarker, CubeSvg, type MarkerState } from "./BoardMarker";
 import { CITIES } from "./cities";
 import { InfectionCard } from "./InfectionCard";
@@ -70,7 +70,6 @@ const DISEASE_COLORS = ["black", "yellow", "red", "blue"] as const;
 type DiseaseColor = typeof DISEASE_COLORS[number];
 type CityColorCounts = Partial<Record<DiseaseColor, number>>;
 type CityInfectionMap = Record<string, CityColorCounts>;
-const LS_CUBES = "epidemic.cubes.v3";
 const CUBE_COLORS = ["#1a1a1a", "#FFFA73", "#cc1111", "#0A00A1"] as const;
 
 // Seeded PRNG for deterministic pile positions
@@ -96,12 +95,6 @@ function defaultCubes() {
   }
   return result;
 }
-
-function loadCubes(): { x: number; y: number }[] {
-  try { const r = localStorage.getItem(LS_CUBES); if (r) return JSON.parse(r); } catch { /* ignore */ }
-  return defaultCubes();
-}
-
 
 const LS_ERADICATED = "epidemic.eradicated.v2";
 const LS_OUTBREAK_POS = "epidemic.outbreak-pos.v1";
@@ -182,10 +175,6 @@ const LS_TOKEN_P1 = "epidemic.token-p1.v1";
 const LS_TOKEN_P2 = "epidemic.token-p2.v1";
 const DEF_TOKEN_P1: CardState = { x: 51.21, y: 57.25, w: 2.42 };
 const DEF_TOKEN_P2: CardState = { x: 53.00, y: 57.25, w: 2.42 };
-const TOKEN_COLORS = { p1: "#e8479a", p2: "#e8720a" } as const;
-const TOKEN_COLORS_ALL: Record<string, string> = {
-  p1: "#e8479a", p2: "#e8720a", p3: "#f0f0f0", p4: "#1a2a8a",
-};
 const LS_TOKEN_P3 = "epidemic.token-p3.v1";
 const LS_TOKEN_P4 = "epidemic.token-p4.v1";
 const DEF_TOKEN_P3: CardState = { x: 55.00, y: 57.25, w: 2.42 };
@@ -248,6 +237,19 @@ function loadTurnState(): TurnStateData {
 function loadPlayerCities(count: number): string[] {
   try { const r = localStorage.getItem(LS_PLAYER_CITIES); if (r) return JSON.parse(r); } catch { /* ignore */ }
   return Array(count).fill("atlanta");
+}
+
+// All per-game state keys — cleared on Restart / Main Menu so a new game starts
+// fresh. Deliberately EXCLUDES calibration/layout positions (marker positions,
+// card-pile positions, HCMC tray) and permanent legacy state (panic levels).
+const GAME_LS_KEYS = [
+  LS_CITY_INFECTION, LS_HAND_CARDS, LS_CURED, LS_ERADICATED,
+  LS_OUTBREAK_POS, LS_INFECTION_POS, LS_TURN, LS_PLAYER_CITIES,
+  LS_RESEARCH_STATIONS, LS_RESEARCH_POS,
+  LS_TOKEN_P1, LS_TOKEN_P2, LS_TOKEN_P3, LS_TOKEN_P4,
+];
+function clearGameState() {
+  GAME_LS_KEYS.forEach(k => localStorage.removeItem(k));
 }
 
 // Bump this whenever any DEF_CARD_* default position changes.
@@ -364,7 +366,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   const [cardInfection, setCardInfection] = useState<CardState>(() => loadCard(LS_CARD_INFECTION, DEF_CARD_INFECTION));
   const [cardPlayer, setCardPlayer] = useState<CardState>(() => loadCard(LS_CARD_PLAYER, DEF_CARD_PLAYER));
   const [cardInfectionDiscard, setCardInfectionDiscard] = useState<CardState>(() => loadCard(LS_CARD_INFECTION_DISCARD, DEF_CARD_INFECTION_DISCARD));
-  const [cardPlayerDiscard, setCardPlayerDiscard] = useState<CardState>(() => loadCard(LS_CARD_PLAYER_DISCARD, DEF_CARD_PLAYER_DISCARD));
+  const [cardPlayerDiscard] = useState<CardState>(() => loadCard(LS_CARD_PLAYER_DISCARD, DEF_CARD_PLAYER_DISCARD));
   const [hcmcTray, setHcmcTray] = useState<{ x: number; y: number }>(() => loadHcmc());
   // 0 when epidemics are embedded in the deck (deal/game phases); 5 for raw board view
   const [epidemicCount, setEpidemicCount] = useState(5); // standalone pile, rendered below player deck
@@ -437,6 +439,9 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   const [quietNight, setQuietNight] = useState(false);
   const [eventMode, setEventMode] = useState<null | 'remote-treatment' | 'govt-grant' | 'resilient-pop' | 'airlift' | 'flexible-aid'>(null);
   const [eventModeRemaining, setEventModeRemaining] = useState(0);
+  // Snapshot of cube state when Remote Treatment starts, so cancelling part-way
+  // through restores any cubes already removed.
+  const cubeSnapshotRef = useRef<CityInfectionMap | null>(null);
   const [airliftPawn, setAirliftPawn] = useState<string | null>(null);
   const [flexibleAidSelected, setFlexibleAidSelected] = useState<string[]>([]);
   const [pendingEventCard, setPendingEventCard] = useState<{ player: string; idx: number; cardId: string } | null>(null);
@@ -522,7 +527,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
     if (cardId === 'fund5') { openForecast(); discardNow(); return; }
     if (cardId === 'fund7') { saveTurnState({ ...turnState, actionsRemaining: turnState.actionsRemaining + 2 }); discardNow(); return; }
     setPendingEventCard(pending);
-    if (cardId === 'fund2') { setEventMode('remote-treatment'); setEventModeRemaining(2); }
+    if (cardId === 'fund2') { cubeSnapshotRef.current = cityInfection; setEventMode('remote-treatment'); setEventModeRemaining(2); }
     else if (cardId === 'fund3') { setEventMode('govt-grant'); setHighlightCities(CITIES.map(c => c.id)); }
     else if (cardId === 'fund4') { setEventMode('resilient-pop'); setShowDiscardPopup(true); }
     else if (cardId === 'fund6') { setEventMode('airlift'); }
@@ -823,7 +828,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
       if (ci !== undefined && cured[ci] && !eradicated[ci] && totalOfColor(next, color) === 0)
         setEradicated(prev => { const n = [...prev]; n[ci] = true; return n; });
       const left = eventModeRemaining - 1;
-      if (left <= 0) { setEventMode(null); setEventModeRemaining(0); if (pendingEventCard) resolveEventCard(pendingEventCard); }
+      if (left <= 0) { cubeSnapshotRef.current = null; setEventMode(null); setEventModeRemaining(0); if (pendingEventCard) resolveEventCard(pendingEventCard); }
       else setEventModeRemaining(left);
       return;
     }
@@ -1222,7 +1227,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
             </div>
             {turnState.phase === "actions" && (
               <div style={{ display: "flex", gap: 3 }}>
-                {Array.from({ length: roleId === 'generalist' ? 5 : 4 }, (_, pi) => (
+                {Array.from({ length: Math.max(roleId === 'generalist' ? 5 : 4, turnState.actionsRemaining) }, (_, pi) => (
                   <div key={pi} style={{
                     width: 10, height: 10, borderRadius: "50%",
                     background: pi < turnState.actionsRemaining ? pColor : "#334",
@@ -1304,6 +1309,9 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
             )}
             {(eventMode === 'remote-treatment' || eventMode === 'govt-grant' || eventMode === 'airlift' || eventMode === 'flexible-aid' || eventMode === 'resilient-pop') && (
               <button onClick={() => {
+                // Restore any cubes already removed by an in-progress Remote Treatment.
+                if (eventMode === 'remote-treatment' && cubeSnapshotRef.current) saveCityInfection(cubeSnapshotRef.current);
+                cubeSnapshotRef.current = null;
                 setEventMode(null); setHighlightCities([]); setAirliftPawn(null);
                 setFlexibleAidSelected([]); setEventModeRemaining(0); setPendingEventCard(null);
                 setShowDiscardPopup(false);
@@ -3084,12 +3092,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
               </button>
               {onRestart && (
                 <button onClick={() => {
-                  localStorage.removeItem(LS_CITY_INFECTION);
-                  localStorage.removeItem(LS_HAND_CARDS);
-                  localStorage.removeItem(LS_CURED);
-                  localStorage.removeItem(LS_ERADICATED);
-                  localStorage.removeItem(LS_OUTBREAK_POS);
-                  localStorage.removeItem(LS_INFECTION_POS);
+                  clearGameState();
                   onRestart();
                 }} style={{
                   padding: "8px 22px", fontSize: 13,
@@ -3101,12 +3104,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
               )}
               {onMainMenu && (
                 <button onClick={() => {
-                  localStorage.removeItem(LS_CITY_INFECTION);
-                  localStorage.removeItem(LS_HAND_CARDS);
-                  localStorage.removeItem(LS_CURED);
-                  localStorage.removeItem(LS_ERADICATED);
-                  localStorage.removeItem(LS_OUTBREAK_POS);
-                  localStorage.removeItem(LS_INFECTION_POS);
+                  clearGameState();
                   onMainMenu();
                 }} style={{
                   padding: "8px 22px", fontSize: 13,
