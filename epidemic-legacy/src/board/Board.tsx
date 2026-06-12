@@ -430,12 +430,21 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   const [highlightCities, setHighlightCities] = useState<string[]>([]);
   const [selectedHandCards, setSelectedHandCards] = useState<string[]>([]);
   const [cureSelecting, setCureSelecting] = useState(false);
+  const [dispatcherTarget, setDispatcherTarget] = useState<string | null>(null);
+  const [quietNight, setQuietNight] = useState(false);
+  const [eventMode, setEventMode] = useState<null | 'remote-treatment' | 'govt-grant' | 'resilient-pop' | 'airlift' | 'flexible-aid'>(null);
+  const [eventModeRemaining, setEventModeRemaining] = useState(0);
+  const [airliftPawn, setAirliftPawn] = useState<string | null>(null);
+  const [flexibleAidSelected, setFlexibleAidSelected] = useState<string[]>([]);
+  const [pendingEventCard, setPendingEventCard] = useState<{ player: string; idx: number; cardId: string } | null>(null);
   const [pendingDiscardMenu, setPendingDiscardMenu] = useState<{ cityId: string; player: string; idx: number; x: number; y: number } | null>(null);
   const [rsActionMenu, setRsActionMenu] = useState<{ cityId: string; x: number; y: number } | null>(null);
 
   // Turn helpers (must come after all useState declarations)
   const currentPlayerKey: string = setup ? ((['p1','p2','p3','p4'] as const).slice(0, setup.playerOrder.length)[turnState.currentPlayerIndex] ?? 'p1') : 'p1';
   const currentPlayerCityId: string = playerCities[turnState.currentPlayerIndex] ?? "atlanta";
+  const roleId = setup?.playerOrder[turnState.currentPlayerIndex]?.roleId ?? null;
+  const cureThreshold = roleId === 'scientist' ? 4 : 5;
   const consumeAction = (ts: TurnStateData): TurnStateData => {
     const remaining = ts.actionsRemaining - 1;
     if (remaining <= 0) return { ...ts, actionsRemaining: 0, phase: "draw", drawCount: 0 };
@@ -452,6 +461,21 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
     const setters = [setTokenP1, setTokenP2, setTokenP3, setTokenP4];
     const lsKeys = [LS_TOKEN_P1, LS_TOKEN_P2, LS_TOKEN_P3, LS_TOKEN_P4];
     setters[pi](pos); localStorage.setItem(lsKeys[pi], JSON.stringify(pos));
+    // Medic: auto-remove cured disease cubes on arrival (no action cost)
+    if (setup?.playerOrder[pi]?.roleId === 'medic') {
+      let inf = cityInfection;
+      for (const color of DISEASE_COLORS) {
+        const ci = COLOR_TO_CURE_IDX[color];
+        if (ci === undefined || !cured[ci]) continue;
+        const count = inf[cityId]?.[color] ?? 0;
+        if (count <= 0) continue;
+        inf = { ...inf, [cityId]: { ...inf[cityId], [color]: 0 } };
+        if (!eradicated[ci] && totalOfColor(inf, color) === 0) {
+          setEradicated(prev => { const n = [...prev]; n[ci] = true; return n; });
+        }
+      }
+      if (inf !== cityInfection) saveCityInfection(inf);
+    }
   };
   const nearestCity = (px: number, py: number): string | null => {
     let bestId: string | null = null; let bestDist = 8;
@@ -465,10 +489,42 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   const advanceTurn = () => {
     if (!setup) return;
     const nextIdx = (turnState.currentPlayerIndex + 1) % setup.playerOrder.length;
-    saveTurnState({ currentPlayerIndex: nextIdx, actionsRemaining: 4, phase: "actions", pendingCharter: false, pendingShuttle: false, drawCount: 0, infectCount: 0 });
-    setHighlightCities([]); setSelectedHandCards([]); setCureSelecting(false);
+    const nextRoleId = setup.playerOrder[nextIdx]?.roleId ?? null;
+    saveTurnState({ currentPlayerIndex: nextIdx, actionsRemaining: nextRoleId === 'generalist' ? 5 : 4, phase: "actions", pendingCharter: false, pendingShuttle: false, drawCount: 0, infectCount: 0 });
+    setHighlightCities([]); setSelectedHandCards([]); setCureSelecting(false); setDispatcherTarget(null);
+    setEventMode(null); setAirliftPawn(null); setFlexibleAidSelected([]); setEventModeRemaining(0); setPendingEventCard(null);
   };
   const currentPlayerHand = (): string[] => (handCards as Record<string, string[]>)[currentPlayerKey] ?? [];
+
+  const resolveEventCard = (pending: { player: string; idx: number; cardId: string }) => {
+    const current = (handCards as Record<string,string[]>)[pending.player] ?? [];
+    // Remove by identity (first matching cardId) — idx can go stale if the hand
+    // reorders or other cards are discarded before a multi-step event resolves.
+    const removeAt = current.indexOf(pending.cardId);
+    const next = removeAt >= 0 ? current.filter((_, j) => j !== removeAt) : current;
+    saveHandCards({ ...handCards, [pending.player]: next });
+    setPlayerDiscard(prev => [...prev, pending.cardId]);
+    setPendingEventCard(null);
+  };
+
+  const playFundCard = (playerKey: string, cardIdx: number, cardId: string) => {
+    if (!setup) return;
+    if (cardId === 'fund2' && DISEASE_COLORS.reduce((s, col) => s + totalOfColor(cityInfection, col), 0) === 0) return;
+    if (cardId === 'fund4' && infectDiscard.length === 0) return;
+    if (cardId === 'fund5' && infectDeck.length === 0) return;
+    if ((cardId === 'fund7' || cardId === 'fund8') && turnState.phase !== 'actions') return;
+    const pending = { player: playerKey, idx: cardIdx, cardId };
+    const discardNow = () => resolveEventCard(pending);
+    if (cardId === 'fund1') { setQuietNight(true); discardNow(); return; }
+    if (cardId === 'fund5') { openForecast(); discardNow(); return; }
+    if (cardId === 'fund7') { saveTurnState({ ...turnState, actionsRemaining: turnState.actionsRemaining + 2 }); discardNow(); return; }
+    setPendingEventCard(pending);
+    if (cardId === 'fund2') { setEventMode('remote-treatment'); setEventModeRemaining(2); }
+    else if (cardId === 'fund3') { setEventMode('govt-grant'); setHighlightCities(CITIES.map(c => c.id)); }
+    else if (cardId === 'fund4') { setEventMode('resilient-pop'); setShowDiscardPopup(true); }
+    else if (cardId === 'fund6') { setEventMode('airlift'); }
+    else if (cardId === 'fund8') { setEventMode('flexible-aid'); setFlexibleAidSelected([]); }
+  };
 
   // Month 0 setup: place research station + all player tokens at Atlanta
   useEffect(() => {
@@ -501,6 +557,11 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [setup]);
+
+  // Panic levels are permanent legacy state — save whenever they change
+  useEffect(() => {
+    localStorage.setItem(LS_PANIC_LEVELS, JSON.stringify(panicLevels));
+  }, [panicLevels]);
 
   // Auto-complete objective 0 when all 4 diseases are cured
   useEffect(() => {
@@ -721,9 +782,60 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   };
 
   const handleCityClick = (cityId: string) => {
+    if (isDealPhase) return;
     if (outbreakQueue.length > 0) return; // block clicks during chain resolution
+    // In any real scenario (month0, january…), block manual cube placement; only board sandbox allows it
+    if (!setup && scenario !== "board") return;
+
+    // Event card modes — work in any phase
+    if (eventMode === 'govt-grant') {
+      const next = new Set(researchStations); next.add(cityId);
+      setResearchStations(next); localStorage.setItem(LS_RESEARCH_STATIONS, JSON.stringify([...next]));
+      setEventMode(null); setHighlightCities([]);
+      if (pendingEventCard) resolveEventCard(pendingEventCard);
+      return;
+    }
+    if (eventMode === 'remote-treatment') {
+      const city = CITIES.find(c => c.id === cityId);
+      if (!city) return;
+      const counts = cityInfection[cityId] ?? {};
+      // Remove a cube of any color present — prefer the native color, else the
+      // first foreign color with cubes (e.g. placed by a neighbor's outbreak).
+      const native = city.color as DiseaseColor;
+      const color: DiseaseColor | undefined = (counts[native] ?? 0) > 0
+        ? native
+        : DISEASE_COLORS.find(c => (counts[c] ?? 0) > 0);
+      if (!color) return;
+      const cur = counts[color] ?? 0;
+      const next = { ...cityInfection, [cityId]: { ...cityInfection[cityId], [color]: cur - 1 } };
+      saveCityInfection(next);
+      const ci = COLOR_TO_CURE_IDX[color];
+      if (ci !== undefined && cured[ci] && !eradicated[ci] && totalOfColor(next, color) === 0)
+        setEradicated(prev => { const n = [...prev]; n[ci] = true; return n; });
+      const left = eventModeRemaining - 1;
+      if (left <= 0) { setEventMode(null); setEventModeRemaining(0); if (pendingEventCard) resolveEventCard(pendingEventCard); }
+      else setEventModeRemaining(left);
+      return;
+    }
+    if (eventMode === 'airlift' && airliftPawn) {
+      const pi = (['p1','p2','p3','p4'] as const).indexOf(airliftPawn as 'p1'|'p2'|'p3'|'p4');
+      const nextCities = [...playerCities]; nextCities[pi] = cityId;
+      savePlayerCities(nextCities); snapPawnToCity(airliftPawn, cityId);
+      setEventMode(null); setAirliftPawn(null); setHighlightCities([]);
+      if (pendingEventCard) resolveEventCard(pendingEventCard);
+      return;
+    }
 
     if (setup && turnState.phase === "actions") {
+      if (dispatcherTarget && highlightCities.includes(cityId)) {
+        // Dispatcher transport: move selected pawn to this teammate city
+        const pi = (['p1','p2','p3','p4'] as const).indexOf(dispatcherTarget as 'p1'|'p2'|'p3'|'p4');
+        const nextCities = [...playerCities]; nextCities[pi] = cityId;
+        savePlayerCities(nextCities); snapPawnToCity(dispatcherTarget, cityId);
+        setDispatcherTarget(null); setHighlightCities([]);
+        saveTurnState(consumeAction(turnState));
+        return;
+      }
       if (turnState.pendingCharter) {
         // Charter flight: fly to any city
         const nextCities = [...playerCities]; nextCities[turnState.currentPlayerIndex] = cityId;
@@ -765,6 +877,9 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   };
 
   const handleCityRightClick = (cityId: string, forceColor?: DiseaseColor) => {
+    if (isDealPhase) return;
+    // In pre-game phases of real scenarios, block manual cube removal
+    if (!setup && scenario !== "board") return;
     const city = CITIES.find(c => c.id === cityId);
     if (!city) return;
     const color = forceColor ?? (city.color as DiseaseColor);
@@ -785,7 +900,9 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
           setEradicated(prev => { const n = [...prev]; n[ci] = true; return n; });
         }
       } else {
-        const next = { ...cityInfection, [cityId]: { ...cityInfection[cityId], [color]: cur - 1 } };
+        // Medic removes ALL cubes of a color in one Treat action, even uncured
+        const newCount = roleId === 'medic' ? 0 : cur - 1;
+        const next = { ...cityInfection, [cityId]: { ...cityInfection[cityId], [color]: newCount } };
         saveCityInfection(next);
         if (ci !== undefined && cured[ci] && !eradicated[ci] && totalOfColor(next, color) === 0) {
           setEradicated(prev => { const n = [...prev]; n[ci] = true; return n; });
@@ -855,6 +972,17 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
     : playerDeckEmpty ? "Player deck exhausted!"
     : "Disease cubes exhausted!";
 
+  // Deal phase helpers (deal = onChooseRoles is defined)
+  const isDealPhase = !!onChooseRoles;
+  const DEAL_KEYS = ['p1','p2','p3','p4'] as const;
+  const dealCounts = DEAL_KEYS.map(p => (handCards as Record<string,string[]>)[p]?.length ?? 0);
+  // activeDealCount: consecutive players from P1 with ≥1 card
+  const activeDealCount = (() => { let n = 0; for (const c of dealCounts) { if (c > 0) n++; else break; } return n; })();
+  const dealRequiredCards = activeDealCount >= 4 ? 2 : activeDealCount === 3 ? 3 : 4;
+  const dealComplete = activeDealCount >= 2 && dealCounts.slice(0, activeDealCount).every(c => c >= dealRequiredCards);
+  // maxDealTargetIdx: highest player index that can receive a card (cannot skip a player)
+  const maxDealTargetIdx = Math.min(activeDealCount, 3);
+
   return (
     <div style={{ maxWidth: 1100, margin: "0 auto" }}>
       <style>{`
@@ -904,20 +1032,49 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
 
       {onChooseRoles && (
         <div style={{
-          marginBottom: 6, padding: "7px 16px",
-          background: "#0d1a10", border: "1px solid #44bb66",
-          borderRadius: 6, color: "#88ffaa", fontSize: 12,
-          fontFamily: "system-ui, sans-serif",
-          display: "flex", alignItems: "center", justifyContent: "center", gap: 16,
+          marginBottom: 6, padding: "8px 16px",
+          background: dealComplete ? "#0d1a10" : "#0d1520",
+          border: `1px solid ${dealComplete ? "#44bb66" : "#2a5080"}`,
+          borderRadius: 6, fontSize: 12, fontFamily: "system-ui, sans-serif",
+          display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap",
         }}>
-          <span>Cards ready — deal manually to each player, then choose roles</span>
-          <button onClick={() => {
-            const count = (['p1','p2','p3','p4'] as const).filter(p => ((handCards as Record<string,string[]>)[p]?.length ?? 0) > 0).length;
-            onChooseRoles?.(Math.max(2, count));
-          }} style={{
-            padding: "4px 16px", fontSize: 12, borderRadius: 5, cursor: "pointer",
-            background: "#1a4a2a", border: "1px solid #44bb66", color: "#88ffaa", fontWeight: 700,
-          }}>
+          {/* Deal progress per player */}
+          <span style={{ color: "#8ab", fontWeight: 600 }}>Deal cards:</span>
+          {DEAL_KEYS.map((p, i) => {
+            const count = dealCounts[i];
+            const isNext = i === maxDealTargetIdx && !dealComplete;
+            const isActive = i < activeDealCount || i === maxDealTargetIdx;
+            const req = activeDealCount >= 4 ? 2 : activeDealCount === 3 ? 3 : 4;
+            const met = count >= req && activeDealCount >= 2;
+            return (
+              <span key={p} style={{
+                padding: "2px 8px", borderRadius: 4,
+                background: isNext ? "#1a3a5a" : met ? "#0d2a18" : "#111820",
+                border: `1px solid ${isNext ? "#4af" : met ? "#44bb66" : "#2a3a50"}`,
+                color: isNext ? "#7bc4ff" : met ? "#88ffaa" : isActive ? "#aac" : "#446",
+                fontWeight: isNext ? 700 : 400,
+              }}>
+                P{i + 1}: {count}{isActive && activeDealCount >= 2 ? `/${req}` : ""}
+                {isNext ? " ◄" : ""}
+              </span>
+            );
+          })}
+          {dealComplete && (
+            <span style={{ color: "#ffcc44", fontWeight: 700, marginLeft: 4 }}>
+              ⚠ Shuffle 5 epidemic cards into the player deck now!
+            </span>
+          )}
+          <button
+            disabled={!dealComplete}
+            onClick={() => onChooseRoles?.(activeDealCount)}
+            style={{
+              marginLeft: "auto", padding: "4px 16px", fontSize: 12, borderRadius: 5,
+              cursor: dealComplete ? "pointer" : "not-allowed",
+              background: dealComplete ? "#1a4a2a" : "#111820",
+              border: `1px solid ${dealComplete ? "#44bb66" : "#2a3a50"}`,
+              color: dealComplete ? "#88ffaa" : "#446", fontWeight: 700,
+              opacity: dealComplete ? 1 : 0.5,
+            }}>
             Choose Roles →
           </button>
         </div>
@@ -1013,14 +1170,16 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                 const ci = COLOR_TO_CURE_IDX[col];
                 if (ci === undefined || cured[ci]) continue;
                 const sel = selectedHandCards.filter(id => CITIES.find(c => c.id === id)?.color === col);
-                if (sel.length >= 5) return col;
+                if (sel.length >= cureThreshold) return col;
               }
               return null;
             })();
             instruction = canConfirm
-              ? `Select 5 ${canConfirm} cards then confirm (${selectedHandCards.length} selected)`
-              : `Select 5 cards of the same color (${selectedHandCards.length} selected)`;
+              ? `Select ${cureThreshold} ${canConfirm} cards then confirm (${selectedHandCards.length} selected)`
+              : `Select ${cureThreshold} cards of the same color (${selectedHandCards.length} selected)`;
           }
+          else if (roleId === 'dispatcher' && dispatcherTarget) instruction = "Click a highlighted city to move the selected pawn there";
+          else if (roleId === 'dispatcher') instruction = "Drag any pawn to a neighbor, or tap a pawn to transport to a teammate";
           else instruction = "Drag your pawn or use a card action";
         } else if (turnState.phase === "draw") {
           instruction = `Draw 2 player cards (${turnState.drawCount}/2) — flip then drag to hand`;
@@ -1029,14 +1188,13 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
         } else if (turnState.phase === "infect") {
           instruction = infectionDone ? "All infection cards drawn" : `Draw ${infectTarget} infection cards (${turnState.infectCount}/${infectTarget})`;
         }
-
         const canConfirmCure = (() => {
           if (!cureSelecting) return null;
           for (const col of DISEASE_COLORS) {
             const ci = COLOR_TO_CURE_IDX[col];
             if (ci === undefined || cured[ci]) continue;
             const sel = selectedHandCards.filter(id => CITIES.find(c => c.id === id)?.color === col);
-            if (sel.length >= 5) return col as DiseaseColor;
+            if (sel.length >= cureThreshold) return col as DiseaseColor;
           }
           return null;
         })();
@@ -1054,7 +1212,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
             </div>
             {turnState.phase === "actions" && (
               <div style={{ display: "flex", gap: 3 }}>
-                {Array.from({ length: 4 }, (_, pi) => (
+                {Array.from({ length: roleId === 'generalist' ? 5 : 4 }, (_, pi) => (
                   <div key={pi} style={{
                     width: 10, height: 10, borderRadius: "50%",
                     background: pi < turnState.actionsRemaining ? pColor : "#334",
@@ -1066,7 +1224,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
             <span style={{ color: "#8ab", flex: 1 }}>{instruction}</span>
             {cureSelecting && canConfirmCure && (
               <button onClick={() => {
-                const sel5 = selectedHandCards.filter(id => CITIES.find(c => c.id === id)?.color === canConfirmCure).slice(0, 5);
+                const sel5 = selectedHandCards.filter(id => CITIES.find(c => c.id === id)?.color === canConfirmCure).slice(0, cureThreshold);
                 const hand = currentPlayerHand();
                 const newHand = hand.filter(id => !sel5.includes(id));
                 saveHandCards({ ...handCards, [currentPlayerKey]: newHand });
@@ -1101,16 +1259,64 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                 </button>
               ) : null;
             })()}
-            {turnState.phase === "infect" && infectionDone && (
+            {turnState.phase === "infect" && infectionDone && !quietNight && (
               <button onClick={advanceTurn}
                 style={{ padding: "3px 10px", fontSize: 11, borderRadius: 4, cursor: "pointer", background: "#1a2a1a", border: "1px solid #4a7a4a", color: "#88cc88" }}>
                 End Infection →
+              </button>
+            )}
+            {turnState.phase === "infect" && quietNight && (
+              <button onClick={() => { setQuietNight(false); advanceTurn(); }}
+                style={{ padding: "3px 10px", fontSize: 11, borderRadius: 4, cursor: "pointer", background: "#1a2a3a", border: "1px solid #4a7aaa", color: "#88aadd" }}>
+                Skip Infect Cities →
+              </button>
+            )}
+            {eventMode === 'flexible-aid' && flexibleAidSelected.length >= 1 && pendingEventCard && (
+              <button onClick={() => {
+                // Single hand update removes BOTH the selected city cards AND the
+                // fund (event) card. Doing this in one saveHandCards avoids the
+                // stale-closure race where a separate resolveEventCard call would
+                // re-read the pre-update hand and clobber the city-card removal.
+                const current = (handCards as Record<string,string[]>)[pendingEventCard.player] ?? [];
+                let removedEvent = false;
+                const newHand = current.filter(id => {
+                  if (flexibleAidSelected.includes(id)) return false;
+                  if (!removedEvent && id === pendingEventCard.cardId) { removedEvent = true; return false; }
+                  return true;
+                });
+                saveHandCards({ ...handCards, [pendingEventCard.player]: newHand });
+                setPlayerDiscard(prev => [...prev, ...flexibleAidSelected, pendingEventCard.cardId]);
+                saveTurnState({ ...turnState, actionsRemaining: turnState.actionsRemaining + flexibleAidSelected.length });
+                setEventMode(null); setFlexibleAidSelected([]); setPendingEventCard(null);
+              }} style={{ padding: "3px 10px", fontSize: 11, borderRadius: 4, cursor: "pointer", background: "#1a3a1a", border: "1px solid #4a9a4a", color: "#88dd88" }}>
+                Confirm (+{flexibleAidSelected.length})
+              </button>
+            )}
+            {(eventMode === 'remote-treatment' || eventMode === 'govt-grant' || eventMode === 'airlift' || eventMode === 'flexible-aid' || eventMode === 'resilient-pop') && (
+              <button onClick={() => {
+                setEventMode(null); setHighlightCities([]); setAirliftPawn(null);
+                setFlexibleAidSelected([]); setEventModeRemaining(0); setPendingEventCard(null);
+                setShowDiscardPopup(false);
+              }} style={{ padding: "3px 8px", fontSize: 11, borderRadius: 4, cursor: "pointer", background: "#2a1a1a", border: "1px solid #884444", color: "#cc8888" }}>
+                Cancel
               </button>
             )}
           </div>
         );
       })()}
 
+      {(eventMode || quietNight) && (
+        <div style={{ textAlign: "center", fontSize: 11, fontFamily: "monospace", marginBottom: 4, color: "#aac" }}>
+          {quietNight && turnState.phase === "infect" ? "One Quiet Night active"
+            : eventMode === 'govt-grant' ? "Government Grant — click a city"
+            : eventMode === 'remote-treatment' ? `Remote Treatment — click a city (${eventModeRemaining} left)`
+            : eventMode === 'airlift' && !airliftPawn ? "Airlift — tap a pawn"
+            : eventMode === 'airlift' && airliftPawn ? "Airlift — click any city"
+            : eventMode === 'resilient-pop' ? "Resilient Population — click a card in the popup to remove it from the game"
+            : eventMode === 'flexible-aid' ? `Flexible Aid — tap city cards (${flexibleAidSelected.length}/3)`
+            : null}
+        </div>
+      )}
       <div style={{ marginBottom: 10, textAlign: "center" }}>
         <span style={{
           fontSize: 22, fontWeight: 700, letterSpacing: 3,
@@ -1166,7 +1372,8 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
           onCityRightClick={calibrating ? undefined : (cityId, e) => {
             if (e.type === "contextmenu") {
               e.preventDefault();
-              if (setup) return; // no city menu during game phase
+              // City context menu only available in sandbox board mode, pre-game
+              if (setup || scenario !== "board") return;
               setCityMenu({ cityId, x: e.clientX, y: e.clientY });
             }
           }}
@@ -1197,7 +1404,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                 <div key={`${c.id}-${col}-${i}`}
                   onContextMenu={e => {
                     e.preventDefault(); e.stopPropagation();
-                    handleCityRightClick(c.id, col as DiseaseColor);
+                    if (!onChooseRoles) handleCityRightClick(c.id, col as DiseaseColor);
                   }}
                   style={{
                     position: "absolute",
@@ -1288,7 +1495,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
             return (
               <div key={`inf-deck-${i}`}
                 onPointerDown={isTop ? onDragDown : undefined}
-                onClick={isTop && !calibrating ? drawInfectionCard : undefined}
+                onClick={isTop && !calibrating && !onChooseRoles ? drawInfectionCard : undefined}
                 onContextMenu={isTop && !calibrating ? (e) => { e.preventDefault(); setDeckMenu({ x: e.clientX, y: e.clientY }); } : undefined}
                 style={{
                   position: "absolute",
@@ -1412,11 +1619,16 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                     saveTurnState({ ...turnState, drawCount: newCount });
                   }
                 };
-                if (faceUp && nearDiscard) {
+                if (faceUp && nearDiscard && !onChooseRoles) {
                   setPlayerDeck(deck.slice(0, -1)); setPlayerDiscard([...disc, cityId]);
                   setPlayerFlipped(prev => { const n = new Set(prev); n.delete(cityId); return n; });
                   if (inDrawPhase && cityId === "epidemic") completeOneDraw(); // epidemic dragged to discard counts
                 } else if (droppedHand) {
+                  // In deal phase: enforce deal order — cannot skip a player
+                  if (onChooseRoles) {
+                    const playerIdx = ['p1','p2','p3','p4'].indexOf(droppedHand);
+                    if (playerIdx > maxDealTargetIdx) return; // bounce — must deal to lower-numbered player first
+                  }
                   const player = inDrawPhase ? currentPlayerKey : droppedHand;
                   setPlayerDeck(deck.slice(0, -1));
                   setPlayerFlipped(prev => { const n = new Set(prev); n.delete(cityId); return n; });
@@ -1632,7 +1844,9 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
             return (
               <div key={`inf-discard-${i}`}
                 onPointerDown={onDragDown}
-                onClick={isTop && !calibrating ? () => setShowDiscardPopup(true) : undefined}
+                onClick={isTop && !calibrating ? () => {
+                  setShowDiscardPopup(true);
+                } : undefined}
                 onContextMenu={isTop && !calibrating ? (e) => { e.preventDefault(); setDiscardMenu({ x: e.clientX, y: e.clientY }); } : undefined}
                 style={{
                   position: "absolute",
@@ -1746,7 +1960,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                 const hand = currentPlayerHand();
                 const canCure = DISEASE_COLORS.some(col => {
                   const ci = COLOR_TO_CURE_IDX[col]; if (ci === undefined || cured[ci]) return false;
-                  return hand.filter(id => CITIES.find(c2 => c2.id === id)?.color === col).length >= 5;
+                  return hand.filter(id => CITIES.find(c2 => c2.id === id)?.color === col).length >= cureThreshold;
                 });
                 if (!canShuttle && !canCure) return;
                 setRsActionMenu({ cityId: city.id, x: e.clientX, y: e.clientY });
@@ -1797,14 +2011,14 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
         {/* Objective cards — fill slots 1..objectiveCount */}
         {OBJECTIVE_SLOTS.slice(0, objectiveCount).map((slot, i) => (
           <div key={`objective-${i}`}
-            onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setObjMenu({ x: e.clientX, y: e.clientY, idx: i }); }}
+            onContextMenu={!setup ? (e => { e.preventDefault(); e.stopPropagation(); setObjMenu({ x: e.clientX, y: e.clientY, idx: i }); }) : undefined}
             style={{
               position: "absolute",
               left: `${slot.x}%`, top: `${slot.y}%`,
               width: `${slot.w}%`,
               transform: "translate(-50%, -50%)",
               zIndex: 8,
-              cursor: "context-menu",
+              cursor: setup ? "default" : "context-menu",
             }}>
             <img src={objectiveSrc} alt="Objective" draggable={false}
               style={{ width: "100%", height: "auto", display: "block", userSelect: "none", pointerEvents: "none" }} />
@@ -1837,7 +2051,15 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
             const onCardDown = (e: React.PointerEvent<HTMLDivElement>) => {
               if (calibrating) return;
               // In game phase: only current player can drag their own cards
-              if (setup && player !== currentPlayerKey) return;
+              if (setup && player !== currentPlayerKey) {
+                // Active player may take a card FROM a teammate's hand during their actions:
+                //  • from a Researcher: any card (Researcher special)
+                //  • from anyone else: only the card matching the active player's current city
+                const teammateRole = setup.playerOrder[(['p1','p2','p3','p4'] as const).indexOf(player as 'p1'|'p2'|'p3'|'p4')]?.roleId;
+                const isResearcher = teammateRole === 'researcher';
+                const isMatchingTake = cityId === currentPlayerCityId;
+                if (turnState.phase !== "actions" || (!isResearcher && !isMatchingTake)) return;
+              }
               e.stopPropagation(); e.preventDefault();
               const el = e.currentTarget; el.setPointerCapture(e.pointerId);
               const r = boardRef.current!.getBoundingClientRect();
@@ -1853,6 +2075,22 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                 el.removeEventListener("pointerup", onUp);
                 setHandDrag(null);
                 if (!moved) {
+                  // Tap: play fund event card (any phase, hand only)
+                  if (setup && isFundingHand) {
+                    playFundCard(player, i, cityId);
+                    return;
+                  }
+                  // Tap: select city cards for Flexible Aid
+                  if (setup && eventMode === 'flexible-aid' && player === pendingEventCard?.player && !isFundingHand && cityId !== 'epidemic') {
+                    const city = CITIES.find(c => c.id === cityId);
+                    if (city) {
+                      setFlexibleAidSelected(prev =>
+                        prev.includes(cityId) ? prev.filter(id => id !== cityId)
+                        : prev.length < 3 ? [...prev, cityId] : prev
+                      );
+                    }
+                    return;
+                  }
                   // Tap: toggle card selection for cure (game phase only)
                   if (setup && cureSelecting) {
                     setSelectedHandCards(prev =>
@@ -1907,20 +2145,36 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                   return;
                 }
 
-                if (otherPlayer && setup && turnState.phase === "actions") {
-                  // Share Knowledge: valid if both players in same city and card matches giver's city
-                  const giverCity = currentPlayerCityId;
-                  const receiverIdx = (['p1','p2','p3','p4'] as const).indexOf(otherPlayer as 'p1'|'p2'|'p3'|'p4');
-                  const receiverCity = playerCities[receiverIdx] ?? "atlanta";
-                  const valid = giverCity === receiverCity && cityId === giverCity;
-                  if (valid) {
-                    const receiverCards = (handCards as Record<string,string[]>)[otherPlayer] ?? [];
-                    saveHandCards({ ...handCards, [player]: current.filter((_, j) => j !== i), [otherPlayer]: [...receiverCards, cityId] });
-                    saveTurnState(consumeAction(turnState));
+                if (setup && turnState.phase === "actions") {
+                  // Take: active player dragging a teammate's card TO their own hand.
+                  // Researcher → any card; anyone else → only the card matching the active player's city.
+                  if (player !== currentPlayerKey && otherPlayer === currentPlayerKey) {
+                    const teammateIdx = (['p1','p2','p3','p4'] as const).indexOf(player as 'p1'|'p2'|'p3'|'p4');
+                    const teammateCity = playerCities[teammateIdx] ?? "atlanta";
+                    const teammateRole = setup.playerOrder[teammateIdx]?.roleId;
+                    const legal = teammateCity === currentPlayerCityId &&
+                      (teammateRole === 'researcher' || cityId === currentPlayerCityId);
+                    if (legal) {
+                      const myCards = (handCards as Record<string,string[]>)[currentPlayerKey] ?? [];
+                      saveHandCards({ ...handCards, [player]: current.filter((_, j) => j !== i), [currentPlayerKey]: [...myCards, cityId] });
+                      saveTurnState(consumeAction(turnState));
+                    }
                     return;
                   }
-                  // Invalid share: snap back (just do nothing — card stays)
-                  return;
+                  if (otherPlayer) {
+                    // Share Knowledge: valid if both players in same city and card matches giver's city
+                    const giverCity = currentPlayerCityId;
+                    const receiverIdx = (['p1','p2','p3','p4'] as const).indexOf(otherPlayer as 'p1'|'p2'|'p3'|'p4');
+                    const receiverCity = playerCities[receiverIdx] ?? "atlanta";
+                    const valid = giverCity === receiverCity && cityId === giverCity;
+                    if (valid) {
+                      const receiverCards = (handCards as Record<string,string[]>)[otherPlayer] ?? [];
+                      saveHandCards({ ...handCards, [player]: current.filter((_, j) => j !== i), [otherPlayer]: [...receiverCards, cityId] });
+                      saveTurnState(consumeAction(turnState));
+                      return;
+                    }
+                    return;
+                  }
                 }
 
                 if (otherPlayer && !setup) {
@@ -1988,7 +2242,10 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
           const isCurrentPlayerToken = setup && key === currentPlayerKey && turnState.phase === "actions";
           const onDragDown = (e: React.PointerEvent<HTMLDivElement>) => {
             if (calibrating) return;
-            if (setup && !isCurrentPlayerToken) return; // lock other players' pawns
+            if (setup && !isCurrentPlayerToken) {
+            const isAirliftMode = eventMode === 'airlift';
+            if (!isAirliftMode && (roleId !== 'dispatcher' || turnState.phase !== "actions")) return;
+          }
             e.stopPropagation(); e.preventDefault();
             const el = e.currentTarget; el.setPointerCapture(e.pointerId);
             const r = boardRef.current!.getBoundingClientRect();
@@ -1996,20 +2253,43 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
             const onMove = (ev: PointerEvent) => save({ ...t, x: ox + ((ev.clientX - sx) / r.width) * 100, y: oy + ((ev.clientY - sy) / r.height) * 100 });
             const onUp = (ev: PointerEvent) => {
               el.removeEventListener("pointermove", onMove as any); el.removeEventListener("pointerup", onUp);
-              if (!setup || !isCurrentPlayerToken) return;
+              if (!setup || turnState.phase !== "actions") return;
+              const pi = (['p1','p2','p3','p4'] as const).indexOf(key as 'p1'|'p2'|'p3'|'p4');
+              const moved = Math.hypot(ev.clientX - sx, ev.clientY - sy) > 6;
+              if (!moved) {
+                // Tap: Airlift pawn-select
+                if (eventMode === 'airlift') {
+                  if (airliftPawn === key) { setAirliftPawn(null); setHighlightCities([]); }
+                  else { setAirliftPawn(key); setHighlightCities(CITIES.map(c => c.id)); }
+                  save({ ...t, x: ox, y: oy }); return;
+                }
+                // Tap: Dispatcher transport-select
+                if (roleId === 'dispatcher') {
+                  if (dispatcherTarget === key) {
+                    setDispatcherTarget(null); setHighlightCities([]);
+                  } else {
+                    setDispatcherTarget(key);
+                    const targets = playerCities
+                      .map((cid, idx) => idx !== pi ? cid : null)
+                      .filter(Boolean) as string[];
+                    setHighlightCities([...new Set(targets)]);
+                  }
+                }
+                save({ ...t, x: ox, y: oy });
+                return;
+              }
+              // Only current player can initiate a drag-move; Dispatcher can drag any pawn
+              if (key !== currentPlayerKey && roleId !== 'dispatcher') { save({ ...t, x: ox, y: oy }); return; }
               const dropX = ox + ((ev.clientX - sx) / r.width) * 100;
               const dropY = oy + ((ev.clientY - sy) / r.height) * 100;
               const targetId = nearestCity(dropX, dropY);
-              const currentCity = CITIES.find(c2 => c2.id === currentPlayerCityId);
-              const isNeighbor = targetId && (currentCity?.neighbors.includes(targetId) ?? false);
+              const movedPawnCityId = playerCities[pi] ?? "atlanta";
+              const movedPawnCity = CITIES.find(c2 => c2.id === movedPawnCityId);
+              const isNeighbor = targetId && (movedPawnCity?.neighbors.includes(targetId) ?? false);
               if (isNeighbor && targetId) {
-                const pi = (['p1','p2','p3','p4'] as const).indexOf(key as 'p1'|'p2'|'p3'|'p4');
-                const offsets: [number,number][] = [[-1,0],[1,0],[-1,1.5],[1,1.5]];
-                const [dx, dy] = offsets[pi] ?? [0, 0];
-                const city = CITIES.find(c2 => c2.id === targetId)!;
-                save({ ...t, x: city.pos.x + dx, y: city.pos.y + dy });
-                const nextCities = [...playerCities]; nextCities[turnState.currentPlayerIndex] = targetId;
+                const nextCities = [...playerCities]; nextCities[pi] = targetId;
                 savePlayerCities(nextCities);
+                snapPawnToCity(key, targetId);
                 saveTurnState(consumeAction(turnState));
               } else {
                 save({ ...t, x: ox, y: oy }); // snap back
@@ -2238,7 +2518,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
               tintColor={m.tintColor}
               eradicated={ci >= 0 ? eradicated[ci] : false}
               eradicatedColor={m.tintColor === "#FFFA73" ? "#666" : "white"}
-              onActivate={isCured && !calibrating ? () => {
+              onActivate={isCured && !calibrating && !onChooseRoles && !setup ? () => {
                 setEradicated(prev => {
                   const next = [...prev];
                   next[ci] = !next[ci];
@@ -2470,6 +2750,8 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
           </div>
         </div>
       )}
+
+
 
       {/* Infection discard context menu */}
       {discardMenu && (
@@ -2733,7 +3015,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
               const hand = currentPlayerHand();
               const cureColor = DISEASE_COLORS.find(col => {
                 const ci = COLOR_TO_CURE_IDX[col]; if (ci === undefined || cured[ci]) return false;
-                return hand.filter(id => CITIES.find(c => c.id === id)?.color === col).length >= 5;
+                return hand.filter(id => CITIES.find(c => c.id === id)?.color === col).length >= cureThreshold;
               });
               if (!cureColor) return null;
               return (
@@ -2821,24 +3103,35 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
         </div>
       )}
 
-      {showDiscardPopup && (
+      {showDiscardPopup && (() => {
+        const picking = eventMode === 'resilient-pop';
+        const closePopup = () => { setShowDiscardPopup(false); };
+        const pickCard = (realIdx: number) => {
+          setInfectDiscard(prev => prev.filter((_, j) => j !== realIdx));
+          setShowDiscardPopup(false);
+          setEventMode(null);
+          if (pendingEventCard) resolveEventCard(pendingEventCard);
+        };
+        return (
         <div
-          onClick={() => setShowDiscardPopup(false)}
+          onClick={picking ? undefined : closePopup}
           style={{
             position: "fixed", inset: 0, background: "#000a",
             display: "flex", alignItems: "center", justifyContent: "center",
             zIndex: 1000,
           }}
         >
-          <div style={{
-              background: "#0c1335", border: "2px solid #334",
+          <div onClick={e => e.stopPropagation()} style={{
+              background: "#0c1335", border: `2px solid ${picking ? "#4a9a4a" : "#334"}`,
               borderRadius: 10, padding: 20, maxWidth: "90vw", maxHeight: "80vh",
               overflowY: "auto",
             }}
           >
-            <div style={{ color: "#aac", fontSize: 13, marginBottom: 12, fontFamily: "monospace" }}>
-              Infection Discard — {infectDiscard.length} card{infectDiscard.length !== 1 ? "s" : ""}
-              <button onClick={() => setShowDiscardPopup(false)}
+            <div style={{ color: picking ? "#88dd88" : "#aac", fontSize: 13, marginBottom: 12, fontFamily: "monospace" }}>
+              {picking
+                ? `Resilient Population — click a card to remove it from the game (${infectDiscard.length} in discard)`
+                : `Infection Discard — ${infectDiscard.length} card${infectDiscard.length !== 1 ? "s" : ""}`}
+              <button onClick={closePopup}
                 style={{ float: "right", background: "none", border: "1px solid #556", color: "#aac", cursor: "pointer", borderRadius: 4, padding: "2px 8px" }}>
                 ✕
               </button>
@@ -2847,12 +3140,22 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
               {[...infectDiscard].reverse().map((cityId, i) => {
                 const city = CITIES.find(c => c.id === cityId);
                 if (!city) return null;
-                return <InfectionCard key={`popup-${i}`} city={city} width={140} />;
+                const realIdx = infectDiscard.length - 1 - i;
+                return (
+                  <div key={`popup-${i}`}
+                    onClick={picking ? () => pickCard(realIdx) : undefined}
+                    style={picking ? { cursor: "pointer", borderRadius: 6, outline: "2px solid transparent", transition: "outline-color 0.1s" } : undefined}
+                    onMouseEnter={picking ? e => { (e.currentTarget as HTMLElement).style.outlineColor = "#4a9a4a"; } : undefined}
+                    onMouseLeave={picking ? e => { (e.currentTarget as HTMLElement).style.outlineColor = "transparent"; } : undefined}>
+                    <InfectionCard city={city} width={140} />
+                  </div>
+                );
               })}
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
