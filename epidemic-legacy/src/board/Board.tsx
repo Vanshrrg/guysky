@@ -35,6 +35,18 @@ import fund8Src from "../../object/fund8.png";
 import type { PreGameSetup } from "./PreGamePhase";
 import { BOARD_RATIO, CUBE_W, shuffle, defaultCubes, inBox } from "./boardGeometry";
 import { PANIC_TRAY_POS, OBJECTIVE_SLOTS, OUTBREAK_TRACK, INFECTION_TRACK } from "./boardLayout";
+import {
+  type CardState, type HandCards, type TurnPhase, type TurnStateData,
+  LS_CURED, LS_CITY_INFECTION, LS_ERADICATED, LS_OUTBREAK_POS, LS_INFECTION_POS,
+  LS_HAND_CARDS, LS_CARD_INFECTION, LS_CARD_PLAYER, LS_CARD_INFECTION_DISCARD,
+  LS_CARD_PLAYER_DISCARD, LS_TOKEN_P1, LS_TOKEN_P2, LS_TOKEN_P3, LS_TOKEN_P4,
+  LS_RESEARCH_STATIONS, LS_RESEARCH_POS, LS_PANIC_LEVELS, LS_HCMC_TRAY,
+  LS_TURN, LS_PLAYER_CITIES,
+  DEF_CARD_INFECTION, DEF_CARD_PLAYER, DEF_CARD_INFECTION_DISCARD, DEF_CARD_PLAYER_DISCARD,
+  DEF_TOKEN_P1, DEF_TOKEN_P2, DEF_TOKEN_P3, DEF_TOKEN_P4,
+  loadCard, loadTrackPos, loadHandCards, loadResearchStations, loadResearchPos,
+  loadPanicLevels, loadHcmc, loadTurnState, loadPlayerCities, clearGameState,
+} from "./boardStorage";
 
 const MARKERS: {
   key: string; src: string; alt: string; def: MarkerState; tintColor?: string;
@@ -52,9 +64,6 @@ const CURE_INDICES = MARKERS.map((m, i) => m.curePos ? i : -1).filter(i => i >= 
 // Maps DiseaseColor → index in CURE_INDICES (ci)
 // Order mirrors MARKERS: ci0=red(no tint), ci1=yellow, ci2=blue, ci3=black
 const COLOR_TO_CURE_IDX: Record<string, number> = { red: 0, yellow: 1, blue: 2, black: 3 };
-const LS_CURED = "epidemic.cured.v2";
-
-const LS_CITY_INFECTION = "epidemic.cityInfection.v2"; // v2: per-color map
 const COLOR_TO_CUBE: Record<string, string> = {
   blue: "#0A00A1", yellow: "#FFFA73", black: "#1a1a1a", red: "#cc1111",
 };
@@ -64,40 +73,13 @@ type CityColorCounts = Partial<Record<DiseaseColor, number>>;
 type CityInfectionMap = Record<string, CityColorCounts>;
 const CUBE_COLORS = ["#1a1a1a", "#FFFA73", "#cc1111", "#0A00A1"] as const;
 
-const LS_ERADICATED = "epidemic.eradicated.v2";
-const LS_OUTBREAK_POS = "epidemic.outbreak-pos.v1";
-const LS_INFECTION_POS = "epidemic.infection-pos.v1";
-
-type CardState = { x: number; y: number; w: number };
 // 2×2 layout: P1 top-left, P3 bottom-left, P2 top-right, P4 bottom-right
 const HAND_P1 = { x: -4.56,  y: 27, w: 9.37, h: 50 };
 const HAND_P2 = { x: 104.67, y: 27, w: 9.45, h: 50 };
 const HAND_P3 = { x: -4.56,  y: 76, w: 9.37, h: 50 };
 const HAND_P4 = { x: 104.67, y: 76, w: 9.45, h: 50 };
-const LS_HAND_CARDS = "epidemic.hand-cards.v1";
-type HandCards = { p1: string[]; p2: string[]; p3: string[]; p4: string[] };
-function loadHandCards(): HandCards {
-  try { const r = localStorage.getItem(LS_HAND_CARDS); if (r) return { p1: [], p2: [], p3: [], p4: [], ...JSON.parse(r) }; } catch { /* ignore */ }
-  return { p1: [], p2: [], p3: [], p4: [] };
-}
-const LS_CARD_INFECTION = "epidemic.card.infection";
-const LS_CARD_PLAYER = "epidemic.card.player";
-const DEF_CARD_INFECTION: CardState = { x: 75.98, y: 9.04, w: 11.59 };
-const DEF_CARD_PLAYER: CardState = { x: 74.18, y: 89.26, w: 8.38 };
-const LS_CARD_INFECTION_DISCARD = "epidemic.card.infection-discard";
-const LS_CARD_PLAYER_DISCARD = "epidemic.card.player-discard";
-const DEF_CARD_INFECTION_DISCARD: CardState = { x: 89.44, y: 8.55, w: 11.59 };
-const DEF_CARD_PLAYER_DISCARD: CardState = { x: 84.73, y: 89.55, w: 8.38 };
 const PANIC_W = 1.49;
 const RESEARCH_W = 2.19;
-const LS_TOKEN_P1 = "epidemic.token-p1.v1";
-const LS_TOKEN_P2 = "epidemic.token-p2.v1";
-const DEF_TOKEN_P1: CardState = { x: 51.21, y: 57.25, w: 2.42 };
-const DEF_TOKEN_P2: CardState = { x: 53.00, y: 57.25, w: 2.42 };
-const LS_TOKEN_P3 = "epidemic.token-p3.v1";
-const LS_TOKEN_P4 = "epidemic.token-p4.v1";
-const DEF_TOKEN_P3: CardState = { x: 55.00, y: 57.25, w: 2.42 };
-const DEF_TOKEN_P4: CardState = { x: 57.00, y: 57.25, w: 2.42 };
 const ROLE_IMGS: Record<string, string> = {
   medic: medicSrc, scientist: scientistSrc, researcher: researcherSrc,
   generalist: generalistSrc, dispatcher: dispatcherSrc,
@@ -106,90 +88,13 @@ const FUND_IMGS: Record<string, string> = {
   fund1: fund1Src, fund2: fund2Src, fund3: fund3Src, fund4: fund4Src,
   fund5: fund5Src, fund6: fund6Src, fund7: fund7Src, fund8: fund8Src,
 };
-const LS_RESEARCH_STATIONS = "epidemic.research-stations.v1";
-const LS_RESEARCH_POS = "epidemic.research-pos.v1";
-function loadResearchStations(): Set<string> {
-  try { const r = localStorage.getItem(LS_RESEARCH_STATIONS); if (r) return new Set(JSON.parse(r)); } catch { /* ignore */ }
-  return new Set();
-}
-function loadResearchPos(): Record<string, { x: number; y: number }> {
-  try { const r = localStorage.getItem(LS_RESEARCH_POS); if (r) return JSON.parse(r); } catch { /* ignore */ }
-  return {};
-}
-const LS_PANIC_LEVELS = "epidemic.panic-levels.v1";
-function loadPanicLevels(): Record<string, number> {
-  try { const r = localStorage.getItem(LS_PANIC_LEVELS); if (r) return JSON.parse(r); } catch { /* ignore */ }
-  return {};
-}
-const LS_HCMC_TRAY = "epidemic.panic-tray.hcmc.v1";
-const DEF_HCMC = { x: 85.88, y: 60.93 };
-function loadHcmc(): { x: number; y: number } {
-  try { const r = localStorage.getItem(LS_HCMC_TRAY); if (r) return JSON.parse(r); } catch { /* ignore */ }
-  return DEF_HCMC;
-}
-
 
 const INFECTION_RATE_VALUES = [2, 2, 2, 3, 3, 4, 4];
-type TurnPhase = "actions" | "draw" | "discard" | "infect";
-interface TurnStateData {
-  currentPlayerIndex: number;
-  actionsRemaining: number;
-  phase: TurnPhase;
-  pendingCharter: boolean;
-  pendingShuttle: boolean;
-  drawCount: number;
-  infectCount: number;
-}
-const LS_TURN = "epidemic.turn.v1";
-const LS_PLAYER_CITIES = "epidemic.player-cities.v1";
-function loadTurnState(): TurnStateData {
-  try { const r = localStorage.getItem(LS_TURN); if (r) return JSON.parse(r); } catch { /* ignore */ }
-  return { currentPlayerIndex: 0, actionsRemaining: 4, phase: "actions", pendingCharter: false, pendingShuttle: false, drawCount: 0, infectCount: 0 };
-}
-function loadPlayerCities(count: number): string[] {
-  try { const r = localStorage.getItem(LS_PLAYER_CITIES); if (r) return JSON.parse(r); } catch { /* ignore */ }
-  return Array(count).fill("atlanta");
-}
-
-// All per-game state keys — cleared on Restart / Main Menu so a new game starts
-// fresh. Deliberately EXCLUDES calibration/layout positions (marker positions,
-// card-pile positions, HCMC tray) and permanent legacy state (panic levels).
-const GAME_LS_KEYS = [
-  LS_CITY_INFECTION, LS_HAND_CARDS, LS_CURED, LS_ERADICATED,
-  LS_OUTBREAK_POS, LS_INFECTION_POS, LS_TURN, LS_PLAYER_CITIES,
-  LS_RESEARCH_STATIONS, LS_RESEARCH_POS,
-  LS_TOKEN_P1, LS_TOKEN_P2, LS_TOKEN_P3, LS_TOKEN_P4,
-];
-function clearGameState() {
-  GAME_LS_KEYS.forEach(k => localStorage.removeItem(k));
-}
-
-// Bump this whenever any DEF_CARD_* default position changes.
-const CARD_SCHEMA_V = "4";
-const LS_CARD_SCHEMA = "epidemic.cardSchema";
-const CARD_LS_KEYS = [LS_CARD_INFECTION, LS_CARD_PLAYER, LS_CARD_INFECTION_DISCARD, LS_CARD_PLAYER_DISCARD];
-if (localStorage.getItem(LS_CARD_SCHEMA) !== CARD_SCHEMA_V) {
-  CARD_LS_KEYS.forEach(k => localStorage.removeItem(k));
-  localStorage.setItem(LS_CARD_SCHEMA, CARD_SCHEMA_V);
-}
-
-function loadCard(key: string, def: CardState): CardState {
-  try { const r = localStorage.getItem(key); if (r) return JSON.parse(r); } catch { /* ignore */ }
-  return def;
-}
-
-
 
 function loadMarker(key: string, def: MarkerState): MarkerState {
   try { const r = localStorage.getItem(key); if (r) return { rot: 0, ...JSON.parse(r) }; }
   catch { /* ignore */ }
   return def;
-}
-
-function loadTrackPos(key: string, max: number): number {
-  try { const r = localStorage.getItem(key); if (r !== null) return Math.min(max, Math.max(0, Number(r))); }
-  catch { /* ignore */ }
-  return 0;
 }
 
 function loadCured(): boolean[] {
