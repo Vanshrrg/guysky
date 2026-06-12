@@ -108,10 +108,11 @@ const LS_OUTBREAK_POS = "epidemic.outbreak-pos.v1";
 const LS_INFECTION_POS = "epidemic.infection-pos.v1";
 
 type CardState = { x: number; y: number; w: number };
-const HAND_P1 = { x: -4.56,  y: 52.58, w: 9.37, h: 61.66 };
-const HAND_P2 = { x: 104.67, y: 50.17, w: 9.45, h: 61.93 };
-const HAND_P3 = { x: -4.56,  y: 122.0, w: 9.37, h: 61.66 };
-const HAND_P4 = { x: 104.67, y: 122.0, w: 9.45, h: 61.93 };
+// 2×2 layout: P1 top-left, P3 bottom-left, P2 top-right, P4 bottom-right
+const HAND_P1 = { x: -4.56,  y: 27, w: 9.37, h: 50 };
+const HAND_P2 = { x: 104.67, y: 27, w: 9.45, h: 50 };
+const HAND_P3 = { x: -4.56,  y: 76, w: 9.37, h: 50 };
+const HAND_P4 = { x: 104.67, y: 76, w: 9.45, h: 50 };
 const LS_HAND_CARDS = "epidemic.hand-cards.v1";
 type HandCards = { p1: string[]; p2: string[]; p3: string[]; p4: string[] };
 function loadHandCards(): HandCards {
@@ -329,7 +330,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   fundingCards?: string[];   // passed before setup is ready (deal phase)
   scenario?: string;
   onInfectionDone?: () => void;
-  onChooseRoles?: () => void;
+  onChooseRoles?: (playerCount: number) => void;
   onResumeRoles?: () => void;
   onRestart?: () => void;
   onMainMenu?: () => void;
@@ -910,7 +911,10 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
           display: "flex", alignItems: "center", justifyContent: "center", gap: 16,
         }}>
           <span>Cards ready — deal manually to each player, then choose roles</span>
-          <button onClick={onChooseRoles} style={{
+          <button onClick={() => {
+            const count = (['p1','p2','p3','p4'] as const).filter(p => ((handCards as Record<string,string[]>)[p]?.length ?? 0) > 0).length;
+            onChooseRoles?.(Math.max(2, count));
+          }} style={{
             padding: "4px 16px", fontSize: 12, borderRadius: 5, cursor: "pointer",
             background: "#1a4a2a", border: "1px solid #44bb66", color: "#88ffaa", fontWeight: 700,
           }}>
@@ -1392,8 +1396,9 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                 // dragged — allow drop to hand (face-down or face-up) or discard (face-up only)
                 const pos = toPct(ev);
                 const nearDiscard = Math.abs(pos.x - cardPlayerDiscard.x) < 10 && Math.abs(pos.y - cardPlayerDiscard.y) < 10;
-                const nearP1 = pos.x < 5;
-                const nearP2 = pos.x > 95;
+                // Detect which of the 4 hand areas received the drop (2×2 layout, split at y=51)
+                const leftSide = pos.x < 5; const rightSide = pos.x > 95; const topHalf = pos.y < 51;
+                const droppedHand: string | null = leftSide ? (topHalf ? 'p1' : 'p3') : rightSide ? (topHalf ? 'p2' : 'p4') : null;
                 const inDrawPhase = setup && turnState.phase === "draw" && faceUp;
                 const completeOneDraw = () => {
                   if (!inDrawPhase) return;
@@ -1411,8 +1416,8 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                   setPlayerDeck(deck.slice(0, -1)); setPlayerDiscard([...disc, cityId]);
                   setPlayerFlipped(prev => { const n = new Set(prev); n.delete(cityId); return n; });
                   if (inDrawPhase && cityId === "epidemic") completeOneDraw(); // epidemic dragged to discard counts
-                } else if (nearP1 || nearP2) {
-                  const player = inDrawPhase ? currentPlayerKey : (nearP1 ? 'p1' : 'p2');
+                } else if (droppedHand) {
+                  const player = inDrawPhase ? currentPlayerKey : droppedHand;
                   setPlayerDeck(deck.slice(0, -1));
                   setPlayerFlipped(prev => { const n = new Set(prev); n.delete(cityId); return n; });
                   const dest = (handCards as Record<string,string[]>)[player] ?? [];
@@ -1491,17 +1496,17 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
               if (!epidemicFaceUp) return;
               const pos = toPct(ev);
               const nearDiscard = Math.abs(pos.x - cardPlayerDiscard.x) < 10 && Math.abs(pos.y - cardPlayerDiscard.y) < 10;
-              const nearP1 = pos.x < 5;
-              const nearP2 = pos.x > 95;
+              const leftSide2 = pos.x < 5; const rightSide2 = pos.x > 95; const topHalf2 = pos.y < 51;
+              const epicHand: string | null = leftSide2 ? (topHalf2 ? 'p1' : 'p3') : rightSide2 ? (topHalf2 ? 'p2' : 'p4') : null;
               if (nearDiscard) {
                 setEpidemicCount(c => c - 1);
                 setPlayerFlipped(prev => { const n = new Set(prev); n.delete("epidemic"); return n; });
                 setPlayerDiscard(prev => [...prev, "epidemic"]);
-              } else if (nearP1 || nearP2) {
-                const player = nearP1 ? 'p1' : 'p2';
+              } else if (epicHand) {
                 setEpidemicCount(c => c - 1);
                 setPlayerFlipped(prev => { const n = new Set(prev); n.delete("epidemic"); return n; });
-                saveHandCards({ ...handCards, [player]: [...handCards[player], "epidemic"] });
+                const dest = (handCards as Record<string,string[]>)[epicHand] ?? [];
+                saveHandCards({ ...handCards, [epicHand]: [...dest, "epidemic"] });
               }
             };
             el.addEventListener("pointermove", onMove as any);
@@ -1646,21 +1651,23 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
           });
         })()}
 
-        {/* Player hand areas — drop-target highlight in calibrate mode */}
-        {calibrating && (['p1', 'p2', 'p3', 'p4'] as const).filter(p => (activePlayers as readonly string[]).includes(p)).map(player => {
+        {/* Player hand areas — always visible in deal phase, dashed in calibrate mode */}
+        {(calibrating || !!onChooseRoles) && (['p1', 'p2', 'p3', 'p4'] as const).map(player => {
           const area = player === 'p1' ? HAND_P1 : player === 'p2' ? HAND_P2 : player === 'p3' ? HAND_P3 : HAND_P4;
           const label = player === 'p1' ? 'Player 1' : player === 'p2' ? 'Player 2' : player === 'p3' ? 'Player 3' : 'Player 4';
+          const hasCards = ((handCards as Record<string,string[]>)[player]?.length ?? 0) > 0;
           return (
             <div key={player} style={{
               position: "absolute",
               left: `${area.x}%`, top: `${area.y}%`,
               width: `${area.w}%`, height: `${area.h}%`,
               transform: "translate(-50%, -50%)",
-              zIndex: 6, border: "2px dashed #4af", boxSizing: "border-box",
+              zIndex: 6, boxSizing: "border-box",
+              border: hasCards ? "1px solid #4af6" : "1px dashed #4af4",
               display: "flex", alignItems: "flex-start", justifyContent: "center", paddingTop: 4,
               pointerEvents: "none",
             }}>
-              <span style={{ color: "#4af", fontSize: 10, fontFamily: "monospace", userSelect: "none" }}>{label}</span>
+              <span style={{ color: hasCards ? "#4af" : "#4af7", fontSize: 10, fontFamily: "monospace", userSelect: "none" }}>{label}</span>
             </div>
           );
         })}
@@ -1857,10 +1864,12 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                 const pos = toPct(ev);
                 const current = (handCards as Record<string,string[]>)[player] ?? [];
                 const nearDiscard = Math.abs(pos.x - cardPlayerDiscard.x) < 10 && Math.abs(pos.y - cardPlayerDiscard.y) < 10;
-                // Determine all player hand areas for target detection
+                // Determine all player hand areas for target detection (check both x and y proximity)
                 const HAND_AREAS: Record<string, typeof HAND_P1> = { p1: HAND_P1, p2: HAND_P2, p3: HAND_P3, p4: HAND_P4 };
                 const otherPlayer = (activePlayers as readonly string[]).find(pk =>
-                  pk !== player && Math.abs(pos.x - HAND_AREAS[pk].x) < 8
+                  pk !== player &&
+                  Math.abs(pos.x - HAND_AREAS[pk].x) < 8 &&
+                  Math.abs(pos.y - HAND_AREAS[pk].y) < 30
                 );
 
                 if (nearDiscard && setup && turnState.phase === "actions") {
