@@ -33,7 +33,7 @@ import type { PreGameSetup } from "./PreGamePhase";
 import { BOARD_RATIO, CUBE_W, shuffle, defaultCubes, inBox } from "./boardGeometry";
 import { PANIC_TRAY_POS, OBJECTIVE_SLOTS, OUTBREAK_TRACK, INFECTION_TRACK } from "./boardLayout";
 import {
-  type CardState, type HandCards, type TurnPhase, type TurnStateData,
+  type CardState, type HandCards, type TurnStateData,
   LS_CURED, LS_CITY_INFECTION, LS_ERADICATED, LS_OUTBREAK_POS, LS_INFECTION_POS,
   LS_HAND_CARDS, LS_CARD_INFECTION, LS_CARD_PLAYER, LS_CARD_INFECTION_DISCARD,
   LS_CARD_PLAYER_DISCARD, LS_TOKEN_P1, LS_TOKEN_P2, LS_TOKEN_P3, LS_TOKEN_P4,
@@ -50,6 +50,7 @@ import { InfectionDiscardPopup } from "./InfectionDiscardPopup";
 import { ForecastPopup } from "./ForecastPopup";
 import { ContextMenu, MenuItem } from "./ContextMenu";
 import { TurnPanel } from "./TurnPanel";
+import { makePlayerDeckDraw } from "./handInteractions";
 
 const COLOR_TO_CUBE: Record<string, string> = {
   blue: "#0A00A1", yellow: "#FFFA73", black: "#1a1a1a", red: "#cc1111",
@@ -1231,75 +1232,14 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
             const faceUp = isTop && playerFlipped.has(cityId);
             const pxW = boardPxW > 0 ? (card.w / 100) * boardPxW : 0;
 
-            const onTopDown = isTop && !calibrating ? (e: React.PointerEvent<HTMLDivElement>) => {
-              if (e.button !== 0) return;
-              e.stopPropagation(); e.preventDefault();
-              const el = e.currentTarget; el.setPointerCapture(e.pointerId);
-              const r = boardRef.current!.getBoundingClientRect();
-              const startX = e.clientX; const startY = e.clientY;
-              let moved = false;
-              const deck = playerDeck; const disc = playerDiscard;
-              const toPct = (ev: PointerEvent) => ({
-                x: ((ev.clientX - r.left) / r.width) * 100,
-                y: ((ev.clientY - r.top) / r.height) * 100,
-              });
-              const onMove = (ev: PointerEvent) => {
-                if (!moved && Math.hypot(ev.clientX - startX, ev.clientY - startY) > 6) moved = true;
-                if (moved) setPlayerDrag({ cityId, ...toPct(ev) });
-              };
-              const onUp = (ev: PointerEvent) => {
-                el.removeEventListener("pointermove", onMove as any);
-                el.removeEventListener("pointerup", onUp);
-                setPlayerDrag(null);
-                if (!moved) {
-                  // tap = flip
-                  setPlayerFlipped(prev => {
-                    const n = new Set(prev);
-                    if (n.has(cityId)) n.delete(cityId); else n.add(cityId);
-                    return n;
-                  });
-                  return;
-                }
-                // dragged — allow drop to hand (face-down or face-up) or discard (face-up only)
-                const pos = toPct(ev);
-                const nearDiscard = Math.abs(pos.x - cardPlayerDiscard.x) < 10 && Math.abs(pos.y - cardPlayerDiscard.y) < 10;
-                // Detect which of the 4 hand areas received the drop (2×2 layout, split at y=51)
-                const leftSide = pos.x < 5; const rightSide = pos.x > 95; const topHalf = pos.y < 51;
-                const droppedHand: string | null = leftSide ? (topHalf ? 'p1' : 'p3') : rightSide ? (topHalf ? 'p2' : 'p4') : null;
-                const inDrawPhase = setup && turnState.phase === "draw" && faceUp;
-                const completeOneDraw = () => {
-                  if (!inDrawPhase) return;
-                  const newCount = turnState.drawCount + 1;
-                  if (newCount >= 2) {
-                    // Check hand limit
-                    const hand = (handCards as Record<string,string[]>)[currentPlayerKey] ?? [];
-                    const phase: TurnPhase = (hand.length + (cityId !== "epidemic" ? 1 : 0)) > 7 ? "discard" : "infect";
-                    saveTurnState({ ...turnState, drawCount: newCount, phase, infectCount: 0 });
-                  } else {
-                    saveTurnState({ ...turnState, drawCount: newCount });
-                  }
-                };
-                if (faceUp && nearDiscard && !onChooseRoles) {
-                  setPlayerDeck(deck.slice(0, -1)); setPlayerDiscard([...disc, cityId]);
-                  setPlayerFlipped(prev => { const n = new Set(prev); n.delete(cityId); return n; });
-                  if (inDrawPhase && cityId === "epidemic") completeOneDraw(); // epidemic dragged to discard counts
-                } else if (droppedHand) {
-                  // In deal phase: enforce deal order — cannot skip a player
-                  if (onChooseRoles) {
-                    const playerIdx = ['p1','p2','p3','p4'].indexOf(droppedHand);
-                    if (playerIdx > maxDealTargetIdx) return; // bounce — must deal to lower-numbered player first
-                  }
-                  const player = inDrawPhase ? currentPlayerKey : droppedHand;
-                  setPlayerDeck(deck.slice(0, -1));
-                  setPlayerFlipped(prev => { const n = new Set(prev); n.delete(cityId); return n; });
-                  const dest = (handCards as Record<string,string[]>)[player] ?? [];
-                  saveHandCards({ ...handCards, [player]: [...dest, cityId] });
-                  completeOneDraw();
-                }
-              };
-              el.addEventListener("pointermove", onMove as any);
-              el.addEventListener("pointerup", onUp);
-            } : (isTop ? onDragDown : undefined);
+            const onTopDown = isTop && !calibrating
+              ? makePlayerDeckDraw({
+                  boardRef, playerDeck, playerDiscard, cardPlayerDiscard, setup, turnState,
+                  handCards, currentPlayerKey, onChooseRoles, maxDealTargetIdx,
+                  setPlayerDrag, setPlayerDeck, setPlayerDiscard, setPlayerFlipped,
+                  saveTurnState, saveHandCards,
+                }, cityId, faceUp)
+              : (isTop ? onDragDown : undefined);
 
             return (
               <div key={`player-deck-${i}`}
