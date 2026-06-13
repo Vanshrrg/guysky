@@ -50,7 +50,7 @@ import { InfectionDiscardPopup } from "./InfectionDiscardPopup";
 import { ForecastPopup } from "./ForecastPopup";
 import { ContextMenu, MenuItem } from "./ContextMenu";
 import { TurnPanel } from "./TurnPanel";
-import { makePlayerDeckDraw } from "./handInteractions";
+import { makePlayerDeckDraw, makeHandCardPointerDown } from "./handInteractions";
 
 const COLOR_TO_CUBE: Record<string, string> = {
   blue: "#0A00A1", yellow: "#FFFA73", black: "#1a1a1a", red: "#cc1111",
@@ -1648,155 +1648,15 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
             if (!city && cityId !== "epidemic" && !isFundingHand) return null;
             const isDragging = handDrag?.player === player && handDrag.idx === i;
             const isSelected = cureSelecting && selectedHandCards.includes(cityId);
-            const onCardDown = (e: React.PointerEvent<HTMLDivElement>) => {
-              if (calibrating) return;
-              // In game phase: only current player can drag their own cards
-              if (setup && player !== currentPlayerKey) {
-                // Active player may take a card FROM a teammate's hand during their actions:
-                //  • from a Researcher: any card (Researcher special)
-                //  • from anyone else: only the card matching the active player's current city
-                const teammateRole = setup.playerOrder[(['p1','p2','p3','p4'] as const).indexOf(player as 'p1'|'p2'|'p3'|'p4')]?.roleId;
-                const isResearcher = teammateRole === 'researcher';
-                const isMatchingTake = cityId === currentPlayerCityId;
-                if (turnState.phase !== "actions" || (!isResearcher && !isMatchingTake)) return;
-              }
-              e.stopPropagation(); e.preventDefault();
-              const el = e.currentTarget; el.setPointerCapture(e.pointerId);
-              const r = boardRef.current!.getBoundingClientRect();
-              const toPct = (ev: PointerEvent) => ({ x: ((ev.clientX - r.left) / r.width) * 100, y: ((ev.clientY - r.top) / r.height) * 100 });
-              let moved = false;
-              const sx = e.clientX; const sy = e.clientY;
-              const onMove = (ev: PointerEvent) => {
-                if (!moved && Math.hypot(ev.clientX - sx, ev.clientY - sy) > 6) moved = true;
-                if (moved) { setHandDrag({ player, idx: i, ...toPct(ev) }); setHandHover(null); }
-              };
-              const onUp = (ev: PointerEvent) => {
-                el.removeEventListener("pointermove", onMove as any);
-                el.removeEventListener("pointerup", onUp);
-                setHandDrag(null);
-                if (!moved) {
-                  // Tap: play fund event card (any phase, hand only)
-                  if (setup && isFundingHand) {
-                    playFundCard(player, i, cityId);
-                    return;
-                  }
-                  // Tap: select city cards for Flexible Aid
-                  if (setup && eventMode === 'flexible-aid' && player === pendingEventCard?.player && !isFundingHand && cityId !== 'epidemic') {
-                    const city = CITIES.find(c => c.id === cityId);
-                    if (city) {
-                      setFlexibleAidSelected(prev =>
-                        prev.includes(cityId) ? prev.filter(id => id !== cityId)
-                        : prev.length < 3 ? [...prev, cityId] : prev
-                      );
-                    }
-                    return;
-                  }
-                  // Tap: toggle card selection for cure (game phase only)
-                  if (setup && cureSelecting) {
-                    setSelectedHandCards(prev =>
-                      prev.includes(cityId) ? prev.filter(id => id !== cityId) : [...prev, cityId]
-                    );
-                  }
-                  return;
-                }
-                const pos = toPct(ev);
-                const current = (handCards as Record<string,string[]>)[player] ?? [];
-                const nearDiscard = Math.abs(pos.x - cardPlayerDiscard.x) < 10 && Math.abs(pos.y - cardPlayerDiscard.y) < 10;
-                // Determine all player hand areas for target detection (check both x and y proximity)
-                const HAND_AREAS: Record<string, typeof HAND_P1> = { p1: HAND_P1, p2: HAND_P2, p3: HAND_P3, p4: HAND_P4 };
-                const otherPlayer = (activePlayers as readonly string[]).find(pk =>
-                  pk !== player &&
-                  Math.abs(pos.x - HAND_AREAS[pk].x) < 8 &&
-                  Math.abs(pos.y - HAND_AREAS[pk].y) < 30
-                );
-
-                if (nearDiscard && setup && turnState.phase === "actions") {
-                  // Game phase: intercept discard for flight/build actions
-                  const isFundCard = FUND_IMGS[cityId] !== undefined;
-                  const isEpidemicCard = cityId === "epidemic";
-                  if (!isFundCard && !isEpidemicCard) {
-                    if (cityId === currentPlayerCityId) {
-                      // Charter Flight or Build Research Station — show popup
-                      setPendingDiscardMenu({ cityId, player, idx: i, x: ev.clientX, y: ev.clientY });
-                      return;
-                    } else {
-                      // Direct Flight — fly to card's city
-                      const destCity = CITIES.find(c => c.id === cityId);
-                      if (destCity) {
-                        const nextCities = [...playerCities]; nextCities[turnState.currentPlayerIndex] = cityId;
-                        savePlayerCities(nextCities); snapPawnToCity(player, cityId);
-                        saveHandCards({ ...handCards, [player]: current.filter((_, j) => j !== i) });
-                        setPlayerDiscard(prev => [...prev, cityId]);
-                        saveTurnState(consumeAction(turnState));
-                        return;
-                      }
-                    }
-                  }
-                  // Fund/epidemic card: plain discard
-                  saveHandCards({ ...handCards, [player]: current.filter((_, j) => j !== i) });
-                  setPlayerDiscard(prev => [...prev, cityId]);
-                  return;
-                }
-
-                if (nearDiscard && !setup) {
-                  // Pre-game: free discard
-                  saveHandCards({ ...handCards, [player]: current.filter((_, j) => j !== i) });
-                  setPlayerDiscard(prev => [...prev, cityId]);
-                  return;
-                }
-
-                if (setup && turnState.phase === "actions") {
-                  // Take: active player dragging a teammate's card TO their own hand.
-                  // Researcher → any card; anyone else → only the card matching the active player's city.
-                  if (player !== currentPlayerKey && otherPlayer === currentPlayerKey) {
-                    const teammateIdx = (['p1','p2','p3','p4'] as const).indexOf(player as 'p1'|'p2'|'p3'|'p4');
-                    const teammateCity = playerCities[teammateIdx] ?? "atlanta";
-                    const teammateRole = setup.playerOrder[teammateIdx]?.roleId;
-                    const legal = teammateCity === currentPlayerCityId &&
-                      (teammateRole === 'researcher' || cityId === currentPlayerCityId);
-                    if (legal) {
-                      const myCards = (handCards as Record<string,string[]>)[currentPlayerKey] ?? [];
-                      saveHandCards({ ...handCards, [player]: current.filter((_, j) => j !== i), [currentPlayerKey]: [...myCards, cityId] });
-                      saveTurnState(consumeAction(turnState));
-                    }
-                    return;
-                  }
-                  if (otherPlayer) {
-                    // Share Knowledge: valid if both players in same city and card matches giver's city
-                    const giverCity = currentPlayerCityId;
-                    const receiverIdx = (['p1','p2','p3','p4'] as const).indexOf(otherPlayer as 'p1'|'p2'|'p3'|'p4');
-                    const receiverCity = playerCities[receiverIdx] ?? "atlanta";
-                    const valid = giverCity === receiverCity && cityId === giverCity;
-                    if (valid) {
-                      const receiverCards = (handCards as Record<string,string[]>)[otherPlayer] ?? [];
-                      saveHandCards({ ...handCards, [player]: current.filter((_, j) => j !== i), [otherPlayer]: [...receiverCards, cityId] });
-                      saveTurnState(consumeAction(turnState));
-                      return;
-                    }
-                    return;
-                  }
-                }
-
-                if (otherPlayer && !setup) {
-                  // Pre-game free transfer between hands
-                  const destCards = (handCards as Record<string,string[]>)[otherPlayer] ?? [];
-                  saveHandCards({ ...handCards, [player]: current.filter((_, j) => j !== i), [otherPlayer]: [...destCards, cityId] });
-                  return;
-                }
-
-                // Reorder within same hand
-                const area = HAND_AREAS[player as keyof typeof HAND_AREAS] ?? HAND_P1;
-                const areaT = area.y - area.h / 2;
-                const so = handStackOffset(area, current.length);
-                const targetIdx = Math.max(0, Math.min(current.length - 1, Math.round((pos.y - areaT) / (so || 1))));
-                if (targetIdx !== i) {
-                  const next = [...current]; next.splice(i, 1); next.splice(targetIdx, 0, cityId);
-                  saveHandCards({ ...handCards, [player]: next });
-                }
-              };
-              el.addEventListener("pointermove", onMove as any);
-              el.addEventListener("pointerup", onUp);
-            };
+            const onCardDown = makeHandCardPointerDown({
+              calibrating, setup, currentPlayerKey, currentPlayerCityId, turnState, boardRef,
+              handCards, cardPlayerDiscard,
+              handAreas: { p1: HAND_P1, p2: HAND_P2, p3: HAND_P3, p4: HAND_P4 },
+              activePlayers, cureSelecting, eventMode, pendingEventCard, playerCities,
+              playFundCard, handStackOffset, snapPawnToCity, savePlayerCities, saveHandCards,
+              saveTurnState, consumeAction, setHandDrag, setHandHover, setFlexibleAidSelected,
+              setSelectedHandCards, setPlayerDiscard, setPendingDiscardMenu,
+            }, { player, idx: i, cityId, isFundingHand });
             return (
               <div key={`hand-${player}-${cityId}-${i}`}
                 onPointerDown={onCardDown}
