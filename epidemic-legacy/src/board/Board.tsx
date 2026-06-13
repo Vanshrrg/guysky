@@ -42,9 +42,12 @@ import {
   DEF_CARD_INFECTION, DEF_CARD_PLAYER, DEF_CARD_INFECTION_DISCARD, DEF_CARD_PLAYER_DISCARD,
   DEF_TOKEN_P1, DEF_TOKEN_P2, DEF_TOKEN_P3, DEF_TOKEN_P4,
   loadCard, loadTrackPos, loadHandCards, loadResearchStations, loadResearchPos,
-  loadPanicLevels, loadHcmc, loadTurnState, loadPlayerCities, clearGameState,
+  loadPanicLevels, loadHcmc, loadTurnState, loadPlayerCities,
 } from "./boardStorage";
 import { MARKERS, CURE_INDICES, COLOR_TO_CURE_IDX, loadMarker, loadCured, loadEradicated } from "./boardMarkers";
+import { GameOverOverlay } from "./GameOverOverlay";
+import { InfectionDiscardPopup } from "./InfectionDiscardPopup";
+import { ForecastPopup } from "./ForecastPopup";
 
 const COLOR_TO_CUBE: Record<string, string> = {
   blue: "#0A00A1", yellow: "#FFFA73", black: "#1a1a1a", red: "#cc1111",
@@ -179,7 +182,6 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   const [discardMenu, setDiscardMenu] = useState<{ x: number; y: number } | null>(null);
   const [deckMenu, setDeckMenu] = useState<{ x: number; y: number } | null>(null);
   const [forecastCards, setForecastCards] = useState<string[] | null>(null);
-  const [forecastDragIdx, setForecastDragIdx] = useState<number | null>(null);
   const [dismissedResult, setDismissedResult] = useState<string | null>(null);
   // Turn system — only active during game phase (setup present)
   const [turnState, setTurnState_] = useState<TurnStateData>(() => loadTurnState());
@@ -2471,56 +2473,17 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
 
       {/* Forecast popup */}
       {forecastCards && boardPxW > 0 && (
-        <div onClick={() => setForecastCards(null)}
-          style={{ position: "fixed", inset: 0, background: "#000b", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}>
-          <div onClick={e => e.stopPropagation()}
-            style={{ background: "#0c1335", border: "2px solid #334", borderRadius: 10, padding: 20 }}>
-            <div style={{ color: "#aac", fontSize: 12, fontFamily: "monospace", marginBottom: 12 }}>
-              Forecast — drag to reorder, top card drawn first
-            </div>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center" }}>
-              {forecastCards.map((cityId, i) => {
-                const city = CITIES.find(c => c.id === cityId);
-                if (!city) return null;
-                const isDragging = forecastDragIdx === i;
-                return (
-                  <div key={cityId}
-                    draggable
-                    onDragStart={() => setForecastDragIdx(i)}
-                    onDragOver={e => e.preventDefault()}
-                    onDrop={() => {
-                      if (forecastDragIdx === null || forecastDragIdx === i) return;
-                      setForecastCards(prev => {
-                        if (!prev) return prev;
-                        const next = [...prev];
-                        [next[forecastDragIdx], next[i]] = [next[i], next[forecastDragIdx]];
-                        return next;
-                      });
-                      setForecastDragIdx(null);
-                    }}
-                    onDragEnd={() => setForecastDragIdx(null)}
-                    style={{
-                      opacity: isDragging ? 0.4 : 1,
-                      cursor: "grab",
-                      outline: isDragging ? "2px dashed #88f" : "none",
-                      borderRadius: 6,
-                    }}>
-                    <div style={{ color: "#88a", fontSize: 10, fontFamily: "monospace", textAlign: "center", marginBottom: 3 }}>
-                      {i === 0 ? "▲ top" : `${i + 1}`}
-                    </div>
-                    <InfectionCard city={city} width={120} />
-                  </div>
-                );
-              })}
-            </div>
-            <div style={{ textAlign: "center", marginTop: 14 }}>
-              <button onClick={confirmForecast}
-                style={{ fontSize: 20, background: "#1e3575", border: "2px solid #48f", color: "#cef", borderRadius: 8, padding: "4px 24px", cursor: "pointer" }}>
-                ✓
-              </button>
-            </div>
-          </div>
-        </div>
+        <ForecastPopup
+          cards={forecastCards}
+          onReorder={(from, to) => setForecastCards(prev => {
+            if (!prev) return prev;
+            const next = [...prev];
+            [next[from], next[to]] = [next[to], next[from]];
+            return next;
+          })}
+          onConfirm={confirmForecast}
+          onCancel={() => setForecastCards(null)}
+        />
       )}
 
 
@@ -2808,124 +2771,28 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
 
       {/* Win / Lose overlay */}
       {gameResult !== null && gameResult !== dismissedResult && (
-        <div style={{
-          position: "fixed", inset: 0, zIndex: 2000,
-          background: gameResult === 'win' ? "#00180088" : "#18000088",
-          display: "flex", alignItems: "center", justifyContent: "center",
-        }}>
-          <div style={{
-            background: gameResult === 'win' ? "#0a2a14" : "#2a0a0a",
-            border: `2px solid ${gameResult === 'win' ? "#3ddc6d" : "#dc3d3d"}`,
-            borderRadius: 14, padding: "36px 52px",
-            textAlign: "center", boxShadow: "0 8px 48px #000e",
-            fontFamily: "system-ui, sans-serif",
-          }}>
-            <div style={{ fontSize: 56, marginBottom: 8 }}>
-              {gameResult === 'win' ? "🏆" : "💀"}
-            </div>
-            <div style={{ fontSize: 28, fontWeight: 700, color: gameResult === 'win' ? "#3ddc6d" : "#dc3d3d", marginBottom: 8 }}>
-              {gameResult === 'win' ? "You Win!" : "Game Over"}
-            </div>
-            {gameResult === 'lose' && (
-              <div style={{ fontSize: 14, color: "#cc8888", marginBottom: 16 }}>{loseReason}</div>
-            )}
-            {gameResult === 'win' && (
-              <div style={{ fontSize: 14, color: "#88cc88", marginBottom: 16 }}>All objectives completed!</div>
-            )}
-            <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
-              <button
-                onClick={() => setDismissedResult(gameResult)}
-                style={{
-                  padding: "8px 22px", fontSize: 13,
-                  background: "transparent",
-                  border: `1px solid ${gameResult === 'win' ? "#3ddc6d" : "#dc3d3d"}`,
-                  color: gameResult === 'win' ? "#3ddc6d" : "#dc3d3d",
-                  borderRadius: 6, cursor: "pointer",
-                }}>
-                Continue
-              </button>
-              {onRestart && (
-                <button onClick={() => {
-                  clearGameState();
-                  onRestart();
-                }} style={{
-                  padding: "8px 22px", fontSize: 13,
-                  background: "#1a2a1a", border: "1px solid #4a9a4a",
-                  color: "#88dd88", borderRadius: 6, cursor: "pointer",
-                }}>
-                  Restart
-                </button>
-              )}
-              {onMainMenu && (
-                <button onClick={() => {
-                  clearGameState();
-                  onMainMenu();
-                }} style={{
-                  padding: "8px 22px", fontSize: 13,
-                  background: "#1a1a2a", border: "1px solid #4a4a8a",
-                  color: "#8888cc", borderRadius: 6, cursor: "pointer",
-                }}>
-                  Main Menu
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
+        <GameOverOverlay
+          result={gameResult}
+          loseReason={loseReason}
+          onContinue={() => setDismissedResult(gameResult)}
+          onRestart={onRestart}
+          onMainMenu={onMainMenu}
+        />
       )}
 
-      {showDiscardPopup && (() => {
-        const picking = eventMode === 'resilient-pop';
-        const closePopup = () => { setShowDiscardPopup(false); };
-        const pickCard = (realIdx: number) => {
-          setInfectDiscard(prev => prev.filter((_, j) => j !== realIdx));
-          setShowDiscardPopup(false);
-          setEventMode(null);
-          if (pendingEventCard) resolveEventCard(pendingEventCard);
-        };
-        return (
-        <div
-          onClick={picking ? undefined : closePopup}
-          style={{
-            position: "fixed", inset: 0, background: "#000a",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            zIndex: 1000,
+      {showDiscardPopup && (
+        <InfectionDiscardPopup
+          discard={infectDiscard}
+          picking={eventMode === 'resilient-pop'}
+          onClose={() => setShowDiscardPopup(false)}
+          onPick={(realIdx) => {
+            setInfectDiscard(prev => prev.filter((_, j) => j !== realIdx));
+            setShowDiscardPopup(false);
+            setEventMode(null);
+            if (pendingEventCard) resolveEventCard(pendingEventCard);
           }}
-        >
-          <div onClick={e => e.stopPropagation()} style={{
-              background: "#0c1335", border: `2px solid ${picking ? "#4a9a4a" : "#334"}`,
-              borderRadius: 10, padding: 20, maxWidth: "90vw", maxHeight: "80vh",
-              overflowY: "auto",
-            }}
-          >
-            <div style={{ color: picking ? "#88dd88" : "#aac", fontSize: 13, marginBottom: 12, fontFamily: "monospace" }}>
-              {picking
-                ? `Resilient Population — click a card to remove it from the game (${infectDiscard.length} in discard)`
-                : `Infection Discard — ${infectDiscard.length} card${infectDiscard.length !== 1 ? "s" : ""}`}
-              <button onClick={closePopup}
-                style={{ float: "right", background: "none", border: "1px solid #556", color: "#aac", cursor: "pointer", borderRadius: 4, padding: "2px 8px" }}>
-                ✕
-              </button>
-            </div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
-              {[...infectDiscard].reverse().map((cityId, i) => {
-                const city = CITIES.find(c => c.id === cityId);
-                if (!city) return null;
-                const realIdx = infectDiscard.length - 1 - i;
-                return (
-                  <div key={`popup-${i}`}
-                    onClick={picking ? () => pickCard(realIdx) : undefined}
-                    style={picking ? { cursor: "pointer", borderRadius: 6, outline: "2px solid transparent", transition: "outline-color 0.1s" } : undefined}
-                    onMouseEnter={picking ? e => { (e.currentTarget as HTMLElement).style.outlineColor = "#4a9a4a"; } : undefined}
-                    onMouseLeave={picking ? e => { (e.currentTarget as HTMLElement).style.outlineColor = "transparent"; } : undefined}>
-                    <InfectionCard city={city} width={140} />
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-        );
-      })()}
+        />
+      )}
     </div>
   );
 }
