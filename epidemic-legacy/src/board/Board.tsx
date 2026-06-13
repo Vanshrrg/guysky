@@ -48,6 +48,7 @@ import { MARKERS, CURE_INDICES, COLOR_TO_CURE_IDX, loadMarker, loadCured, loadEr
 import { GameOverOverlay } from "./GameOverOverlay";
 import { InfectionDiscardPopup } from "./InfectionDiscardPopup";
 import { ForecastPopup } from "./ForecastPopup";
+import { ContextMenu, MenuItem } from "./ContextMenu";
 
 const COLOR_TO_CUBE: Record<string, string> = {
   blue: "#0A00A1", yellow: "#FFFA73", black: "#1a1a1a", red: "#cc1111",
@@ -2334,10 +2335,9 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
           position: "absolute", left: "100%", top: 0, marginLeft: 4,
         };
         return (
-          <div onClick={() => { setCityMenu(null); setCityMenuHover(null); }}
-            style={{ position: "fixed", inset: 0, zIndex: 999 }}>
-            <div onClick={e => e.stopPropagation()}
-              style={{ position: "fixed", left: cityMenu.x, top: cityMenu.y, ...menuStyle, padding: 3 }}>
+          <ContextMenu x={cityMenu.x} y={cityMenu.y} minWidth={110}
+            wrapStyle={{ overflow: "visible", padding: 3 }}
+            onClose={() => { setCityMenu(null); setCityMenuHover(null); }}>
 
               {/* Building */}
               <div style={{ position: "relative" }}
@@ -2393,82 +2393,46 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                 )}
               </div>
 
-            </div>
-          </div>
+          </ContextMenu>
         );
       })()}
 
       {/* Objective card context menu */}
       {objMenu && (
-        <div onClick={() => setObjMenu(null)}
-          style={{ position: "fixed", inset: 0, zIndex: 999 }}>
-          <div onClick={e => e.stopPropagation()}
-            style={{
-              position: "fixed", left: objMenu.x, top: objMenu.y,
-              background: "#1a2550", border: "1px solid #445", borderRadius: 6,
-              boxShadow: "0 4px 16px #000a", zIndex: 1000, minWidth: 150, overflow: "hidden",
-            }}>
-            {[
-              {
-                label: objectiveCompleted[objMenu.idx] ? "✓ Completed" : "Completed",
-                action: () => {
-                  setObjectiveCompleted(prev => { const n = [...prev]; n[objMenu.idx] = !n[objMenu.idx]; return n; });
-                  setObjMenu(null);
-                },
-              },
-              {
-                label: "Destroy",
-                action: () => {
-                  const idx = objMenu.idx;
-                  setObjectiveCompleted(prev => { const n = [...prev]; n.splice(idx, 1); return n; });
-                  setObjectiveCount(prev => prev - 1);
-                  setObjMenu(null);
-                },
-                color: "#f66",
-              },
-            ].map(({ label, action, color }) => (
-              <div key={label} onClick={action}
-                style={{ padding: "10px 16px", color: color ?? "#cde", fontSize: 13, cursor: "pointer", fontFamily: "monospace" }}
-                onMouseEnter={e => (e.currentTarget.style.background = "#2a3d7a")}
-                onMouseLeave={e => (e.currentTarget.style.background = "transparent")}>
-                {label}
-              </div>
-            ))}
-          </div>
-        </div>
+        <ContextMenu variant="blue" x={objMenu.x} y={objMenu.y} minWidth={150} onClose={() => setObjMenu(null)}>
+          <MenuItem variant="blue" onClick={() => {
+            setObjectiveCompleted(prev => { const n = [...prev]; n[objMenu.idx] = !n[objMenu.idx]; return n; });
+            setObjMenu(null);
+          }}>
+            {objectiveCompleted[objMenu.idx] ? "✓ Completed" : "Completed"}
+          </MenuItem>
+          <MenuItem variant="blue" color="#f66" onClick={() => {
+            const idx = objMenu.idx;
+            setObjectiveCompleted(prev => { const n = [...prev]; n.splice(idx, 1); return n; });
+            setObjectiveCount(prev => prev - 1);
+            setObjMenu(null);
+          }}>
+            Destroy
+          </MenuItem>
+        </ContextMenu>
       )}
 
       {/* Infection deck context menu */}
       {deckMenu && (
-        <div onClick={() => setDeckMenu(null)}
-          style={{ position: "fixed", inset: 0, zIndex: 999 }}>
-          <div onClick={e => e.stopPropagation()}
-            style={{
-              position: "fixed", left: deckMenu.x, top: deckMenu.y,
-              background: "#1a2550", border: "1px solid #445", borderRadius: 6,
-              boxShadow: "0 4px 16px #000a", zIndex: 1000, minWidth: 140, overflow: "hidden",
-            }}>
-            {[
-              { label: "Shuffle", action: shuffleDeck },
-              { label: "Forecast", action: openForecast },
-              { label: "Draw Bottom", action: () => {
-                if (infectDeck.length === 0) return;
-                const bottom = infectDeck[0];
-                setInfectDeck(infectDeck.slice(1));
-                setInfectDiscard(prev => [...prev, bottom]);
-                setDeckMenu(null);
-                if (epidemicState?.phase === 'infect') epidemicInfect(bottom);
-              }},
-            ].map(({ label, action }) => (
-              <div key={label} onClick={action}
-                style={{ padding: "10px 16px", color: "#cde", fontSize: 13, cursor: "pointer", fontFamily: "monospace" }}
-                onMouseEnter={e => (e.currentTarget.style.background = "#2a3d7a")}
-                onMouseLeave={e => (e.currentTarget.style.background = "transparent")}>
-                {label}
-              </div>
-            ))}
-          </div>
-        </div>
+        <ContextMenu variant="blue" x={deckMenu.x} y={deckMenu.y} minWidth={140} onClose={() => setDeckMenu(null)}>
+          <MenuItem variant="blue" onClick={shuffleDeck}>Shuffle</MenuItem>
+          <MenuItem variant="blue" onClick={openForecast}>Forecast</MenuItem>
+          <MenuItem variant="blue" onClick={() => {
+            if (infectDeck.length === 0) return;
+            const bottom = infectDeck[0];
+            setInfectDeck(infectDeck.slice(1));
+            setInfectDiscard(prev => [...prev, bottom]);
+            setDeckMenu(null);
+            if (epidemicState?.phase === 'infect') epidemicInfect(bottom);
+          }}>
+            Draw Bottom
+          </MenuItem>
+        </ContextMenu>
       )}
 
       {/* Forecast popup */}
@@ -2490,27 +2454,9 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
 
       {/* Infection discard context menu */}
       {discardMenu && (
-        <div onClick={() => setDiscardMenu(null)}
-          style={{ position: "fixed", inset: 0, zIndex: 999 }}>
-          <div onClick={e => e.stopPropagation()}
-            style={{
-              position: "fixed", left: discardMenu.x, top: discardMenu.y,
-              background: "#1a2550", border: "1px solid #445", borderRadius: 6,
-              boxShadow: "0 4px 16px #000a", zIndex: 1000, minWidth: 140, overflow: "hidden",
-            }}>
-            <div
-              onClick={shuffleDiscardOntoDeck}
-              style={{
-                padding: "10px 16px", color: "#cde", fontSize: 13, cursor: "pointer",
-                fontFamily: "monospace",
-              }}
-              onMouseEnter={e => (e.currentTarget.style.background = "#2a3d7a")}
-              onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
-            >
-              Shuffle
-            </div>
-          </div>
-        </div>
+        <ContextMenu variant="blue" x={discardMenu.x} y={discardMenu.y} minWidth={140} onClose={() => setDiscardMenu(null)}>
+          <MenuItem variant="blue" onClick={shuffleDiscardOntoDeck}>Shuffle</MenuItem>
+        </ContextMenu>
       )}
 
       {/* Infection discard popup */}
@@ -2563,210 +2509,150 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
 
       {/* Player deck right-click menu */}
       {playerDeckMenu && (
-        <div onClick={() => setPlayerDeckMenu(null)}
-          style={{ position: "fixed", inset: 0, zIndex: 999 }}>
-          <div onClick={e => e.stopPropagation()}
-            style={{
-              position: "fixed", left: playerDeckMenu.x, top: playerDeckMenu.y,
-              background: "#111418", borderRadius: 5,
-              boxShadow: "0 4px 20px #000c", overflow: "hidden",
-              fontFamily: "system-ui, sans-serif", fontSize: 12, minWidth: 120, padding: 3,
-            }}>
-            {[
-              {
-                label: "Recall",
-                action: () => {
-                  const allCards = [...handCards.p1, ...handCards.p2, ...playerDiscard];
-                  const cityCards = allCards.filter(id => id !== "epidemic");
-                  const epidemicCards = allCards.filter(id => id === "epidemic").length;
-                  setPlayerDeck(prev => [...cityCards, ...prev]);
-                  setEpidemicCount(c => c + epidemicCards);
-                  setPlayerFlipped(prev => { const n = new Set(prev); n.delete("epidemic"); return n; });
-                  setPlayerFlipped(new Set());
-                  saveHandCards({ ...handCards, p1: [], p2: [], p3: [], p4: [] });
-                  setPlayerDiscard([]);
-                  setPlayerDeckMenu(null);
-                },
-              },
-              {
-                label: "Shuffle",
-                action: () => {
-                  // Count ALL epidemics: standalone stack + any already embedded in deck
-                  const embeddedEpidemics = playerDeck.filter(id => id === "epidemic").length;
-                  const totalEpidemics = epidemicCount + embeddedEpidemics;
-                  const cityCards = shuffle(playerDeck.filter(id => id !== "epidemic"));
-                  const numPiles = Math.max(1, Math.min(totalEpidemics || 5, 5));
-                  const base = Math.floor(cityCards.length / numPiles);
-                  const extras = cityCards.length % numPiles;
-                  // Build piles (extras piles get one extra card)
-                  const piles: string[][] = [];
-                  let idx = 0;
-                  for (let p = 0; p < numPiles; p++) {
-                    const size = base + (p < extras ? 1 : 0);
-                    piles.push(cityCards.slice(idx, idx + size));
-                    idx += size;
-                  }
-                  // Insert 1 epidemic per pile at a random position, then shuffle the pile
-                  // so the epidemic's position is fully random (prevents it from sitting at top)
-                  for (let p = 0; p < numPiles && p < totalEpidemics; p++) {
-                    const at = Math.floor(Math.random() * (piles[p].length + 1));
-                    piles[p].splice(at, 0, "epidemic");
-                    piles[p] = shuffle(piles[p]);
-                  }
-                  // Sort ascending by size (smaller piles at bottom = drawn last)
-                  piles.sort((a, b) => a.length - b.length);
-                  setPlayerDeck(piles.flat());
-                  setEpidemicCount(0);
-                  setPlayerFlipped(new Set());
-                  setPlayerDeckMenu(null);
-                },
-              },
-            ].map(({ label, action }) => (
-              <div key={label} onClick={action}
-                style={{ padding: "8px 14px", color: "#e8e8e8", cursor: "pointer", borderRadius: 3 }}
-                onMouseEnter={e => { e.currentTarget.style.background = "#23282f"; }}
-                onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
-                {label}
-              </div>
-            ))}
-          </div>
-        </div>
+        <ContextMenu x={playerDeckMenu.x} y={playerDeckMenu.y} minWidth={120}
+          wrapStyle={{ padding: 3 }} onClose={() => setPlayerDeckMenu(null)}>
+          <MenuItem radius={3} onClick={() => {
+            const allCards = [...handCards.p1, ...handCards.p2, ...playerDiscard];
+            const cityCards = allCards.filter(id => id !== "epidemic");
+            const epidemicCards = allCards.filter(id => id === "epidemic").length;
+            setPlayerDeck(prev => [...cityCards, ...prev]);
+            setEpidemicCount(c => c + epidemicCards);
+            setPlayerFlipped(prev => { const n = new Set(prev); n.delete("epidemic"); return n; });
+            setPlayerFlipped(new Set());
+            saveHandCards({ ...handCards, p1: [], p2: [], p3: [], p4: [] });
+            setPlayerDiscard([]);
+            setPlayerDeckMenu(null);
+          }}>
+            Recall
+          </MenuItem>
+          <MenuItem radius={3} onClick={() => {
+            // Count ALL epidemics: standalone stack + any already embedded in deck
+            const embeddedEpidemics = playerDeck.filter(id => id === "epidemic").length;
+            const totalEpidemics = epidemicCount + embeddedEpidemics;
+            const cityCards = shuffle(playerDeck.filter(id => id !== "epidemic"));
+            const numPiles = Math.max(1, Math.min(totalEpidemics || 5, 5));
+            const base = Math.floor(cityCards.length / numPiles);
+            const extras = cityCards.length % numPiles;
+            // Build piles (extras piles get one extra card)
+            const piles: string[][] = [];
+            let idx = 0;
+            for (let p = 0; p < numPiles; p++) {
+              const size = base + (p < extras ? 1 : 0);
+              piles.push(cityCards.slice(idx, idx + size));
+              idx += size;
+            }
+            // Insert 1 epidemic per pile at a random position, then shuffle the pile
+            // so the epidemic's position is fully random (prevents it from sitting at top)
+            for (let p = 0; p < numPiles && p < totalEpidemics; p++) {
+              const at = Math.floor(Math.random() * (piles[p].length + 1));
+              piles[p].splice(at, 0, "epidemic");
+              piles[p] = shuffle(piles[p]);
+            }
+            // Sort ascending by size (smaller piles at bottom = drawn last)
+            piles.sort((a, b) => a.length - b.length);
+            setPlayerDeck(piles.flat());
+            setEpidemicCount(0);
+            setPlayerFlipped(new Set());
+            setPlayerDeckMenu(null);
+          }}>
+            Shuffle
+          </MenuItem>
+        </ContextMenu>
       )}
 
       {/* Player discard card context menu — send to hand */}
       {discardCardMenu && (
-        <div onClick={() => setDiscardCardMenu(null)}
-          style={{ position: "fixed", inset: 0, zIndex: 1100 }}>
-          <div onClick={e => e.stopPropagation()}
-            style={{
-              position: "fixed", left: discardCardMenu.x, top: discardCardMenu.y,
-              background: "#111418", borderRadius: 5,
-              boxShadow: "0 4px 20px #000c", overflow: "hidden",
-              fontFamily: "system-ui, sans-serif", fontSize: 12, minWidth: 110,
-            }}>
-            {discardCardMenu.cityId === "epidemic"
-              ? (
-                <div onClick={() => {
-                  setPlayerDiscard(prev => prev.filter(id => id !== "epidemic"));
-                  setEpidemicCount(c => c + 1);
-                  setPlayerFlipped(prev => { const n = new Set(prev); n.delete("epidemic"); return n; });
-                  setDiscardCardMenu(null);
-                }}
-                  style={{ padding: "8px 14px", color: "#e8e8e8", cursor: "pointer" }}
-                  onMouseEnter={e => { e.currentTarget.style.background = "#23282f"; }}
-                  onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
-                  Return to deck
-                </div>
-              )
-              : (['p1', 'p2'] as const).map(player => (
-              <div key={player}
-                onClick={() => {
-                  const cityId = discardCardMenu.cityId;
-                  setPlayerDiscard(prev => prev.filter(id => id !== cityId));
-                  saveHandCards({ ...handCards, [player]: [...handCards[player], cityId] });
-                  setDiscardCardMenu(null);
-                }}
-                style={{ padding: "8px 14px", color: "#e8e8e8", cursor: "pointer" }}
-                onMouseEnter={e => { e.currentTarget.style.background = "#23282f"; }}
-                onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+        <ContextMenu x={discardCardMenu.x} y={discardCardMenu.y} minWidth={110}
+          overlayZIndex={1100} onClose={() => setDiscardCardMenu(null)}>
+          {discardCardMenu.cityId === "epidemic"
+            ? (
+              <MenuItem onClick={() => {
+                setPlayerDiscard(prev => prev.filter(id => id !== "epidemic"));
+                setEpidemicCount(c => c + 1);
+                setPlayerFlipped(prev => { const n = new Set(prev); n.delete("epidemic"); return n; });
+                setDiscardCardMenu(null);
+              }}>
+                Return to deck
+              </MenuItem>
+            )
+            : (['p1', 'p2'] as const).map(player => (
+              <MenuItem key={player} onClick={() => {
+                const cityId = discardCardMenu.cityId;
+                setPlayerDiscard(prev => prev.filter(id => id !== cityId));
+                saveHandCards({ ...handCards, [player]: [...handCards[player], cityId] });
+                setDiscardCardMenu(null);
+              }}>
                 {player === 'p1' ? 'Player 1' : 'Player 2'}
-              </div>
+              </MenuItem>
             ))}
-          </div>
-        </div>
+        </ContextMenu>
       )}
 
       {/* Charter Flight / Build Research Station popup */}
       {pendingDiscardMenu && (
-        <div onClick={() => setPendingDiscardMenu(null)}
-          style={{ position: "fixed", inset: 0, zIndex: 1100 }}>
-          <div onClick={e => e.stopPropagation()}
-            style={{ position: "fixed", left: pendingDiscardMenu.x, top: pendingDiscardMenu.y,
-              background: "#111418", borderRadius: 5, boxShadow: "0 4px 20px #000c",
-              overflow: "hidden", fontFamily: "system-ui, sans-serif", fontSize: 12, minWidth: 160 }}>
-            {[
-              {
-                label: "Charter Flight",
-                action: () => {
-                  // Discard card, set pendingCharter, highlight all cities
-                  const { player, idx, cityId } = pendingDiscardMenu;
-                  const current = (handCards as Record<string,string[]>)[player] ?? [];
-                  saveHandCards({ ...handCards, [player]: current.filter((_, j) => j !== idx) });
-                  setPlayerDiscard(prev => [...prev, cityId]);
-                  setHighlightCities(CITIES.map(c => c.id));
-                  saveTurnState({ ...turnState, pendingCharter: true });
-                  setPendingDiscardMenu(null);
-                },
-              },
-              {
-                label: `Build Research Station${researchStations.has(pendingDiscardMenu.cityId) ? " (already here)" : researchStations.size >= 6 ? " (pool empty)" : ""}`,
-                disabled: researchStations.has(pendingDiscardMenu.cityId) || researchStations.size >= 6,
-                action: () => {
-                  const { player, idx, cityId } = pendingDiscardMenu;
-                  const current = (handCards as Record<string,string[]>)[player] ?? [];
-                  saveHandCards({ ...handCards, [player]: current.filter((_, j) => j !== idx) });
-                  setPlayerDiscard(prev => [...prev, cityId]);
-                  const next = new Set(researchStations); next.add(cityId);
-                  setResearchStations(next);
-                  localStorage.setItem(LS_RESEARCH_STATIONS, JSON.stringify([...next]));
-                  saveTurnState(consumeAction(turnState));
-                  setPendingDiscardMenu(null);
-                },
-              },
-            ].map(({ label, action, disabled }) => (
-              <div key={label} onClick={disabled ? undefined : action}
-                style={{ padding: "9px 14px", color: disabled ? "#555" : "#e8e8e8", cursor: disabled ? "default" : "pointer" }}
-                onMouseEnter={e => { if (!disabled) e.currentTarget.style.background = "#23282f"; }}
-                onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
-                {label}
-              </div>
-            ))}
-          </div>
-        </div>
+        <ContextMenu x={pendingDiscardMenu.x} y={pendingDiscardMenu.y} minWidth={160}
+          overlayZIndex={1100} onClose={() => setPendingDiscardMenu(null)}>
+          <MenuItem padding="9px 14px" onClick={() => {
+            // Discard card, set pendingCharter, highlight all cities
+            const { player, idx, cityId } = pendingDiscardMenu;
+            const current = (handCards as Record<string,string[]>)[player] ?? [];
+            saveHandCards({ ...handCards, [player]: current.filter((_, j) => j !== idx) });
+            setPlayerDiscard(prev => [...prev, cityId]);
+            setHighlightCities(CITIES.map(c => c.id));
+            saveTurnState({ ...turnState, pendingCharter: true });
+            setPendingDiscardMenu(null);
+          }}>
+            Charter Flight
+          </MenuItem>
+          <MenuItem padding="9px 14px"
+            disabled={researchStations.has(pendingDiscardMenu.cityId) || researchStations.size >= 6}
+            onClick={() => {
+              const { player, idx, cityId } = pendingDiscardMenu;
+              const current = (handCards as Record<string,string[]>)[player] ?? [];
+              saveHandCards({ ...handCards, [player]: current.filter((_, j) => j !== idx) });
+              setPlayerDiscard(prev => [...prev, cityId]);
+              const next = new Set(researchStations); next.add(cityId);
+              setResearchStations(next);
+              localStorage.setItem(LS_RESEARCH_STATIONS, JSON.stringify([...next]));
+              saveTurnState(consumeAction(turnState));
+              setPendingDiscardMenu(null);
+            }}>
+            {`Build Research Station${researchStations.has(pendingDiscardMenu.cityId) ? " (already here)" : researchStations.size >= 6 ? " (pool empty)" : ""}`}
+          </MenuItem>
+        </ContextMenu>
       )}
 
       {/* RS Action menu — Shuttle Flight / Discover Cure */}
       {rsActionMenu && (
-        <div onClick={() => setRsActionMenu(null)}
-          style={{ position: "fixed", inset: 0, zIndex: 1100 }}>
-          <div onClick={e => e.stopPropagation()}
-            style={{ position: "fixed", left: rsActionMenu.x, top: rsActionMenu.y,
-              background: "#111418", borderRadius: 5, boxShadow: "0 4px 20px #000c",
-              overflow: "hidden", fontFamily: "system-ui, sans-serif", fontSize: 12, minWidth: 150 }}>
-            {researchStations.size > 1 && (
-              <div onClick={() => {
-                const otherRS = [...researchStations].filter(id => id !== currentPlayerCityId);
-                setHighlightCities(otherRS);
-                saveTurnState({ ...turnState, pendingShuttle: true });
+        <ContextMenu x={rsActionMenu.x} y={rsActionMenu.y} minWidth={150}
+          overlayZIndex={1100} onClose={() => setRsActionMenu(null)}>
+          {researchStations.size > 1 && (
+            <MenuItem padding="9px 14px" onClick={() => {
+              const otherRS = [...researchStations].filter(id => id !== currentPlayerCityId);
+              setHighlightCities(otherRS);
+              saveTurnState({ ...turnState, pendingShuttle: true });
+              setRsActionMenu(null);
+            }}>
+              Shuttle Flight
+            </MenuItem>
+          )}
+          {(() => {
+            const hand = currentPlayerHand();
+            const cureColor = DISEASE_COLORS.find(col => {
+              const ci = COLOR_TO_CURE_IDX[col]; if (ci === undefined || cured[ci]) return false;
+              return hand.filter(id => CITIES.find(c => c.id === id)?.color === col).length >= cureThreshold;
+            });
+            if (!cureColor) return null;
+            return (
+              <MenuItem padding="9px 14px" onClick={() => {
+                setCureSelecting(true); setSelectedHandCards([]);
                 setRsActionMenu(null);
-              }}
-                style={{ padding: "9px 14px", color: "#e8e8e8", cursor: "pointer" }}
-                onMouseEnter={e => { e.currentTarget.style.background = "#23282f"; }}
-                onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
-                Shuttle Flight
-              </div>
-            )}
-            {(() => {
-              const hand = currentPlayerHand();
-              const cureColor = DISEASE_COLORS.find(col => {
-                const ci = COLOR_TO_CURE_IDX[col]; if (ci === undefined || cured[ci]) return false;
-                return hand.filter(id => CITIES.find(c => c.id === id)?.color === col).length >= cureThreshold;
-              });
-              if (!cureColor) return null;
-              return (
-                <div onClick={() => {
-                  setCureSelecting(true); setSelectedHandCards([]);
-                  setRsActionMenu(null);
-                }}
-                  style={{ padding: "9px 14px", color: "#e8e8e8", cursor: "pointer" }}
-                  onMouseEnter={e => { e.currentTarget.style.background = "#23282f"; }}
-                  onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
-                  Discover Cure
-                </div>
-              );
-            })()}
-          </div>
-        </div>
+              }}>
+                Discover Cure
+              </MenuItem>
+            );
+          })()}
+        </ContextMenu>
       )}
 
       {/* Win / Lose overlay */}
