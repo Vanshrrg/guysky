@@ -1,8 +1,5 @@
 import { useRef, useState, useEffect } from "react";
 import boardArt from "../../object/newboard2.png";
-import outbreakSrc from "../../object/outbreak marker.png";
-import cureSrc from "../../object/cure marker.png";
-import infectionRateSrc from "../../object/infection rate marker.png";
 import infectionCardBackSrc from "../../object/infectioncardback.png";
 import playerCardBackSrc from "../../object/playercard back.png";
 import epidemicCardSrc from "../../object/epidemic.png";
@@ -47,23 +44,8 @@ import {
   loadCard, loadTrackPos, loadHandCards, loadResearchStations, loadResearchPos,
   loadPanicLevels, loadHcmc, loadTurnState, loadPlayerCities, clearGameState,
 } from "./boardStorage";
+import { MARKERS, CURE_INDICES, COLOR_TO_CURE_IDX, loadMarker, loadCured, loadEradicated } from "./boardMarkers";
 
-const MARKERS: {
-  key: string; src: string; alt: string; def: MarkerState; tintColor?: string;
-  curePos?: { x: number; y: number }; fixed?: boolean;
-}[] = [
-  { key: "epidemic.marker.outbreak.v2",      src: outbreakSrc,      alt: "Outbreak marker",         def: { x: 3.87,  y: 41.84, w: 2.20, rot: -45 }, fixed: true },
-  { key: "epidemic.marker.cure.v2",          src: cureSrc,          alt: "Cure marker",             def: { x: 8.97,  y: 96.60, w: 2.34, rot: 0 }, curePos: { x: 9.27,  y: 72.82 }, fixed: true },
-  { key: "epidemic.marker.infectionrate.v2", src: infectionRateSrc, alt: "Infection rate marker",   def: { x: 72.72, y: 20.62, w: 2.79, rot: 0 }, fixed: true },
-  { key: "epidemic.marker.cure-yellow.v2",   src: cureSrc,          alt: "Cure marker (yellow)",    def: { x: 3.21,  y: 96.42, w: 2.34, rot: 0 }, tintColor: "#FFFA73", curePos: { x: 3.30,  y: 72.91 }, fixed: true },
-  { key: "epidemic.marker.cure-darkblue.v2", src: cureSrc,          alt: "Cure marker (dark blue)", def: { x: 14.77, y: 96.73, w: 2.34, rot: 0 }, tintColor: "#0A00A1", curePos: { x: 14.82, y: 72.73 }, fixed: true },
-  { key: "epidemic.marker.cure-black.v2",    src: cureSrc,          alt: "Cure marker (black)",     def: { x: 20.55, y: 96.78, w: 2.34, rot: 0 }, tintColor: "#1a1a1a", curePos: { x: 20.52, y: 72.82 }, fixed: true },
-];
-
-const CURE_INDICES = MARKERS.map((m, i) => m.curePos ? i : -1).filter(i => i >= 0);
-// Maps DiseaseColor → index in CURE_INDICES (ci)
-// Order mirrors MARKERS: ci0=red(no tint), ci1=yellow, ci2=blue, ci3=black
-const COLOR_TO_CURE_IDX: Record<string, number> = { red: 0, yellow: 1, blue: 2, black: 3 };
 const COLOR_TO_CUBE: Record<string, string> = {
   blue: "#0A00A1", yellow: "#FFFA73", black: "#1a1a1a", red: "#cc1111",
 };
@@ -90,24 +72,6 @@ const FUND_IMGS: Record<string, string> = {
 };
 
 const INFECTION_RATE_VALUES = [2, 2, 2, 3, 3, 4, 4];
-
-function loadMarker(key: string, def: MarkerState): MarkerState {
-  try { const r = localStorage.getItem(key); if (r) return { rot: 0, ...JSON.parse(r) }; }
-  catch { /* ignore */ }
-  return def;
-}
-
-function loadCured(): boolean[] {
-  try { const r = localStorage.getItem(LS_CURED); if (r) return JSON.parse(r); }
-  catch { /* ignore */ }
-  return CURE_INDICES.map(() => false);
-}
-
-function loadEradicated(): boolean[] {
-  try { const r = localStorage.getItem(LS_ERADICATED); if (r) return JSON.parse(r); }
-  catch { /* ignore */ }
-  return CURE_INDICES.map(() => false);
-}
 
 const SCENARIO_LABELS: Record<string, string> = {
   board: "Board",
