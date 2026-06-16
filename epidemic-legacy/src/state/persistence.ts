@@ -47,6 +47,7 @@ export function load(): SaveData | null {
 /** Wipe the persisted save. */
 export function reset(): void {
   localStorage.removeItem(STORAGE_KEY);
+  localStorage.removeItem("epidemic.hand-cards.v1");
 }
 
 /** Serialize a save blob to pretty JSON for download/copy. */

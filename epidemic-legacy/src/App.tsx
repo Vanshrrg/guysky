@@ -7,7 +7,7 @@ import { FundPhase, PreGamePhase, type PreGameSetup } from "./board/PreGamePhase
 const SCENARIOS = [
   { id: "board",  label: "Board",   built: true },
   { id: "month0", label: "Month 0", built: true },
-  { id: "jan",    label: "January",   built: false },
+  { id: "jan",    label: "January",   built: true },
   { id: "feb",    label: "February",  built: false },
   { id: "mar",    label: "March",     built: false },
   { id: "apr",    label: "April",     built: false },
@@ -21,8 +21,8 @@ const SCENARIOS = [
   { id: "dec",    label: "December",  built: false },
 ];
 
-// infection → fund → deal → roles ⇄ roles-hidden → game
-type Phase = "infection" | "fund" | "deal" | "roles" | "roles-hidden" | "game";
+// infection → fund ⇄ fund-view → deal → roles ⇄ roles-hidden → game
+type Phase = "infection" | "fund" | "fund-view" | "deal" | "roles" | "roles-hidden" | "game";
 
 function initialPhase(scenarioId: string): Phase {
   return scenarioId === "month0" ? "infection" : "fund";
@@ -112,10 +112,30 @@ export default function App() {
             onMainMenu={handleMainMenu}
           />
           {phase === "fund" && (
-            <FundPhase onConfirm={handleFundConfirm} onViewBoard={() => setPhase("infection")} />
+            <FundPhase onConfirm={handleFundConfirm} onViewBoard={() => setPhase("fund-view")} />
+          )}
+          {phase === "fund-view" && (
+            <div
+              onClick={() => setPhase("fund")}
+              style={{
+                position: "absolute", inset: 0, zIndex: 500,
+                cursor: "pointer",
+                display: "flex", alignItems: "flex-start", justifyContent: "center",
+                paddingTop: 12,
+              }}
+            >
+              <div style={{
+                background: "rgba(10,20,40,0.82)", border: "1px solid #3a6aaa",
+                borderRadius: 8, padding: "8px 20px", color: "#7bc4ff",
+                fontSize: 13, fontFamily: "system-ui, sans-serif", pointerEvents: "none",
+                userSelect: "none",
+              }}>
+                Click anywhere to return to Event Cards
+              </div>
+            </div>
           )}
           {phase === "roles" && (
-            <PreGamePhase playerCount={playerCount} onBegin={handleSetup} onViewBoard={handleViewBoard} fundingCards={fundingCards} />
+            <PreGamePhase playerCount={playerCount} onBegin={handleSetup} onViewBoard={handleViewBoard} fundingCards={fundingCards} scenario={scenario} />
           )}
         </div>
 

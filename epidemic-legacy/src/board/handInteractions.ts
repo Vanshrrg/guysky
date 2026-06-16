@@ -32,12 +32,20 @@ export interface DeckDrawCtx {
   currentPlayerKey: string;
   onChooseRoles: ((playerCount: number) => void) | undefined; // truthy ⇒ deal phase
   maxDealTargetIdx: number;
+  dealRequiredCards: number;
+  dealCounts: number[];
   setPlayerDrag: (d: { cityId: string; x: number; y: number } | null) => void;
   setPlayerDeck: React.Dispatch<React.SetStateAction<string[]>>;
   setPlayerDiscard: React.Dispatch<React.SetStateAction<string[]>>;
   setPlayerFlipped: React.Dispatch<React.SetStateAction<Set<string>>>;
   saveTurnState: (next: TurnStateData) => void;
   saveHandCards: (next: HandCards) => void;
+  /** Optional: called when a face-down card is tapped (flip to front) */
+  onFlip?: (cityId: string) => void;
+  /** Optional: called when a face-up card is tapped (flip back to back); responsible for delaying state removal */
+  onUnflip?: (cityId: string) => void;
+  /** Called when an epidemic card is drawn from the player deck */
+  onEpidemic?: () => void;
 }
 
 /**
@@ -65,44 +73,64 @@ export function makePlayerDeckDraw(ctx: DeckDrawCtx, cityId: string, faceUp: boo
     const onUp = (ev: PointerEvent) => {
       el.removeEventListener("pointermove", onMove as EventListener);
       el.removeEventListener("pointerup", onUp);
-      ctx.setPlayerDrag(null);
+      const inDrawPhase = !!ctx.setup && ctx.turnState.phase === "draw";
+      const isEpidemic = cityId === "epidemic";
+
       if (!moved) {
-        // tap = flip
-        ctx.setPlayerFlipped(prev => {
-          const n = new Set(prev);
-          if (n.has(cityId)) n.delete(cityId); else n.add(cityId);
-          return n;
-        });
+        ctx.setPlayerDrag(null);
+        // tap = flip; in draw phase block once both draws are committed
+        if (inDrawPhase && ctx.turnState.drawCount >= 2) return;
+        if (!faceUp) {
+          ctx.onFlip?.(cityId);
+          ctx.setPlayerFlipped(prev => { const n = new Set(prev); n.add(cityId); return n; });
+        } else {
+          // face-up → face-down: delegate timing to onUnflip (it removes from set after animation)
+          if (ctx.onUnflip) {
+            ctx.onUnflip(cityId);
+          } else {
+            ctx.setPlayerFlipped(prev => { const n = new Set(prev); n.delete(cityId); return n; });
+          }
+        }
         return;
       }
-      // dragged — allow drop to hand (face-down or face-up) or discard (face-up only)
+
+      // dragged
       const pos = toPct(ev);
       const nearDiscard = Math.abs(pos.x - ctx.cardPlayerDiscard.x) < 10 && Math.abs(pos.y - ctx.cardPlayerDiscard.y) < 10;
-      // Detect which of the 4 hand areas received the drop (2×2 layout, split at y=51)
       const leftSide = pos.x < 5; const rightSide = pos.x > 95; const topHalf = pos.y < 51;
       const droppedHand: string | null = leftSide ? (topHalf ? 'p1' : 'p3') : rightSide ? (topHalf ? 'p2' : 'p4') : null;
-      const inDrawPhase = ctx.setup && ctx.turnState.phase === "draw" && faceUp;
+
       const completeOneDraw = () => {
         if (!inDrawPhase) return;
         const newCount = ctx.turnState.drawCount + 1;
+        const hand = (ctx.handCards as Record<string,string[]>)[ctx.currentPlayerKey] ?? [];
+        const handAfter = hand.length + (!isEpidemic ? 1 : 0);
         if (newCount >= 2) {
-          // Check hand limit
-          const hand = (ctx.handCards as Record<string,string[]>)[ctx.currentPlayerKey] ?? [];
-          const phase: TurnPhase = (hand.length + (cityId !== "epidemic" ? 1 : 0)) > 7 ? "discard" : "infect";
+          // Both cards drawn — discard if over 7, else infect
+          const phase: TurnPhase = handAfter > 7 ? "discard" : "infect";
           ctx.saveTurnState({ ...ctx.turnState, drawCount: newCount, phase, infectCount: 0 });
         } else {
-          ctx.saveTurnState({ ...ctx.turnState, drawCount: newCount });
+          // First card drawn — must discard before drawing 2nd if already over 7
+          const phase: TurnPhase = handAfter > 7 ? "discard" : "draw";
+          ctx.saveTurnState({ ...ctx.turnState, drawCount: newCount, phase });
         }
       };
+
       if (faceUp && nearDiscard && !ctx.onChooseRoles) {
+        // Draw phase: normal cards must go to hand — only epidemic allowed to discard
+        if (inDrawPhase && !isEpidemic) { ctx.setPlayerDrag(null); return; }
+        ctx.setPlayerDrag(null);
         ctx.setPlayerDeck(deck.slice(0, -1)); ctx.setPlayerDiscard([...disc, cityId]);
         ctx.setPlayerFlipped(prev => { const n = new Set(prev); n.delete(cityId); return n; });
-        if (inDrawPhase && cityId === "epidemic") completeOneDraw(); // epidemic dragged to discard counts
-      } else if (droppedHand) {
-        // In deal phase: enforce deal order — cannot skip a player
+        if (inDrawPhase && isEpidemic) { ctx.onEpidemic?.(); completeOneDraw(); }
+      } else if (droppedHand && faceUp) {
+        // Draw phase: epidemic must go to discard — only normal cards allowed to hand
+        if (inDrawPhase && isEpidemic) { ctx.setPlayerDrag(null); return; }
+        ctx.setPlayerDrag(null);
         if (ctx.onChooseRoles) {
           const playerIdx = ['p1','p2','p3','p4'].indexOf(droppedHand);
-          if (playerIdx > ctx.maxDealTargetIdx) return; // bounce — must deal to lower-numbered player first
+          if (playerIdx > ctx.maxDealTargetIdx) return;
+          if ((ctx.dealCounts[playerIdx] ?? 0) >= ctx.dealRequiredCards) return;
         }
         const player = inDrawPhase ? ctx.currentPlayerKey : droppedHand;
         ctx.setPlayerDeck(deck.slice(0, -1));
@@ -110,6 +138,20 @@ export function makePlayerDeckDraw(ctx: DeckDrawCtx, cityId: string, faceUp: boo
         const dest = (ctx.handCards as Record<string,string[]>)[player] ?? [];
         ctx.saveHandCards({ ...ctx.handCards, [player]: [...dest, cityId] });
         completeOneDraw();
+      } else if (droppedHand && !faceUp && !inDrawPhase) {
+        // Deal phase only: face-down drag straight to hand
+        ctx.setPlayerDrag(null);
+        if (ctx.onChooseRoles) {
+          const playerIdx = ['p1','p2','p3','p4'].indexOf(droppedHand);
+          if (playerIdx > ctx.maxDealTargetIdx) return;
+          if ((ctx.dealCounts[playerIdx] ?? 0) >= ctx.dealRequiredCards) return;
+        }
+        ctx.setPlayerDeck(deck.slice(0, -1));
+        ctx.setPlayerFlipped(prev => { const n = new Set(prev); n.delete(cityId); return n; });
+        const dest = (ctx.handCards as Record<string,string[]>)[droppedHand] ?? [];
+        ctx.saveHandCards({ ...ctx.handCards, [droppedHand]: [...dest, cityId] });
+      } else {
+        ctx.setPlayerDrag(null);
       }
     };
     el.addEventListener("pointermove", onMove as EventListener);
@@ -133,7 +175,7 @@ export interface HandCardCtx {
   eventMode: string | null;
   pendingEventCard: { player: string; idx: number; cardId: string } | null;
   playerCities: string[];
-  playFundCard: (playerKey: string, cardIdx: number, cardId: string) => void;
+  onFundCardDiscard?: (cardId: string, player: string, idx: number) => void;
   handStackOffset: (area: HandArea, count: number) => number;
   snapPawnToCity: (playerKey: string, cityId: string) => void;
   savePlayerCities: (next: string[]) => void;
@@ -142,18 +184,22 @@ export interface HandCardCtx {
   consumeAction: (ts: TurnStateData) => TurnStateData;
   setHandDrag: (d: { player: string; idx: number; x: number; y: number } | null) => void;
   setHandHover: (h: { player: string; idx: number; x: number; y: number } | null) => void;
+  flexibleAidSelected: string[];
   setFlexibleAidSelected: React.Dispatch<React.SetStateAction<string[]>>;
   setSelectedHandCards: React.Dispatch<React.SetStateAction<string[]>>;
   setPlayerDiscard: React.Dispatch<React.SetStateAction<string[]>>;
   setPendingDiscardMenu: (m: { cityId: string; player: string; idx: number; x: number; y: number } | null) => void;
+  canPlayFund?: (cardId: string) => boolean;
+  onFlexibleAidComplete?: () => void;
 }
 
 /**
- * Hand-card pointer handler. Tap to play a fund card, toggle a Flexible-Aid
- * pick, or toggle a cure selection. Drag to discard (with game-phase
- * interception for Direct/Charter Flight & Build), to a teammate's hand
- * (Share Knowledge / Researcher take), to the active player's own hand (take),
- * or reorder within the same hand.
+ * Hand-card pointer handler. Tap to toggle a cure selection. Drag fund cards
+ * to the discard pile to activate them (actions phase or draw phase before any
+ * cards drawn). Drag city cards to discard (with game-phase interception for
+ * Direct/Charter Flight & Build), to a teammate's hand (Share Knowledge /
+ * Researcher take), to the active player's own hand (take), or reorder within
+ * the same hand.
  */
 export function makeHandCardPointerDown(
   ctx: HandCardCtx,
@@ -162,15 +208,25 @@ export function makeHandCardPointerDown(
   const { player, idx: i, cityId, isFundingHand } = args;
   return (e: React.PointerEvent<HTMLDivElement>) => {
     if (ctx.calibrating) return;
-    // In game phase: only current player can drag their own cards
-    if (ctx.setup && player !== ctx.currentPlayerKey) {
-      // Active player may take a card FROM a teammate's hand during their actions:
-      //  • from a Researcher: any card (Researcher special)
-      //  • from anyone else: only the card matching the active player's current city
-      const teammateRole = ctx.setup.playerOrder[(['p1','p2','p3','p4'] as const).indexOf(player as 'p1'|'p2'|'p3'|'p4')]?.roleId;
-      const isResearcher = teammateRole === 'researcher';
-      const isMatchingTake = cityId === ctx.currentPlayerCityId;
-      if (ctx.turnState.phase !== "actions" || (!isResearcher && !isMatchingTake)) return;
+    // Fund event cards are playable from any player's hand at any time — skip turn/phase checks
+    if (!isFundingHand) {
+      // In game phase: only current player can drag their own city/epidemic cards
+      if (ctx.setup && player !== ctx.currentPlayerKey) {
+        // Exception: designated player must discard after receiving a card over limit
+        if (ctx.turnState.phase === "discard-action" && ctx.turnState.discardPlayer === player) {
+          // allow fall-through so they can drag to discard
+        } else {
+          // Active player may take a card FROM a teammate's hand during their actions:
+          //  • from a Researcher: any card (Researcher special)
+          //  • from anyone else: only the card matching the active player's current city
+          const teammateRole = ctx.setup.playerOrder[(['p1','p2','p3','p4'] as const).indexOf(player as 'p1'|'p2'|'p3'|'p4')]?.roleId;
+          const isResearcher = teammateRole === 'researcher';
+          const isMatchingTake = cityId === ctx.currentPlayerCityId;
+          // Allow dragging any city card to the discard during flexible-aid mode (any phase)
+          const isFlexibleAidDrag = ctx.eventMode === 'flexible-aid';
+          if (!isFlexibleAidDrag && (ctx.turnState.phase !== "actions" || (!isResearcher && !isMatchingTake))) return;
+        }
+      }
     }
     e.stopPropagation(); e.preventDefault();
     const el = e.currentTarget; el.setPointerCapture(e.pointerId);
@@ -187,22 +243,6 @@ export function makeHandCardPointerDown(
       el.removeEventListener("pointerup", onUp);
       ctx.setHandDrag(null);
       if (!moved) {
-        // Tap: play fund event card (any phase, hand only)
-        if (ctx.setup && isFundingHand) {
-          ctx.playFundCard(player, i, cityId);
-          return;
-        }
-        // Tap: select city cards for Flexible Aid
-        if (ctx.setup && ctx.eventMode === 'flexible-aid' && player === ctx.pendingEventCard?.player && !isFundingHand && cityId !== 'epidemic') {
-          const city = CITIES.find(c => c.id === cityId);
-          if (city) {
-            ctx.setFlexibleAidSelected(prev =>
-              prev.includes(cityId) ? prev.filter(id => id !== cityId)
-              : prev.length < 3 ? [...prev, cityId] : prev
-            );
-          }
-          return;
-        }
         // Tap: toggle card selection for cure (game phase only)
         if (ctx.setup && ctx.cureSelecting) {
           ctx.setSelectedHandCards(prev =>
@@ -222,11 +262,41 @@ export function makeHandCardPointerDown(
         Math.abs(pos.y - HAND_AREAS[pk].y) < 30
       );
 
+      const isDiscardPhase = ctx.turnState.phase === 'discard' || ctx.turnState.phase === 'discard-action';
+
+      // Flexible Aid selection: city cards only (not fund/epidemic) — go to graveyard immediately; auto-exits at 3.
+      if (nearDiscard && ctx.setup && ctx.eventMode === 'flexible-aid' && !isFundingHand && cityId !== 'epidemic') {
+        if (ctx.flexibleAidSelected.length < 3) {
+          ctx.saveHandCards({ ...ctx.handCards, [player]: current.filter((_, j) => j !== i) });
+          ctx.setPlayerDiscard(prev => [...prev, cityId]);
+          const next = [...ctx.flexibleAidSelected, cityId];
+          ctx.setFlexibleAidSelected(() => next);
+          if (next.length >= 3) ctx.onFlexibleAidComplete?.();
+        }
+        return;
+      }
+
+      // Per-card phase gates:
+      // fund7 (Borrowed Time): blocked during draw(1+) and infect — only actions, draw(0), discard phases
+      // fund8 (Flexible Aid): only current player can activate; phase check in canPlayFund
+      // all others: playable at any phase by any player
+      const fundPhaseOk = cityId === 'fund7'
+        ? (ctx.turnState.phase === 'actions' || (ctx.turnState.phase === 'draw' && ctx.turnState.drawCount === 0) || isDiscardPhase)
+        : true;
+
+      // Fund event cards: drag to discard to activate — fund8 now goes to graveyard immediately like others
+      if (nearDiscard && ctx.setup && isFundingHand && cityId !== 'epidemic' && fundPhaseOk) {
+        if (ctx.canPlayFund && !ctx.canPlayFund(cityId)) return;
+        ctx.saveHandCards({ ...ctx.handCards, [player]: current.filter((_, j) => j !== i) });
+        ctx.setPlayerDiscard(prev => [...prev, cityId]);
+        ctx.onFundCardDiscard?.(cityId, player, i);
+        return;
+      }
+
       if (nearDiscard && ctx.setup && ctx.turnState.phase === "actions") {
-        // Game phase: intercept discard for flight/build actions
-        const isFundCard = isFundingHand;
+        // Game phase: intercept discard for flight/build/direct-flight actions
         const isEpidemicCard = cityId === "epidemic";
-        if (!isFundCard && !isEpidemicCard) {
+        if (!isEpidemicCard) {
           if (cityId === ctx.currentPlayerCityId) {
             // Charter Flight or Build Research Station — show popup
             ctx.setPendingDiscardMenu({ cityId, player, idx: i, x: ev.clientX, y: ev.clientY });
@@ -244,7 +314,14 @@ export function makeHandCardPointerDown(
             }
           }
         }
-        // Fund/epidemic card: plain discard
+        // Epidemic card: plain discard
+        ctx.saveHandCards({ ...ctx.handCards, [player]: current.filter((_, j) => j !== i) });
+        ctx.setPlayerDiscard(prev => [...prev, cityId]);
+        return;
+      }
+
+      if (nearDiscard && ctx.setup && isDiscardPhase) {
+        // Hand-limit phase: plain discard for city/epidemic cards (fund cards handled above)
         ctx.saveHandCards({ ...ctx.handCards, [player]: current.filter((_, j) => j !== i) });
         ctx.setPlayerDiscard(prev => [...prev, cityId]);
         return;
@@ -275,14 +352,23 @@ export function makeHandCardPointerDown(
         }
         if (otherPlayer) {
           // Share Knowledge: valid if both players in same city and card matches giver's city
+          // Researcher exception: can give any card (not just the matching city card)
           const giverCity = ctx.currentPlayerCityId;
+          const giverIdx = (['p1','p2','p3','p4'] as const).indexOf(player as 'p1'|'p2'|'p3'|'p4');
+          const giverRole = ctx.setup.playerOrder[giverIdx]?.roleId;
           const receiverIdx = (['p1','p2','p3','p4'] as const).indexOf(otherPlayer as 'p1'|'p2'|'p3'|'p4');
           const receiverCity = ctx.playerCities[receiverIdx] ?? "atlanta";
-          const valid = giverCity === receiverCity && cityId === giverCity;
+          const valid = giverCity === receiverCity && (cityId === giverCity || giverRole === 'researcher');
           if (valid) {
             const receiverCards = (ctx.handCards as Record<string,string[]>)[otherPlayer] ?? [];
-            ctx.saveHandCards({ ...ctx.handCards, [player]: current.filter((_, j) => j !== i), [otherPlayer]: [...receiverCards, cityId] });
-            ctx.saveTurnState(ctx.consumeAction(ctx.turnState));
+            const newReceiverCards = [...receiverCards, cityId];
+            ctx.saveHandCards({ ...ctx.handCards, [player]: current.filter((_, j) => j !== i), [otherPlayer]: newReceiverCards });
+            const afterAction = ctx.consumeAction(ctx.turnState);
+            if (newReceiverCards.length > 7) {
+              ctx.saveTurnState({ ...afterAction, phase: "discard-action", discardPlayer: otherPlayer });
+            } else {
+              ctx.saveTurnState(afterAction);
+            }
             return;
           }
           return;

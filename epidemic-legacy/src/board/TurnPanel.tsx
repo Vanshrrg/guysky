@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, memo } from "react";
 import { CITIES } from "./cities";
 import { COLOR_TO_CURE_IDX } from "./boardMarkers";
 import type { HandCards, TurnStateData } from "./boardStorage";
@@ -25,10 +25,10 @@ const ROLE_NAMES: Record<string, string> = {
  * confirm, Flexible Aid single-write, event cancel-restore) live here and
  * drive the parent's state through the threaded setters.
  */
-export function TurnPanel({
+export const TurnPanel = memo(function TurnPanel({
   setup, turnState, playerColors, currentPlayerKey, infectionPos,
-  cureSelecting, selectedHandCards, cured, roleId, dispatcherTarget, quietNight,
-  eventMode, flexibleAidSelected, pendingEventCard, handCards, cureThreshold, cubeSnapshotRef,
+  cureSelecting, selectedHandCards, cured, roleId, quietNight,
+  eventMode, handCards, cureThreshold, cubeSnapshotRef,
   currentPlayerHand, saveHandCards, setPlayerDiscard, setCured, setCureSelecting,
   setSelectedHandCards, saveTurnState, consumeAction, advanceTurn, setQuietNight,
   saveCityInfection, setEventMode, setHighlightCities, setAirliftPawn,
@@ -43,15 +43,12 @@ export function TurnPanel({
   selectedHandCards: string[];
   cured: boolean[];
   roleId: string | null;
-  dispatcherTarget: string | null;
   quietNight: boolean;
   eventMode: EventMode;
-  flexibleAidSelected: string[];
-  pendingEventCard: { player: string; idx: number; cardId: string } | null;
   handCards: HandCards;
   cureThreshold: number;
   cubeSnapshotRef: React.MutableRefObject<CityInfectionMap | null>;
-  currentPlayerHand: () => string[];
+  currentPlayerHand: string[];
   saveHandCards: (next: HandCards) => void;
   setPlayerDiscard: React.Dispatch<React.SetStateAction<string[]>>;
   setCured: React.Dispatch<React.SetStateAction<boolean[]>>;
@@ -79,7 +76,7 @@ export function TurnPanel({
   let instruction = "";
   if (turnState.phase === "actions") {
     if (turnState.pendingCharter) instruction = "Charter Flight — click any city";
-    else if (turnState.pendingShuttle) instruction = "Shuttle Flight — click a highlighted station";
+    else if (turnState.pendingShuttle) instruction = "Shuttle Flight — drag your pawn to another research station";
     else if (cureSelecting) {
       const canConfirm = (() => {
         for (const col of DISEASE_COLORS) {
@@ -94,15 +91,18 @@ export function TurnPanel({
         ? `Select ${cureThreshold} ${canConfirm} cards then confirm (${selectedHandCards.length} selected)`
         : `Select ${cureThreshold} cards of the same color (${selectedHandCards.length} selected)`;
     }
-    else if (roleId === 'dispatcher' && dispatcherTarget) instruction = "Click a highlighted city to move the selected pawn there";
-    else if (roleId === 'dispatcher') instruction = "Drag any pawn to a neighbor, or tap a pawn to transport to a teammate";
+    else if (roleId === 'dispatcher') instruction = "Drag any pawn to a neighbor, or drag to a teammate's city to transport";
     else instruction = "Drag your pawn or use a card action";
   } else if (turnState.phase === "draw") {
     instruction = `Draw 2 player cards (${turnState.drawCount}/2) — flip then drag to hand`;
   } else if (turnState.phase === "discard") {
     instruction = "Hand limit — drag excess cards to discard (keep 7)";
+  } else if (turnState.phase === "discard-action") {
+    const who = turnState.discardPlayer ? setup.playerOrder[(['p1','p2','p3','p4'] as const).indexOf(turnState.discardPlayer as 'p1'|'p2'|'p3'|'p4')]?.roleId : null;
+    const name = who ? (ROLE_NAMES[who] ?? who) : "Teammate";
+    instruction = `${name} over hand limit — drag excess card to discard (keep 7)`;
   } else if (turnState.phase === "infect") {
-    instruction = infectionDone ? "All infection cards drawn" : `Draw ${infectTarget} infection cards (${turnState.infectCount}/${infectTarget})`;
+    instruction = infectionDone ? "All cities infected" : `Infect ${infectTarget} ${infectTarget === 1 ? "city" : "cities"} (${turnState.infectCount}/${infectTarget})`;
   }
   const canConfirmCure = (() => {
     if (!cureSelecting) return null;
@@ -114,6 +114,21 @@ export function TurnPanel({
     }
     return null;
   })();
+
+  // Auto-complete cure when enough cards are selected
+  useEffect(() => {
+    if (!canConfirmCure) return;
+    const sel = selectedHandCards.filter(id => CITIES.find(c => c.id === id)?.color === canConfirmCure).slice(0, cureThreshold);
+    const hand = currentPlayerHand;
+    const newHand = hand.filter(id => !sel.includes(id));
+    saveHandCards({ ...handCards, [currentPlayerKey]: newHand });
+    setPlayerDiscard(prev => [...prev, ...sel]);
+    const ci = COLOR_TO_CURE_IDX[canConfirmCure]!;
+    setCured(prev => { const n = [...prev]; n[ci] = true; return n; });
+    setCureSelecting(false);
+    setSelectedHandCards([]);
+    saveTurnState(consumeAction(turnState));
+  }, [canConfirmCure]);
 
   return (
     <div style={{
@@ -138,22 +153,6 @@ export function TurnPanel({
         </div>
       )}
       <span style={{ color: "#8ab", flex: 1 }}>{instruction}</span>
-      {cureSelecting && canConfirmCure && (
-        <button onClick={() => {
-          const sel5 = selectedHandCards.filter(id => CITIES.find(c => c.id === id)?.color === canConfirmCure).slice(0, cureThreshold);
-          const hand = currentPlayerHand();
-          const newHand = hand.filter(id => !sel5.includes(id));
-          saveHandCards({ ...handCards, [currentPlayerKey]: newHand });
-          setPlayerDiscard(prev => [...prev, ...sel5]);
-          const ci = COLOR_TO_CURE_IDX[canConfirmCure]!;
-          setCured(prev => { const n = [...prev]; n[ci] = true; return n; });
-          setCureSelecting(false); setSelectedHandCards([]);
-          saveTurnState(consumeAction(turnState));
-        }} style={{
-          padding: "3px 10px", fontSize: 11, borderRadius: 4, cursor: "pointer",
-          background: "#1a3a1a", border: "1px solid #4a9a4a", color: "#88dd88",
-        }}>Confirm Cure</button>
-      )}
       {cureSelecting && (
         <button onClick={() => { setCureSelecting(false); setSelectedHandCards([]); }}
           style={{ padding: "3px 8px", fontSize: 11, borderRadius: 4, cursor: "pointer", background: "#2a1a1a", border: "1px solid #884444", color: "#cc8888" }}>
@@ -166,7 +165,7 @@ export function TurnPanel({
           Skip Turn
         </button>
       )}
-      {turnState.phase === "discard" && currentPlayerHand().length <= 7 && (
+      {turnState.phase === "discard" && currentPlayerHand.length <= 7 && (
         <button onClick={() => saveTurnState({ ...turnState, phase: "infect", infectCount: 0 })}
           style={{ padding: "3px 10px", fontSize: 11, borderRadius: 4, cursor: "pointer", background: "#1a3a1a", border: "1px solid #4a9a4a", color: "#88dd88" }}>
           Continue →
@@ -184,27 +183,6 @@ export function TurnPanel({
           Skip Infect Cities →
         </button>
       )}
-      {eventMode === 'flexible-aid' && flexibleAidSelected.length >= 1 && pendingEventCard && (
-        <button onClick={() => {
-          // Single hand update removes BOTH the selected city cards AND the
-          // fund (event) card. Doing this in one saveHandCards avoids the
-          // stale-closure race where a separate resolveEventCard call would
-          // re-read the pre-update hand and clobber the city-card removal.
-          const current = (handCards as Record<string,string[]>)[pendingEventCard.player] ?? [];
-          let removedEvent = false;
-          const newHand = current.filter(id => {
-            if (flexibleAidSelected.includes(id)) return false;
-            if (!removedEvent && id === pendingEventCard.cardId) { removedEvent = true; return false; }
-            return true;
-          });
-          saveHandCards({ ...handCards, [pendingEventCard.player]: newHand });
-          setPlayerDiscard(prev => [...prev, ...flexibleAidSelected, pendingEventCard.cardId]);
-          saveTurnState({ ...turnState, actionsRemaining: turnState.actionsRemaining + flexibleAidSelected.length });
-          setEventMode(null); setFlexibleAidSelected([]); setPendingEventCard(null);
-        }} style={{ padding: "3px 10px", fontSize: 11, borderRadius: 4, cursor: "pointer", background: "#1a3a1a", border: "1px solid #4a9a4a", color: "#88dd88" }}>
-          Confirm (+{flexibleAidSelected.length})
-        </button>
-      )}
       {(eventMode === 'remote-treatment' || eventMode === 'govt-grant' || eventMode === 'airlift' || eventMode === 'flexible-aid' || eventMode === 'resilient-pop') && (
         <button onClick={() => {
           // Restore any cubes already removed by an in-progress Remote Treatment.
@@ -219,4 +197,4 @@ export function TurnPanel({
       )}
     </div>
   );
-}
+});

@@ -12,9 +12,9 @@ export function ForecastPopup({ cards, onReorder, onConfirm, onCancel }: {
   const [dragIdx, setDragIdx] = useState<number | null>(null);
   return (
     <div onClick={onCancel}
-      style={{ position: "fixed", inset: 0, background: "#000b", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}>
+      style={{ position: "fixed", inset: 0, background: "#000b", display: "flex", alignItems: "flex-start", justifyContent: "center", paddingTop: 20, zIndex: 1000 }}>
       <div onClick={e => e.stopPropagation()}
-        style={{ background: "#0c1335", border: "2px solid #334", borderRadius: 10, padding: 20 }}>
+        style={{ background: "#0c133599", border: "2px solid #334", borderRadius: 10, padding: 20, backdropFilter: "blur(6px)" }}>
         <div style={{ color: "#aac", fontSize: 12, fontFamily: "monospace", marginBottom: 12 }}>
           Forecast — drag to reorder, top card drawn first
         </div>

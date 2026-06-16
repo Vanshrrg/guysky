@@ -5,7 +5,7 @@
 
 export type CardState = { x: number; y: number; w: number };
 export type HandCards = { p1: string[]; p2: string[]; p3: string[]; p4: string[] };
-export type TurnPhase = "actions" | "draw" | "discard" | "infect";
+export type TurnPhase = "actions" | "draw" | "discard" | "discard-action" | "infect";
 export interface TurnStateData {
   currentPlayerIndex: number;
   actionsRemaining: number;
@@ -14,6 +14,8 @@ export interface TurnStateData {
   pendingShuttle: boolean;
   drawCount: number;
   infectCount: number;
+  /** Player key that must discard a card before actions resume (Share Knowledge over-limit) */
+  discardPlayer?: string;
 }
 
 // ─── Key constants ────────────────────────────────────────────────────────
@@ -37,7 +39,17 @@ export const LS_PANIC_LEVELS = "epidemic.panic-levels.v1";
 export const LS_HCMC_TRAY = "epidemic.panic-tray.hcmc.v1";
 export const LS_TURN = "epidemic.turn.v1";
 export const LS_PLAYER_CITIES = "epidemic.player-cities.v1";
+export const LS_INFECT_DECK = "epidemic.infect-deck.v1";
+export const LS_INFECT_DISCARD = "epidemic.infect-discard.v1";
+export const LS_PLAYER_DECK = "epidemic.player-deck.v1";
+export const LS_EPIDEMIC_COUNT = "epidemic.epidemic-count.v1";
 export const LS_CARD_SCHEMA = "epidemic.cardSchema";
+
+// ─── Campaign-persistent keys (NOT in GAME_LS_KEYS) ─────────────────────────
+// These survive Restart / Main Menu — like panic levels.
+export const LS_CHARACTER_NAMES = "epidemic.character-names.v1";
+export const LS_CODA_COLOR      = "epidemic.coda-color.v1";
+export const LS_DISEASE_NAMES   = "epidemic.disease-names.v1";
 
 // ─── Default positions ────────────────────────────────────────────────────
 export const DEF_CARD_INFECTION: CardState = { x: 75.98, y: 9.04, w: 11.59 };
@@ -97,6 +109,18 @@ export function loadPlayerCities(count: number): string[] {
   try { const r = localStorage.getItem(LS_PLAYER_CITIES); if (r) return JSON.parse(r); } catch { /* ignore */ }
   return Array(count).fill("atlanta");
 }
+export function loadCharacterNames(): Record<string, string> {
+  try { const r = localStorage.getItem(LS_CHARACTER_NAMES); if (r) return JSON.parse(r); } catch { /* ignore */ }
+  return {};
+}
+export function loadCodaColor(): string | null {
+  try { return localStorage.getItem(LS_CODA_COLOR); } catch { /* ignore */ }
+  return null;
+}
+export function loadDiseaseNames(): Record<string, string> {
+  try { const r = localStorage.getItem(LS_DISEASE_NAMES); if (r) return JSON.parse(r); } catch { /* ignore */ }
+  return {};
+}
 
 // ─── Per-game reset ───────────────────────────────────────────────────────
 // All per-game state keys — cleared on Restart / Main Menu so a new game starts
@@ -107,6 +131,7 @@ export const GAME_LS_KEYS = [
   LS_OUTBREAK_POS, LS_INFECTION_POS, LS_TURN, LS_PLAYER_CITIES,
   LS_RESEARCH_STATIONS, LS_RESEARCH_POS,
   LS_TOKEN_P1, LS_TOKEN_P2, LS_TOKEN_P3, LS_TOKEN_P4,
+  LS_INFECT_DECK, LS_INFECT_DISCARD, LS_PLAYER_DECK, LS_EPIDEMIC_COUNT,
 ];
 export function clearGameState() {
   GAME_LS_KEYS.forEach(k => localStorage.removeItem(k));

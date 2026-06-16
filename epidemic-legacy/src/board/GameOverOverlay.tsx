@@ -1,12 +1,16 @@
 import { clearGameState } from "./boardStorage";
 
 /** Full-screen win/lose overlay shown when the game ends. */
-export function GameOverOverlay({ result, loseReason, onContinue, onRestart, onMainMenu }: {
+export function GameOverOverlay({ result, loseReason, onContinue, onRestart, onMainMenu, janWinBonusSrc, janEndgameSrc }: {
   result: "win" | "lose";
   loseReason: string;
   onContinue: () => void;
   onRestart?: () => void;
   onMainMenu?: () => void;
+  /** January win bonus image (winbonus.png) — only shown on win */
+  janWinBonusSrc?: string;
+  /** January endgame upgrade image (end game upgrade.png) — shown on both win and lose */
+  janEndgameSrc?: string;
 }) {
   const accent = result === "win" ? "#3ddc6d" : "#dc3d3d";
   return (
@@ -30,7 +34,16 @@ export function GameOverOverlay({ result, loseReason, onContinue, onRestart, onM
           <div style={{ fontSize: 14, color: "#cc8888", marginBottom: 16 }}>{loseReason}</div>
         )}
         {result === "win" && (
-          <div style={{ fontSize: 14, color: "#88cc88", marginBottom: 16 }}>All objectives completed!</div>
+          <div style={{ fontSize: 14, color: "#88cc88", marginBottom: 8 }}>All objectives completed!</div>
+        )}
+        {/* January endgame images */}
+        {janEndgameSrc && (
+          <img src={janEndgameSrc} alt="End game upgrade" draggable={false}
+            style={{ maxWidth: 220, width: "100%", height: "auto", borderRadius: 6, marginBottom: 8 }} />
+        )}
+        {result === "win" && janWinBonusSrc && (
+          <img src={janWinBonusSrc} alt="Win bonus" draggable={false}
+            style={{ maxWidth: 220, width: "100%", height: "auto", borderRadius: 6, marginBottom: 8 }} />
         )}
         <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
           <button

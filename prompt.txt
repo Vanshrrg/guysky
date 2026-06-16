@@ -1,0 +1,54 @@
+git clone https://github.com/Vanshrrg/guysky.git   # or git pull
+git checkout epidemic-legacy
+cd epidemic-legacy && npm install
+
+CONTEXT — Epidemic Legacy (digital tabletop, React + Vite + TypeScript)
+
+Project lives at: <repo>/epidemic-legacy/  (sibling of airline-board-game,
+inside the skyteam-digital git repo). Read epidemic-legacy/SPEC.md first — it's
+a digital tabletop (like Tabletop Simulator), NOT a rules engine. No legal-move
+checking, no turn resolution. The work is: flexible object/table state,
+persistence, and a legacy layer.
+
+SETUP ON THIS MACHINE:
+- cd epidemic-legacy && npm install
+- npm run test   (vitest)   — should be green
+- npm run dev    (Vite, port 5174)
+- Browser-preview note: this project is a SIBLING of the primary repo root, so
+  the preview tool won't run it directly. Use the existing launch.json entry
+  named "epidemic-legacy" in airline-board-game/.claude/launch.json, which runs
+  `npm --prefix ../epidemic-legacy run dev`. Then preview_start "epidemic-legacy".
+
+WHAT'S DONE:
+- Prompt 1 (state + persistence) COMPLETE. src/state/: types.ts (CampaignState,
+  TableState, GameObject, Position, SaveData — SPEC §3), rng.ts (seedable
+  mulberry32), actions.ts (pure moveObject/addObject/removeObject/
+  updateObjectState/drawFromDeck/shuffleDeck — SPEC §11.1), initialState.ts
+  (dummy month-1 data), reducer.ts (wraps actions + LOAD/RESET), GameContext.tsx
+  (useReducer + Context, autosaves to localStorage, hydrates on mount),
+  persistence.ts (localStorage save/load/reset + JSON export/import). 14 tests
+  pass. tsconfig target is ES2022.
+- src/dev/DevPanel.tsx: throwaway harness (sample actions, save/load/reset,
+  export/import, live JSON dump). Reachable via "Show Dev Panel" toggle in App.tsx.
+- src/board/Board.tsx: empty placeholder frame (percentage-based, aspect-locked).
+  Board art was removed on purpose — a NEW board image is being made and will be
+  dropped in.
+
+DECISIONS (keep these):
+- TypeScript + useReducer/Context, zero runtime state deps.
+- Drag-and-drop = POINTER EVENTS (no library), free percentage placement.
+- Per-piece object React components go in the `object/` folder.
+- All positions are PERCENTAGES in config files, never pixels (SPEC §6).
+
+NEXT TASK — finish Prompt 2 (Board + objects, SPEC §6):
+1. Wire in the new board image once provided.
+2. Stub 48 cities in a separate coordinates config (percentages) — real
+   positions added later.
+3. Render objects from TableState on the board.
+4. Pointer-based drag-and-drop (dispatch MOVE_OBJECT) + a right-click context
+   menu (add/remove cube, flip card, place building, spawn road block, delete)
+   wiring the existing reducer actions. Generate ids for ADD_OBJECT.
+5. Verify in the browser preview (screenshot before/after).
+
+Do NOT build yet: spawn rules/month gating (Prompt 3), legacy layer (Prompt 3),
+month flow (Prompt 4). Explain your plan before coding.

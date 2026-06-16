@@ -16,8 +16,8 @@ export function InfectionDiscardPopup({ discard, picking, onClose, onPick }: {
       onClick={picking ? undefined : onClose}
       style={{
         position: "fixed", inset: 0, background: "#000a",
-        display: "flex", alignItems: "center", justifyContent: "center",
-        zIndex: 1000,
+        display: "flex", alignItems: "flex-start", justifyContent: "center",
+        paddingTop: 16, zIndex: 1000,
       }}
     >
       <div onClick={e => e.stopPropagation()} style={{

@@ -1,5 +1,13 @@
-import { useState } from "react";
-import { CITIES, WRAP_ROUTES, WRAP_PAIR_KEYS, cityById } from "./cities";
+import { useState, useMemo, memo } from "react";
+import { CITIES, WRAP_ROUTES, WRAP_PAIR_KEYS, cityById, COLOR_HEX } from "./cities";
+import blackVirusSrc  from "../../object/black.png";
+import blueVirusSrc   from "../../object/blue.png";
+import redVirusSrc    from "../../object/red.png";
+import yellowVirusSrc from "../../object/yellow.png";
+
+const VIRUS_SRC: Record<string, string> = {
+  black: blackVirusSrc, blue: blueVirusSrc, red: redVirusSrc, yellow: yellowVirusSrc,
+};
 
 export const LS_ROADBLOCKS = "epidemic.roadblocks.v1";
 export type RoadblockState = "temp" | "permanent";
@@ -33,8 +41,8 @@ interface CityLayerProps {
   highlightClickOnly?: boolean;
 }
 
-export function CityLayer({ onCityClick, onCityRightClick, roadblocks: rbProp, onRoadblockChange, roadblocksEnabled = false, highlightCities, highlightClickOnly = false }: CityLayerProps = {}) {
-  const highlightSet = new Set(highlightCities ?? []);
+export const CityLayer = memo(function CityLayer({ onCityClick, onCityRightClick, roadblocks: rbProp, onRoadblockChange, roadblocksEnabled = false, highlightCities, highlightClickOnly = false }: CityLayerProps = {}) {
+  const highlightSet = useMemo(() => new Set(highlightCities ?? []), [highlightCities]);
   // If no external roadblocks provided, manage locally (backward compat)
   const [localRb, setLocalRb] = useState<Record<string, RoadblockState>>(loadRoadblocks);
   const roadblocks = rbProp ?? localRb;
@@ -48,8 +56,6 @@ export function CityLayer({ onCityClick, onCityRightClick, roadblocks: rbProp, o
     }
     saveRoadblocks(next);
   };
-
-  const [hoveredCity, setHoveredCity] = useState<string | null>(null);
 
   const handleClick = (key: string) => {
     setRoadblocks(prev => {
@@ -68,23 +74,26 @@ export function CityLayer({ onCityClick, onCityRightClick, roadblocks: rbProp, o
     });
   };
 
-  // Build edges.
-  const edges: Array<{ x1: number; y1: number; x2: number; y2: number; key: string; wrap?: boolean }> = [];
-  for (const c of CITIES) {
-    for (const n of c.neighbors) {
-      if (c.id >= n) continue;
-      const pairKey = [c.id, n].sort().join("|");
-      if (WRAP_PAIR_KEYS.has(pairKey)) continue;
-      const b = cityById(n)?.pos;
-      if (b) edges.push({ x1: c.pos.x, y1: c.pos.y, x2: b.x, y2: b.y, key: `${c.id}-${n}` });
+  // Build edges — memoized since CITIES and WRAP_ROUTES are module-level constants.
+  const edges = useMemo(() => {
+    const result: Array<{ x1: number; y1: number; x2: number; y2: number; key: string; wrap?: boolean }> = [];
+    for (const c of CITIES) {
+      for (const n of c.neighbors) {
+        if (c.id >= n) continue;
+        const pairKey = [c.id, n].sort().join("|");
+        if (WRAP_PAIR_KEYS.has(pairKey)) continue;
+        const b = cityById(n)?.pos;
+        if (b) result.push({ x1: c.pos.x, y1: c.pos.y, x2: b.x, y2: b.y, key: `${c.id}-${n}` });
+      }
     }
-  }
-  for (const w of WRAP_ROUTES) {
-    const a = cityById(w.a)?.pos;
-    const b = cityById(w.b)?.pos;
-    if (a) edges.push({ x1: a.x, y1: a.y, x2: w.left.x, y2: w.left.y, key: `${w.a}-${w.b}-L`, wrap: true });
-    if (b) edges.push({ x1: b.x, y1: b.y, x2: w.right.x, y2: w.right.y, key: `${w.a}-${w.b}-R`, wrap: true });
-  }
+    for (const w of WRAP_ROUTES) {
+      const a = cityById(w.a)?.pos;
+      const b = cityById(w.b)?.pos;
+      if (a) result.push({ x1: a.x, y1: a.y, x2: w.left.x, y2: w.left.y, key: `${w.a}-${w.b}-L`, wrap: true });
+      if (b) result.push({ x1: b.x, y1: b.y, x2: w.right.x, y2: w.right.y, key: `${w.a}-${w.b}-R`, wrap: true });
+    }
+    return result;
+  }, []);
 
   return (
     <div style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 10 }}>
@@ -95,9 +104,10 @@ export function CityLayer({ onCityClick, onCityRightClick, roadblocks: rbProp, o
         {edges.map(e => (
           <line key={e.key} x1={e.x1} y1={e.y1} x2={e.x2} y2={e.y2}
             stroke="#ffffff"
-            strokeOpacity={e.wrap ? 0 : 0.45}
-            strokeWidth={e.wrap ? 0 : 0.25}
+            strokeOpacity={0.65}
+            strokeWidth={2}
             strokeLinecap="round"
+            strokeDasharray={e.wrap ? "3 4" : undefined}
             vectorEffect="non-scaling-stroke" />
         ))}
 
@@ -133,13 +143,17 @@ export function CityLayer({ onCityClick, onCityRightClick, roadblocks: rbProp, o
         })}
       </svg>
 
+      <style>{`
+        .city-node { position: absolute; transform: translate(-50%,-50%); width: 1.8%; aspect-ratio: 1; pointer-events: auto; }
+        .city-label { position: absolute; top: 100%; left: 50%; transform: translateX(-50%); margin-top: 3px; font-family: system-ui,sans-serif; font-size: 9px; line-height: 1; font-weight: 700; color: #fff; white-space: nowrap; text-shadow: 0 0 3px #000,0 0 3px #000,0 0 5px #000; pointer-events: none; letter-spacing: 0.02em; transition: font-size 0.1s; z-index: 1; }
+        .city-node:hover .city-label { font-size: 13px; z-index: 50; }
+      `}</style>
       {CITIES.map(c => {
         const isHighlighted = highlightSet.has(c.id);
         const clickable = onCityClick && (!highlightClickOnly || isHighlighted);
         return (
         <div key={c.id}
-          onMouseEnter={() => setHoveredCity(c.id)}
-          onMouseLeave={() => setHoveredCity(null)}
+          className="city-node"
           onClick={e => {
             e.stopPropagation();
             if (!clickable) return;
@@ -147,32 +161,38 @@ export function CityLayer({ onCityClick, onCityRightClick, roadblocks: rbProp, o
           }}
           onContextMenu={e => { e.stopPropagation(); e.preventDefault(); onCityRightClick?.(c.id, e); }}
           style={{
-            position: "absolute",
             left: `${c.pos.x}%`, top: `${c.pos.y}%`,
-            transform: "translate(-50%, -50%)",
-            width: "3%", aspectRatio: "1",
-            borderRadius: "50%",
-            pointerEvents: "auto",
             cursor: clickable ? "pointer" : "default",
-            boxShadow: isHighlighted ? "0 0 0 3px #ffdd44, 0 0 14px 4px #ffdd4488" : "none",
-            transition: "box-shadow 0.15s",
           }}>
-          {hoveredCity === c.id && (
-            <span style={{
-              position: "absolute",
-              top: "100%", left: "50%",
-              transform: "translateX(-50%)",
-              marginTop: 3,
-              fontFamily: "system-ui, sans-serif",
-              fontSize: 13, lineHeight: 1, fontWeight: 700,
-              color: "#fff", whiteSpace: "nowrap",
-              textShadow: "0 0 4px #000, 0 0 4px #000, 0 0 4px #000",
-              pointerEvents: "none",
-            }}>{c.name}</span>
-          )}
+          <div style={{
+            position: "absolute", inset: 0,
+            borderRadius: "50%",
+            background: COLOR_HEX[c.color],
+            border: "1.5px solid rgba(255,255,255,0.75)",
+            boxShadow: isHighlighted
+              ? "0 0 0 3px #ffdd44, 0 0 14px 4px #ffdd4488"
+              : `0 0 5px 1px ${COLOR_HEX[c.color]}88`,
+            transition: "box-shadow 0.15s",
+            overflow: "hidden",
+          }}>
+            <img
+              src={VIRUS_SRC[c.color]}
+              alt=""
+              draggable={false}
+              style={{
+                position: "absolute",
+                inset: "8%",
+                width: "84%",
+                height: "84%",
+                objectFit: "contain",
+                pointerEvents: "none",
+              }}
+            />
+          </div>
+          <span className="city-label">{c.name}</span>
         </div>
         );
       })}
     </div>
   );
-}
+});

@@ -1,17 +1,18 @@
-import { useRef, useState } from "react";
+import { useRef, useState, useEffect } from "react";
+import { LS_CHARACTER_NAMES, loadCharacterNames } from "./boardStorage";
 import medicSrc from "../../object/medic.png";
 import scientistSrc from "../../object/scientist.png";
 import researcherSrc from "../../object/researcher.png";
 import generalistSrc from "../../object/generalist.png";
 import dispatcherSrc from "../../object/dispatcher.png";
-import fund1Src from "../../object/fund1.png";
-import fund2Src from "../../object/fund2.png";
-import fund3Src from "../../object/fund3.png";
-import fund4Src from "../../object/fund4.png";
-import fund5Src from "../../object/fund5.png";
-import fund6Src from "../../object/fund6.png";
-import fund7Src from "../../object/fund7.png";
-import fund8Src from "../../object/fund8.png";
+import fund1Src from "../../object/onequietnight.png";
+import fund2Src from "../../object/remotetreatment.png";
+import fund3Src from "../../object/govermentgrant.png";
+import fund4Src from "../../object/resilientpopulation.png";
+import fund5Src from "../../object/forecast.png";
+import fund6Src from "../../object/airlift.png";
+import fund7Src from "../../object/borrowedtime.png";
+import fund8Src from "../../object/flexibleaid.png";
 
 const FUND_CARDS = [fund1Src, fund2Src, fund3Src, fund4Src, fund5Src, fund6Src, fund7Src, fund8Src];
 const TOKEN_COLORS = ["#e8479a", "#e8720a", "#f0f0f0", "#1a2a8a"];
@@ -27,6 +28,7 @@ const ALL_ROLES = [
 export interface PreGameSetup {
   playerOrder: Array<{ color: string; roleId: string }>;
   fundingCards: string[];
+  characterNames: Record<string, string>;
 }
 
 const overlayStyle: React.CSSProperties = {
@@ -131,11 +133,18 @@ interface RolesProps {
   onBegin: (setup: PreGameSetup) => void;
   onViewBoard?: () => void;
   fundingCards: string[];
+  scenario?: string;
 }
-export function PreGamePhase({ playerCount, onBegin, onViewBoard, fundingCards }: RolesProps) {
+export function PreGamePhase({ playerCount, onBegin, onViewBoard, fundingCards, scenario }: RolesProps) {
+  const isJan = scenario === 'jan';
   const [placements, setPlacements] = useState<Array<{ roleId: string; color: string }>>([]);
   const [dragging, setDragging] = useState<{ color: string; x: number; y: number } | null>(null);
   const roleRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  // Character names — only for January; persisted across restarts
+  const [characterNames, setCharacterNames] = useState<Record<string, string>>(loadCharacterNames);
+  useEffect(() => {
+    if (isJan) localStorage.setItem(LS_CHARACTER_NAMES, JSON.stringify(characterNames));
+  }, [characterNames, isJan]);
 
   // Only offer TOKEN_COLORS[0..playerCount-1] — matches the dealt hands
   const validColors = TOKEN_COLORS.slice(0, Math.max(2, playerCount));
@@ -170,16 +179,35 @@ export function PreGamePhase({ playerCount, onBegin, onViewBoard, fundingCards }
 
   function renderRole(role: typeof ALL_ROLES[0]) {
     const tokenColor = slotMap[role.id] ?? null;
+    // For Jan: name key = "p{slotIndex+1}" based on which placement slot this role fills
+    const placementIdx = placements.findIndex(p => p.roleId === role.id);
+    const nameKey = placementIdx >= 0 ? `p${placementIdx + 1}` : null;
     return (
       <div key={role.id} ref={el => { roleRefs.current[role.id] = el; }}
-        style={{ flex: 1, position: "relative" }}>
-        <img src={role.src} alt={role.name} draggable={false}
-          style={{ width: "100%", height: "auto", display: "block", userSelect: "none", pointerEvents: "none" }} />
-        {tokenColor && (
-          <div onPointerDown={e => startDrag(tokenColor, role.id, e)}
-            style={{ position: "absolute", top: 8, right: 8, cursor: "grab", touchAction: "none", userSelect: "none", zIndex: 10 }}>
-            <PawnSvg color={tokenColor} size={36} />
-          </div>
+        style={{ flex: 1, position: "relative", display: "flex", flexDirection: "column", gap: 4 }}>
+        <div style={{ position: "relative" }}>
+          <img src={role.src} alt={role.name} draggable={false}
+            style={{ width: "100%", height: "auto", display: "block", userSelect: "none", pointerEvents: "none" }} />
+          {tokenColor && (
+            <div onPointerDown={e => startDrag(tokenColor, role.id, e)}
+              style={{ position: "absolute", top: 8, right: 8, cursor: "grab", touchAction: "none", userSelect: "none", zIndex: 10 }}>
+              <PawnSvg color={tokenColor} size={36} />
+            </div>
+          )}
+        </div>
+        {isJan && nameKey && (
+          <input
+            type="text"
+            maxLength={20}
+            placeholder="Character name…"
+            value={characterNames[nameKey] ?? ''}
+            onChange={e => setCharacterNames(prev => ({ ...prev, [nameKey]: e.target.value }))}
+            style={{
+              background: "#0a1525", border: "1px solid #1e3555", borderRadius: 4,
+              color: "#c8ddf4", fontSize: 11, padding: "3px 7px", width: "100%",
+              boxSizing: "border-box", fontFamily: "system-ui, sans-serif", outline: "none",
+            }}
+          />
         )}
       </div>
     );
@@ -194,7 +222,7 @@ export function PreGamePhase({ playerCount, onBegin, onViewBoard, fundingCards }
             {onViewBoard && <button onClick={onViewBoard} style={viewBoardBtn}>View Board</button>}
           </div>
           {placements.length >= validColors.length ? (
-            <button onClick={() => onBegin({ playerOrder: placements, fundingCards })}
+            <button onClick={() => onBegin({ playerOrder: placements, fundingCards, characterNames })}
               style={confirmBtn}>✓</button>
           ) : (
             <span style={{ fontSize: 11, color: "#556", fontFamily: "monospace" }}>

@@ -18,6 +18,18 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["--prefix", "../epidemic-legacy", "run", "dev"],
       "port": 5174
+    },
+    {
+      "name": "skyteam-solo",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "../airline-board-game-p2", "run", "dev"],
+      "port": 5175
+    },
+    {
+      "name": "skyteam-v3",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "../airline-board-game-v3", "run", "dev"],
+      "port": 5176
     }
   ]
 }

@@ -1,9 +1,18 @@
-import { useRef, useState, useEffect } from "react";
-import boardArt from "../../object/newboard2.png";
+import { useRef, useState, useEffect, useMemo, useCallback } from "react";
+import boardArt from "../../object/newupdatedboard.png";
+import blackVirusSrc  from "../../object/black.png";
+import blueVirusSrc   from "../../object/blue.png";
+import redVirusSrc    from "../../object/red.png";
+import yellowVirusSrc from "../../object/yellow.png";
 import infectionCardBackSrc from "../../object/infectioncardback.png";
 import playerCardBackSrc from "../../object/playercard back.png";
 import epidemicCardSrc from "../../object/epidemic.png";
 import objectiveSrc from "../../object/objective1.png";
+import objectiveUpdatedSrc  from "../../object/Jan/objective1update.png";
+import janWinBonusSrc       from "../../object/Jan/winbonus.png";
+import janEndgameSrc        from "../../object/Jan/end game upgrade.png";
+import janUpdateBoardSrc    from "../../object/Jan/update.png";
+import janDiseaseStickerSrc from "../../object/Jan/disease sticker.png";
 import researchSrc from "../../object/research.png";
 import panicLevel1Src from "../../object/paniclevel1.png";
 import panicLevel2Src from "../../object/paniclevel2.png";
@@ -16,19 +25,22 @@ import { BoardMarker, CubeSvg, type MarkerState } from "./BoardMarker";
 import { CITIES } from "./cities";
 import { InfectionCard } from "./InfectionCard";
 import { PlayerCard } from "./PlayerCard";
+import { CardFlip } from "./CardFlip";
+import { FlyFlipCard } from "./FlyFlipCard";
+import { ShuffleAnimation } from "./ShuffleAnimation";
 import medicSrc from "../../object/medic.png";
 import scientistSrc from "../../object/scientist.png";
 import researcherSrc from "../../object/researcher.png";
 import generalistSrc from "../../object/generalist.png";
 import dispatcherSrc from "../../object/dispatcher.png";
-import fund1Src from "../../object/fund1.png";
-import fund2Src from "../../object/fund2.png";
-import fund3Src from "../../object/fund3.png";
-import fund4Src from "../../object/fund4.png";
-import fund5Src from "../../object/fund5.png";
-import fund6Src from "../../object/fund6.png";
-import fund7Src from "../../object/fund7.png";
-import fund8Src from "../../object/fund8.png";
+import fund1Src from "../../object/onequietnight.png";
+import fund2Src from "../../object/remotetreatment.png";
+import fund3Src from "../../object/govermentgrant.png";
+import fund4Src from "../../object/resilientpopulation.png";
+import fund5Src from "../../object/forecast.png";
+import fund6Src from "../../object/airlift.png";
+import fund7Src from "../../object/borrowedtime.png";
+import fund8Src from "../../object/flexibleaid.png";
 import type { PreGameSetup } from "./PreGamePhase";
 import { BOARD_RATIO, CUBE_W, shuffle, defaultCubes, inBox } from "./boardGeometry";
 import { PANIC_TRAY_POS, OBJECTIVE_SLOTS, OUTBREAK_TRACK, INFECTION_TRACK } from "./boardLayout";
@@ -38,14 +50,17 @@ import {
   LS_HAND_CARDS, LS_CARD_INFECTION, LS_CARD_PLAYER, LS_CARD_INFECTION_DISCARD,
   LS_CARD_PLAYER_DISCARD, LS_TOKEN_P1, LS_TOKEN_P2, LS_TOKEN_P3, LS_TOKEN_P4,
   LS_RESEARCH_STATIONS, LS_RESEARCH_POS, LS_PANIC_LEVELS, LS_HCMC_TRAY,
-  LS_TURN, LS_PLAYER_CITIES,
+  LS_TURN, LS_PLAYER_CITIES, LS_INFECT_DECK, LS_INFECT_DISCARD, LS_PLAYER_DECK, LS_EPIDEMIC_COUNT,
+  LS_CODA_COLOR, LS_DISEASE_NAMES,
   DEF_CARD_INFECTION, DEF_CARD_PLAYER, DEF_CARD_INFECTION_DISCARD, DEF_CARD_PLAYER_DISCARD,
   DEF_TOKEN_P1, DEF_TOKEN_P2, DEF_TOKEN_P3, DEF_TOKEN_P4,
   loadCard, loadTrackPos, loadHandCards, loadResearchStations, loadResearchPos,
-  loadPanicLevels, loadHcmc, loadTurnState, loadPlayerCities,
+  loadPanicLevels, loadHcmc, loadTurnState, loadPlayerCities, loadCodaColor, loadDiseaseNames, clearGameState,
 } from "./boardStorage";
 import { MARKERS, CURE_INDICES, COLOR_TO_CURE_IDX, loadMarker, loadCured, loadEradicated } from "./boardMarkers";
 import { GameOverOverlay } from "./GameOverOverlay";
+import { CodaPopup } from "./CodaPopup";
+import { DiseaseNamePopup } from "./DiseaseNamePopup";
 import { InfectionDiscardPopup } from "./InfectionDiscardPopup";
 import { ForecastPopup } from "./ForecastPopup";
 import { ContextMenu, MenuItem } from "./ContextMenu";
@@ -59,7 +74,6 @@ const DISEASE_COLORS = ["black", "yellow", "red", "blue"] as const;
 type DiseaseColor = typeof DISEASE_COLORS[number];
 type CityColorCounts = Partial<Record<DiseaseColor, number>>;
 type CityInfectionMap = Record<string, CityColorCounts>;
-const CUBE_COLORS = ["#1a1a1a", "#FFFA73", "#cc1111", "#0A00A1"] as const;
 
 // 2×2 layout: P1 top-left, P3 bottom-left, P2 top-right, P4 bottom-right
 const HAND_P1 = { x: -4.56,  y: 27, w: 9.37, h: 50 };
@@ -78,6 +92,21 @@ const FUND_IMGS: Record<string, string> = {
 };
 
 const INFECTION_RATE_VALUES = [2, 2, 2, 3, 3, 4, 4];
+
+// Precomputed at module load — deterministic scattered pile positions per color.
+// Order: black, yellow, red, blue (matches DISEASE_COLORS / placedPerColor indices).
+const _allPiles = defaultCubes(); // 96 positions, 24 per color in back→front order
+const _SUPPLY_META = [
+  { color: "black",  fill: "#1a1a1a", src: blackVirusSrc,  iconX: 20.52, iconY: 89.41, labelX: 22.6, labelY: 87.0 },
+  { color: "yellow", fill: "#FFFA73", src: yellowVirusSrc, iconX: 3.21,  iconY: 89.41, labelX: 5.3,  labelY: 87.0 },
+  { color: "red",    fill: "#cc1111", src: redVirusSrc,    iconX: 8.97,  iconY: 89.41, labelX: 11.1, labelY: 87.0 },
+  { color: "blue",   fill: "#0A00A1", src: blueVirusSrc,   iconX: 14.77, iconY: 89.41, labelX: 16.9, labelY: 87.0 },
+];
+// SUPPLY_PILES is completed after imports are available (src filled at runtime below component def)
+const SUPPLY_PILES = _SUPPLY_META.map((m, ci) => ({
+  ...m,
+  positions: _allPiles.slice(ci * 24, (ci + 1) * 24),
+}));
 
 const SCENARIO_LABELS: Record<string, string> = {
   board: "Board",
@@ -102,11 +131,11 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   const [states, setStates] = useState<MarkerState[]>(() => MARKERS.map(m => loadMarker(m.key, m.def)));
   // Month 0 is a fresh setup scenario — it never restores saved progress.
   // All other scenarios (campaign months + board sandbox) persist these.
-  const persistGame = scenario !== "month0";
-  const [cured, setCured] = useState<boolean[]>(() => persistGame ? loadCured() : CURE_INDICES.map(() => false));
-  const [eradicated, setEradicated] = useState<boolean[]>(() => persistGame ? loadEradicated() : CURE_INDICES.map(() => false));
-  const [outbreakPos, setOutbreakPos] = useState(() => persistGame ? loadTrackPos(LS_OUTBREAK_POS, OUTBREAK_TRACK.length - 1) : 0);
-  const [infectionPos, setInfectionPos] = useState(() => persistGame ? loadTrackPos(LS_INFECTION_POS, INFECTION_TRACK.length - 1) : 0);
+  const _persistGame = scenario !== "month0"; void _persistGame;
+  const [cured, setCured] = useState<boolean[]>(() => loadCured());
+  const [eradicated, setEradicated] = useState<boolean[]>(() => loadEradicated());
+  const [outbreakPos, setOutbreakPos] = useState(() => loadTrackPos(LS_OUTBREAK_POS, OUTBREAK_TRACK.length - 1));
+  const [infectionPos, setInfectionPos] = useState(() => loadTrackPos(LS_INFECTION_POS, INFECTION_TRACK.length - 1));
   const [cityInfection, setCityInfection] = useState<CityInfectionMap>(() => {
     try { const r = localStorage.getItem(LS_CITY_INFECTION); if (r) return JSON.parse(r); } catch { /* ignore */ }
     return {};
@@ -119,9 +148,6 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   const [setupRemaining, setSetupRemaining] = useState<number>(() =>
     (scenario === "month0" && !setup) ? 9 : 0
   );
-  const [cubes, setCubes] = useState<{ x: number; y: number }[]>(defaultCubes);
-  const [cubeZ, setCubeZ] = useState<number[]>(() => Array(96).fill(0));
-  const zCounter = useRef(0);
   // Card pile positions persist (calibration data)
   const [cardInfection, setCardInfection] = useState<CardState>(() => loadCard(LS_CARD_INFECTION, DEF_CARD_INFECTION));
   const [cardPlayer, setCardPlayer] = useState<CardState>(() => loadCard(LS_CARD_PLAYER, DEF_CARD_PLAYER));
@@ -129,7 +155,10 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   const [cardPlayerDiscard] = useState<CardState>(() => loadCard(LS_CARD_PLAYER_DISCARD, DEF_CARD_PLAYER_DISCARD));
   const [hcmcTray, setHcmcTray] = useState<{ x: number; y: number }>(() => loadHcmc());
   // 0 when epidemics are embedded in the deck (deal/game phases); 5 for raw board view
-  const [epidemicCount, setEpidemicCount] = useState(5); // standalone pile, rendered below player deck
+  const [epidemicCount, setEpidemicCount] = useState(() => {
+    try { const r = localStorage.getItem(LS_EPIDEMIC_COUNT); if (r !== null) return Number(r); } catch { /* ignore */ }
+    return 5;
+  }); // standalone pile, rendered below player deck
   const [tokenP1, setTokenP1] = useState<CardState>(() => loadCard(LS_TOKEN_P1, DEF_TOKEN_P1));
   const [tokenP2, setTokenP2] = useState<CardState>(() => loadCard(LS_TOKEN_P2, DEF_TOKEN_P2));
   const [tokenP3, setTokenP3] = useState<CardState>(() => loadCard(LS_TOKEN_P3, DEF_TOKEN_P3));
@@ -166,11 +195,20 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   const [objectiveCount, setObjectiveCount] = useState(1);
   const [objectiveCompleted, setObjectiveCompleted] = useState<boolean[]>([false]);
   const [objMenu, setObjMenu] = useState<{ x: number; y: number; idx: number } | null>(null);
-  const [infectDeck, setInfectDeck] = useState<string[]>(() => shuffle(CITIES.map(c => c.id)));
-  const [infectDiscard, setInfectDiscard] = useState<string[]>([]);
+  const [infectDeck, setInfectDeck] = useState<string[]>(() => {
+    try { const r = localStorage.getItem(LS_INFECT_DECK); if (r) return JSON.parse(r); } catch { /* ignore */ }
+    return shuffle(CITIES.map(c => c.id));
+  });
+  const [infectDiscard, setInfectDiscard] = useState<string[]>(() => {
+    try { const r = localStorage.getItem(LS_INFECT_DISCARD); if (r) return JSON.parse(r); } catch { /* ignore */ }
+    return [];
+  });
+  const [flippingInfCard, setFlippingInfCard] = useState<{ cityId: string; fromX: number; fromY: number; toX: number; toY: number } | null>(null);
+  const [isShufflingInfection, setIsShufflingInfection] = useState(false);
+  const [flippingPlayerCard, setFlippingPlayerCard] = useState<{ cityId: string; x: number; y: number; reverse?: boolean } | null>(null);
+  const [isShufflingPlayer, setIsShufflingPlayer] = useState(false);
   const [playerDeck, setPlayerDeck] = useState<string[]>(() => {
-    // City (+ event) cards only — no embedded epidemics.
-    // Epidemic standalone pile (epidemicCount=5) sits below visually.
+    try { const r = localStorage.getItem(LS_PLAYER_DECK); if (r) return JSON.parse(r); } catch { /* ignore */ }
     const fc = setup?.fundingCards ?? [];
     return shuffle([...CITIES.map(c => c.id), ...fc]);
   });
@@ -180,21 +218,80 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   const [boardPxW, setBoardPxW] = useState(0);
   const [showDiscardPopup, setShowDiscardPopup] = useState(false);
   const [showPlayerDiscardPopup, setShowPlayerDiscardPopup] = useState(false);
+  const [showDebugDeck, setShowDebugDeck] = useState(false);
+  const [actionLog, setActionLog] = useState<string[]>([]);
   const [discardCardMenu, setDiscardCardMenu] = useState<{ cityId: string; x: number; y: number } | null>(null);
   const [playerDeckMenu, setPlayerDeckMenu] = useState<{ x: number; y: number } | null>(null);
   const [discardMenu, setDiscardMenu] = useState<{ x: number; y: number } | null>(null);
   const [deckMenu, setDeckMenu] = useState<{ x: number; y: number } | null>(null);
   const [forecastCards, setForecastCards] = useState<string[] | null>(null);
   const [dismissedResult, setDismissedResult] = useState<string | null>(null);
+  const [gaveUp, setGaveUp] = useState(false);
+  const [confirmGiveUp, setConfirmGiveUp] = useState(false);
+  type ActionSnapshot = {
+    turnState: TurnStateData; playerCities: string[]; cityInfection: CityInfectionMap;
+    cured: boolean[]; eradicated: boolean[]; handCards: HandCards; playerDiscard: string[];
+    researchStations: Set<string>; researchPos: Record<string, { x: number; y: number }>;
+    outbreakPos: number;
+    tokenP1: CardState; tokenP2: CardState; tokenP3: CardState; tokenP4: CardState;
+  };
+  const [undoSnapshot, setUndoSnapshot] = useState<ActionSnapshot | null>(null);
+
+  // ─── January-specific state ────────────────────────────────────────────────
+  const isJan = scenario === 'jan';
+  const [codaColor, setCodaColor] = useState<DiseaseColor | null>(() =>
+    isJan ? (loadCodaColor() as DiseaseColor | null) : null
+  );
+  const [diseaseNames, setDiseaseNames] = useState<Record<string, string>>(() =>
+    isJan ? loadDiseaseNames() : {}
+  );
+  const [codaPopupOpen, setCodaPopupOpen] = useState(false);
+  const [codaCandidates, setCodaCandidates] = useState<DiseaseColor[]>([]);
+  const [namePopupColor, setNamePopupColor] = useState<DiseaseColor | null>(null);
+
   // Turn system — only active during game phase (setup present)
   const [turnState, setTurnState_] = useState<TurnStateData>(() => loadTurnState());
-  const saveTurnState = (next: TurnStateData) => { setTurnState_(next); localStorage.setItem(LS_TURN, JSON.stringify(next)); };
+
+  // When setup first becomes available and there's no persisted turn state,
+  // correct actionsRemaining for the generalist (who starts with 5, not 4).
+  useEffect(() => {
+    if (!setup) return;
+    if (localStorage.getItem(LS_TURN)) return; // persisted state already has the right value
+    const firstRole = setup.playerOrder[0]?.roleId;
+    if (firstRole === 'generalist') {
+      setTurnState_(prev => ({ ...prev, actionsRemaining: 5 }));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [setup]);
+  const saveTurnState = (next: TurnStateData) => {
+    if (setup && next.actionsRemaining < turnState.actionsRemaining && next.phase === "actions") {
+      const role = setup.playerOrder[turnState.currentPlayerIndex]?.roleId ?? '?';
+      const ROLE_LABELS: Record<string, string> = { medic: 'Medic', scientist: 'Scientist', researcher: 'Researcher', generalist: 'Generalist', dispatcher: 'Dispatcher' };
+      setActionLog(prev => [...prev.slice(-49), `${ROLE_LABELS[role] ?? role}: action used (${next.actionsRemaining} left)`]);
+    }
+    if (setup && next.phase === "draw" && turnState.phase === "actions") {
+      const role = setup.playerOrder[turnState.currentPlayerIndex]?.roleId ?? '?';
+      const ROLE_LABELS: Record<string, string> = { medic: 'Medic', scientist: 'Scientist', researcher: 'Researcher', generalist: 'Generalist', dispatcher: 'Dispatcher' };
+      setActionLog(prev => [...prev.slice(-49), `${ROLE_LABELS[role] ?? role}: drawing cards`]);
+    }
+    // Auto-snapshot before any action is consumed (React batches updates so closure values are still pre-action)
+    if (setup && turnState.phase === "actions" && next.actionsRemaining < turnState.actionsRemaining) {
+      setUndoSnapshot({
+        turnState: { ...turnState }, playerCities: [...playerCities],
+        cityInfection: { ...cityInfection }, cured: [...cured], eradicated: [...eradicated],
+        handCards: { ...handCards }, playerDiscard: [...playerDiscard],
+        researchStations: new Set(researchStations), researchPos: { ...researchPos },
+        outbreakPos,
+        tokenP1: { ...tokenP1 }, tokenP2: { ...tokenP2 }, tokenP3: { ...tokenP3 }, tokenP4: { ...tokenP4 },
+      });
+    }
+    setTurnState_(next); localStorage.setItem(LS_TURN, JSON.stringify(next));
+  };
   const [playerCities, setPlayerCities_] = useState<string[]>(() => setup ? loadPlayerCities(setup.playerOrder.length) : []);
   const savePlayerCities = (next: string[]) => { setPlayerCities_(next); localStorage.setItem(LS_PLAYER_CITIES, JSON.stringify(next)); };
   const [highlightCities, setHighlightCities] = useState<string[]>([]);
   const [selectedHandCards, setSelectedHandCards] = useState<string[]>([]);
   const [cureSelecting, setCureSelecting] = useState(false);
-  const [dispatcherTarget, setDispatcherTarget] = useState<string | null>(null);
   const [quietNight, setQuietNight] = useState(false);
   const [eventMode, setEventMode] = useState<null | 'remote-treatment' | 'govt-grant' | 'resilient-pop' | 'airlift' | 'flexible-aid'>(null);
   const [eventModeRemaining, setEventModeRemaining] = useState(0);
@@ -203,6 +300,8 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   const cubeSnapshotRef = useRef<CityInfectionMap | null>(null);
   const [airliftPawn, setAirliftPawn] = useState<string | null>(null);
   const [flexibleAidSelected, setFlexibleAidSelected] = useState<string[]>([]);
+  // Bonus actions stored when Borrowed Time is played outside the actions phase
+  const [bonusActionsNextTurn, setBonusActionsNextTurn] = useState(0);
   const [pendingEventCard, setPendingEventCard] = useState<{ player: string; idx: number; cardId: string } | null>(null);
   const [pendingDiscardMenu, setPendingDiscardMenu] = useState<{ cityId: string; player: string; idx: number; x: number; y: number } | null>(null);
   const [rsActionMenu, setRsActionMenu] = useState<{ cityId: string; x: number; y: number } | null>(null);
@@ -239,6 +338,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
         inf = { ...inf, [cityId]: { ...inf[cityId], [color]: 0 } };
         if (!eradicated[ci] && totalOfColor(inf, color) === 0) {
           setEradicated(prev => { const n = [...prev]; n[ci] = true; return n; });
+          if (isJan && !diseaseNames[color]) setNamePopupColor(color as DiseaseColor);
         }
       }
       if (inf !== cityInfection) saveCityInfection(inf);
@@ -257,11 +357,34 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
     if (!setup) return;
     const nextIdx = (turnState.currentPlayerIndex + 1) % setup.playerOrder.length;
     const nextRoleId = setup.playerOrder[nextIdx]?.roleId ?? null;
-    saveTurnState({ currentPlayerIndex: nextIdx, actionsRemaining: nextRoleId === 'generalist' ? 5 : 4, phase: "actions", pendingCharter: false, pendingShuttle: false, drawCount: 0, infectCount: 0 });
-    setHighlightCities([]); setSelectedHandCards([]); setCureSelecting(false); setDispatcherTarget(null);
+    const baseActions = nextRoleId === 'generalist' ? 5 : 4;
+    saveTurnState({ currentPlayerIndex: nextIdx, actionsRemaining: baseActions + bonusActionsNextTurn, phase: "actions", pendingCharter: false, pendingShuttle: false, drawCount: 0, infectCount: 0 });
+    setBonusActionsNextTurn(0);
+    setHighlightCities([]); setSelectedHandCards([]); setCureSelecting(false);
     setEventMode(null); setAirliftPawn(null); setFlexibleAidSelected([]); setEventModeRemaining(0); setPendingEventCard(null);
+    setUndoSnapshot(null);
   };
-  const currentPlayerHand = (): string[] => (handCards as Record<string, string[]>)[currentPlayerKey] ?? [];
+  const restoreUndoSnapshot = () => {
+    const s = undoSnapshot; if (!s) return;
+    setTurnState_(s.turnState); localStorage.setItem(LS_TURN, JSON.stringify(s.turnState));
+    setPlayerCities_(s.playerCities); localStorage.setItem(LS_PLAYER_CITIES, JSON.stringify(s.playerCities));
+    setCityInfection(s.cityInfection); localStorage.setItem(LS_CITY_INFECTION, JSON.stringify(s.cityInfection));
+    setCured(s.cured); setEradicated(s.eradicated);
+    setHandCards(s.handCards); localStorage.setItem(LS_HAND_CARDS, JSON.stringify(s.handCards));
+    setPlayerDiscard(s.playerDiscard);
+    setResearchStations(s.researchStations); localStorage.setItem(LS_RESEARCH_STATIONS, JSON.stringify([...s.researchStations]));
+    setResearchPos(s.researchPos); localStorage.setItem(LS_RESEARCH_POS, JSON.stringify(s.researchPos));
+    setOutbreakPos(s.outbreakPos);
+    setTokenP1(s.tokenP1); localStorage.setItem(LS_TOKEN_P1, JSON.stringify(s.tokenP1));
+    setTokenP2(s.tokenP2); localStorage.setItem(LS_TOKEN_P2, JSON.stringify(s.tokenP2));
+    setTokenP3(s.tokenP3); localStorage.setItem(LS_TOKEN_P3, JSON.stringify(s.tokenP3));
+    setTokenP4(s.tokenP4); localStorage.setItem(LS_TOKEN_P4, JSON.stringify(s.tokenP4));
+    setHighlightCities([]); setSelectedHandCards([]); setCureSelecting(false);
+    setEventMode(null); setAirliftPawn(null);
+    setUndoSnapshot(null);
+  };
+
+  const currentPlayerHand = useMemo(() => (handCards as Record<string, string[]>)[currentPlayerKey] ?? [], [handCards, currentPlayerKey]);
 
   const resolveEventCard = (pending: { player: string; idx: number; cardId: string }) => {
     const current = (handCards as Record<string,string[]>)[pending.player] ?? [];
@@ -274,33 +397,18 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
     setPendingEventCard(null);
   };
 
-  const playFundCard = (playerKey: string, cardIdx: number, cardId: string) => {
-    if (!setup) return;
-    if (cardId === 'fund2' && DISEASE_COLORS.reduce((s, col) => s + totalOfColor(cityInfection, col), 0) === 0) return;
-    if (cardId === 'fund4' && infectDiscard.length === 0) return;
-    if (cardId === 'fund5' && infectDeck.length === 0) return;
-    if ((cardId === 'fund7' || cardId === 'fund8') && turnState.phase !== 'actions') return;
-    const pending = { player: playerKey, idx: cardIdx, cardId };
-    const discardNow = () => resolveEventCard(pending);
-    if (cardId === 'fund1') { setQuietNight(true); discardNow(); return; }
-    if (cardId === 'fund5') { openForecast(); discardNow(); return; }
-    if (cardId === 'fund7') { saveTurnState({ ...turnState, actionsRemaining: turnState.actionsRemaining + 2 }); discardNow(); return; }
-    setPendingEventCard(pending);
-    if (cardId === 'fund2') { cubeSnapshotRef.current = cityInfection; setEventMode('remote-treatment'); setEventModeRemaining(2); }
-    else if (cardId === 'fund3') { setEventMode('govt-grant'); setHighlightCities(CITIES.map(c => c.id)); }
-    else if (cardId === 'fund4') { setEventMode('resilient-pop'); setShowDiscardPopup(true); }
-    else if (cardId === 'fund6') { setEventMode('airlift'); }
-    else if (cardId === 'fund8') { setEventMode('flexible-aid'); setFlexibleAidSelected([]); }
-  };
 
-  // Month 0 setup: place research station + all player tokens at Atlanta
+  // Month 0 + campaign months: place research station (and for Month 0 player tokens) at Atlanta — runs once
+  const setupInitialized = useRef(false);
   useEffect(() => {
-    if (!setup || scenario !== "month0") return;
+    if (!setup || setupInitialized.current) return;
+    const isCampaignMonth = scenario !== "month0" && scenario !== "board";
+    if (scenario !== "month0" && !isCampaignMonth) return;
+    setupInitialized.current = true;
     const atlanta = CITIES.find(c => c.id === "atlanta");
     if (!atlanta) return;
-    const { x, y } = atlanta.pos;
 
-    // Research station at Atlanta
+    // Research station at Atlanta (Month 0 and all campaign months)
     setResearchStations(prev => {
       if (prev.has("atlanta")) return prev;
       const next = new Set(prev); next.add("atlanta");
@@ -308,7 +416,9 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
       return next;
     });
 
-    // All active player tokens at Atlanta (slight offset so they don't stack perfectly)
+    if (scenario !== "month0") return; // campaign months: RS only, no forced token placement
+
+    // Month 0 only: place player tokens at Atlanta
     const offsets = [[-1, 0], [1, 0], [-1, 1.5], [1, 1.5]];
     const tokenSetters = [
       { set: setTokenP1, lsKey: LS_TOKEN_P1 },
@@ -316,11 +426,15 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
       { set: setTokenP3, lsKey: LS_TOKEN_P3 },
       { set: setTokenP4, lsKey: LS_TOKEN_P4 },
     ];
+    const savedCities = loadPlayerCities(setup.playerOrder.length);
+    const hasMovedAway = savedCities.some(c => c !== "atlanta");
     setup.playerOrder.forEach((_, pi) => {
+      const cityId = hasMovedAway ? (savedCities[pi] ?? "atlanta") : "atlanta";
+      const city = hasMovedAway ? (CITIES.find(c => c.id === cityId) ?? atlanta) : atlanta;
       const [dx, dy] = offsets[pi] ?? [0, 0];
-      const pos = { x: x + dx, y: y + dy, w: 2.42 };
+      const pos = { x: city.pos.x + dx, y: city.pos.y + dy, w: 2.42 };
       tokenSetters[pi].set(pos);
-      localStorage.setItem(tokenSetters[pi].lsKey, JSON.stringify(pos));
+      if (!hasMovedAway) localStorage.setItem(tokenSetters[pi].lsKey, JSON.stringify(pos));
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [setup]);
@@ -332,10 +446,49 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
 
   // Persist cure / eradication / outbreak-rate / infection-rate progress so a
   // reload restores the game. Skipped in Month 0 (always a fresh setup).
-  useEffect(() => { if (persistGame) localStorage.setItem(LS_CURED, JSON.stringify(cured)); }, [cured, persistGame]);
-  useEffect(() => { if (persistGame) localStorage.setItem(LS_ERADICATED, JSON.stringify(eradicated)); }, [eradicated, persistGame]);
-  useEffect(() => { if (persistGame) localStorage.setItem(LS_OUTBREAK_POS, String(outbreakPos)); }, [outbreakPos, persistGame]);
-  useEffect(() => { if (persistGame) localStorage.setItem(LS_INFECTION_POS, String(infectionPos)); }, [infectionPos, persistGame]);
+  const playerDeckRef = useRef<string[]>(playerDeck);
+  useEffect(() => { playerDeckRef.current = playerDeck; localStorage.setItem(LS_PLAYER_DECK, JSON.stringify(playerDeck)); }, [playerDeck]);
+  useEffect(() => { localStorage.setItem(LS_EPIDEMIC_COUNT, String(epidemicCount)); }, [epidemicCount]);
+  useEffect(() => { localStorage.setItem(LS_INFECT_DECK, JSON.stringify(infectDeck)); }, [infectDeck]);
+  useEffect(() => { localStorage.setItem(LS_INFECT_DISCARD, JSON.stringify(infectDiscard)); }, [infectDiscard]);
+  useEffect(() => { localStorage.setItem(LS_CURED, JSON.stringify(cured)); }, [cured]);
+  useEffect(() => { localStorage.setItem(LS_ERADICATED, JSON.stringify(eradicated)); }, [eradicated]);
+  useEffect(() => { localStorage.setItem(LS_OUTBREAK_POS, String(outbreakPos)); }, [outbreakPos]);
+  useEffect(() => { localStorage.setItem(LS_INFECTION_POS, String(infectionPos)); }, [infectionPos]);
+
+  // Auto-advance discard once the current player's hand is ≤ 7
+  // Mid-draw discard (drawCount < 2): return to draw phase to pick up 2nd card
+  // Post-draw discard (drawCount >= 2): advance to infect phase
+  useEffect(() => {
+    if (!setup || turnState.phase !== "discard") return;
+    const hand = (handCards as Record<string, string[]>)[currentPlayerKey] ?? [];
+    if (hand.length <= 7) {
+      if (turnState.drawCount < 2) {
+        saveTurnState({ ...turnState, phase: "draw" });
+      } else {
+        saveTurnState({ ...turnState, phase: "infect", infectCount: 0 });
+      }
+    }
+  }, [handCards, turnState.phase]);
+
+  // Auto-resume actions once the designated player has discarded to ≤ 7 (Share Knowledge over-limit)
+  useEffect(() => {
+    if (!setup || turnState.phase !== "discard-action" || !turnState.discardPlayer) return;
+    const hand = (handCards as Record<string, string[]>)[turnState.discardPlayer] ?? [];
+    if (hand.length <= 7) saveTurnState({ ...turnState, phase: "actions", discardPlayer: undefined });
+  }, [handCards, turnState.phase]);
+
+  // Auto-advance infect → next turn once all infection cards are drawn; skip entirely if Quiet Night
+  useEffect(() => {
+    if (!setup || turnState.phase !== "infect") return;
+    if (quietNight) {
+      setQuietNight(false);
+      advanceTurn();
+      return;
+    }
+    const target = INFECTION_RATE_VALUES[infectionPos] ?? 2;
+    if (turnState.infectCount >= target) advanceTurn();
+  }, [turnState.infectCount, turnState.phase, quietNight]);
 
   // Auto-complete objective 0 when all 4 diseases are cured
   useEffect(() => {
@@ -356,7 +509,6 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
     const key = fundingCardsProp.join(',');
     if (key === prevFcKey.current) return;
     prevFcKey.current = key;
-    // Deck = shuffled city + event cards only; standalone epidemic pile (count=5) stays below
     setPlayerDeck(shuffle([...CITIES.map(c => c.id), ...fundingCardsProp]));
     setEpidemicCount(5);
     setPlayerFlipped(new Set());
@@ -390,16 +542,80 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   };
 
   const shuffleDiscardOntoDeck = () => {
-    setInfectDeck(prev => [...prev, ...shuffle(infectDiscard)]);
-    setInfectDiscard([]);
+    setIsShufflingInfection(true);
     setDiscardMenu(null);
-    if (epidemicState) {
-      // Step 3 complete — auto-discard epidemic card and clear state
-      setEpidemicState(null);
-      setEpidemicCount(c => c - 1);
-      setPlayerFlipped(prev => { const n = new Set(prev); n.delete("epidemic"); return n; });
-      setPlayerDiscard(prev => [...prev, "epidemic"]);
+    const snapshot = [...infectDiscard];
+    const wasEpidemic = epidemicState;
+    setTimeout(() => {
+      setInfectDeck(prev => [...prev, ...shuffle(snapshot)]);
+      setInfectDiscard([]);
+      setIsShufflingInfection(false);
+      if (wasEpidemic) {
+        // Step 3 complete — clear state and move the resolved epidemic to discard.
+        setEpidemicState(null);
+        setPlayerFlipped(prev => { const n = new Set(prev); n.delete("epidemic"); return n; });
+        const deckNow = playerDeckRef.current;
+        if (deckNow[deckNow.length - 1] === "epidemic") {
+          setPlayerDeck(deckNow.slice(0, -1));
+          setPlayerDiscard(prev => [...prev, "epidemic"]);
+        }
+        // Count the epidemic as a draw — it goes to discard here, not via the hand-interaction path
+        if (setup && wasEpidemic.phase !== null) {
+          setTurnState_(prev => {
+            if (prev.phase !== "draw") return prev;
+            const newCount = prev.drawCount + 1;
+            if (newCount >= 2) {
+              return { ...prev, drawCount: newCount, phase: "infect", infectCount: 0 };
+            }
+            return { ...prev, drawCount: newCount };
+          });
+        }
+        // January: after 2nd epidemic resolves (3 remain in deck), trigger COdA naming
+        if (isJan && codaColor === null) {
+          const deckAfter = deckNow[deckNow.length - 1] === "epidemic"
+            ? deckNow.slice(0, -1)
+            : deckNow;
+          const epRemaining = deckAfter.filter(c => c === "epidemic").length;
+          if (epRemaining === 3) {
+            const totals = DISEASE_COLORS.map(c => ({ c, n: totalOfColor(cityInfection, c) }));
+            const max = Math.max(...totals.map(t => t.n));
+            const candidates = totals.filter(t => t.n === max).map(t => t.c);
+            if (candidates.length === 1) {
+              const named = candidates[0];
+              setCodaColor(named);
+              localStorage.setItem(LS_CODA_COLOR, named);
+              setCodaCandidates([]);
+            } else {
+              setCodaCandidates(candidates as DiseaseColor[]);
+            }
+            setCodaPopupOpen(true);
+          }
+        }
+      }
+    }, 900);
+  };
+
+  const shuffleEpidemicsIntoDeck = (deck: string[], count: number) => {
+    const embeddedEpidemics = deck.filter(id => id === "epidemic").length;
+    const totalEpidemics = count + embeddedEpidemics;
+    const cityCards = shuffle(deck.filter(id => id !== "epidemic"));
+    const numPiles = Math.max(1, Math.min(totalEpidemics || 5, 5));
+    const base = Math.floor(cityCards.length / numPiles);
+    const extras = cityCards.length % numPiles;
+    const piles: string[][] = [];
+    let idx = 0;
+    for (let p = 0; p < numPiles; p++) {
+      const size = base + (p < extras ? 1 : 0);
+      piles.push(cityCards.slice(idx, idx + size));
+      idx += size;
     }
+    for (let p = 0; p < numPiles && p < totalEpidemics; p++) {
+      const at = Math.floor(Math.random() * (piles[p].length + 1));
+      piles[p].splice(at, 0, "epidemic");
+      piles[p] = shuffle(piles[p]);
+    }
+    piles.sort((a, b) => a.length - b.length);
+    return piles.flat();
   };
 
   const drawInfectionCard = () => {
@@ -416,8 +632,22 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
     }
     const newDeck = [...infectDeck];
     const drawn = newDeck.pop()!;
+    // Compute exact top-card position (with stack offset) before state updates
+    const INF_STEP = 0.10;
+    const fromLayers = Math.max(0, Math.min(infectDeck.length, 10));
+    const fromOffset = (fromLayers - 1) * INF_STEP;
+    const toDiscardLayers = Math.min(infectDiscard.length + 1, 10);
+    const toOffset = (toDiscardLayers - 1) * INF_STEP;
+    setFlippingInfCard({
+      cityId: drawn,
+      fromX: cardInfection.x + fromOffset,
+      fromY: cardInfection.y - fromOffset * BOARD_RATIO,
+      toX: cardInfectionDiscard.x + toOffset,
+      toY: cardInfectionDiscard.y - toOffset * BOARD_RATIO,
+    });
     setInfectDeck(newDeck);
     setInfectDiscard(prev => [...prev, drawn]);
+    setTimeout(() => setFlippingInfCard(null), 700);
 
     const city = CITIES.find(c => c.id === drawn);
     if (city) {
@@ -469,25 +699,19 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
     const px = ((e.clientX - r.left) / r.width) * 100;
     const py = ((e.clientY - r.top) / r.height) * 100;
 
-    // Outbreak track: click any of the 9 positions
-    const obW = states[0].w; // use outbreak marker's size
-    for (let i = 0; i < OUTBREAK_TRACK.length; i++) {
-      const p = OUTBREAK_TRACK[i];
-      if (p.x === 0 && p.y === 0) continue; // not calibrated yet
-      if (inBox(px, py, p.x, p.y, obW)) {
-        setOutbreakPos(i);
-        return;
+    // Outbreak / infection tracks: only freely clickable in pure sandbox (no game, no deal phase, infection done)
+    if (!setup && !onChooseRoles && setupRemaining === 0) {
+      const obW = states[0].w;
+      for (let i = 0; i < OUTBREAK_TRACK.length; i++) {
+        const p = OUTBREAK_TRACK[i];
+        if (p.x === 0 && p.y === 0) continue;
+        if (inBox(px, py, p.x, p.y, obW)) { setOutbreakPos(i); return; }
       }
-    }
-
-    // Infection rate track: click any of the 7 positions
-    const irW = states[2].w;
-    for (let i = 0; i < INFECTION_TRACK.length; i++) {
-      const p = INFECTION_TRACK[i];
-      if (p.x === 0 && p.y === 0) continue;
-      if (inBox(px, py, p.x, p.y, irW)) {
-        setInfectionPos(i);
-        return;
+      const irW = states[2].w;
+      for (let i = 0; i < INFECTION_TRACK.length; i++) {
+        const p = INFECTION_TRACK[i];
+        if (p.x === 0 && p.y === 0) continue;
+        if (inBox(px, py, p.x, p.y, irW)) { setInfectionPos(i); return; }
       }
     }
 
@@ -497,14 +721,16 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
       if (!m.curePos) continue;
       const startPos = states[mi];
 
-      if (inBox(px, py, startPos.x, startPos.y, startPos.w)) {
-        setCured(prev => { const n = [...prev]; n[ci] = false; return n; });
-        setEradicated(prev => { const n = [...prev]; n[ci] = false; return n; });
-        return;
-      }
-      if (inBox(px, py, m.curePos.x, m.curePos.y, startPos.w)) {
-        setCured(prev => { const n = [...prev]; n[ci] = true; return n; });
-        return;
+      if (!setup) {
+        if (inBox(px, py, startPos.x, startPos.y, startPos.w)) {
+          setCured(prev => { const n = [...prev]; n[ci] = false; return n; });
+          setEradicated(prev => { const n = [...prev]; n[ci] = false; return n; });
+          return;
+        }
+        if (inBox(px, py, m.curePos.x, m.curePos.y, startPos.w)) {
+          setCured(prev => { const n = [...prev]; n[ci] = true; return n; });
+          return;
+        }
       }
     }
   };
@@ -525,6 +751,16 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
     setOutbreakPos(prev => Math.min(OUTBREAK_TRACK.length - 1, prev + 1));
     const city = CITIES.find(c => c.id === cityId);
     if (!city) return;
+    // January onward: each outbreak permanently raises that city's panic level
+    if (scenario !== "month0") {
+      setPanicLevels(prev => {
+        const cur = prev[cityId] ?? 0;
+        if (cur >= 5) return prev;
+        const next = { ...prev, [cityId]: cur + 1 };
+        localStorage.setItem(LS_PANIC_LEVELS, JSON.stringify(next));
+        return next;
+      });
+    }
     const newAlready = new Set([...baseAlready, cityId]);
     setOutbreakAlready(newAlready);
     const targets = city.neighbors.filter(nid => !newAlready.has(nid));
@@ -569,62 +805,14 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
       if (pendingEventCard) resolveEventCard(pendingEventCard);
       return;
     }
-    if (eventMode === 'remote-treatment') {
-      const city = CITIES.find(c => c.id === cityId);
-      if (!city) return;
-      const counts = cityInfection[cityId] ?? {};
-      // Remove a cube of any color present — prefer the native color, else the
-      // first foreign color with cubes (e.g. placed by a neighbor's outbreak).
-      const native = city.color as DiseaseColor;
-      const color: DiseaseColor | undefined = (counts[native] ?? 0) > 0
-        ? native
-        : DISEASE_COLORS.find(c => (counts[c] ?? 0) > 0);
-      if (!color) return;
-      const cur = counts[color] ?? 0;
-      const next = { ...cityInfection, [cityId]: { ...cityInfection[cityId], [color]: cur - 1 } };
-      saveCityInfection(next);
-      const ci = COLOR_TO_CURE_IDX[color];
-      if (ci !== undefined && cured[ci] && !eradicated[ci] && totalOfColor(next, color) === 0)
-        setEradicated(prev => { const n = [...prev]; n[ci] = true; return n; });
-      const left = eventModeRemaining - 1;
-      if (left <= 0) { cubeSnapshotRef.current = null; setEventMode(null); setEventModeRemaining(0); if (pendingEventCard) resolveEventCard(pendingEventCard); }
-      else setEventModeRemaining(left);
-      return;
-    }
-    if (eventMode === 'airlift' && airliftPawn) {
-      const pi = (['p1','p2','p3','p4'] as const).indexOf(airliftPawn as 'p1'|'p2'|'p3'|'p4');
-      const nextCities = [...playerCities]; nextCities[pi] = cityId;
-      savePlayerCities(nextCities); snapPawnToCity(airliftPawn, cityId);
-      setEventMode(null); setAirliftPawn(null); setHighlightCities([]);
-      if (pendingEventCard) resolveEventCard(pendingEventCard);
-      return;
-    }
 
     if (setup && turnState.phase === "actions") {
-      if (dispatcherTarget && highlightCities.includes(cityId)) {
-        // Dispatcher transport: move selected pawn to this teammate city
-        const pi = (['p1','p2','p3','p4'] as const).indexOf(dispatcherTarget as 'p1'|'p2'|'p3'|'p4');
-        const nextCities = [...playerCities]; nextCities[pi] = cityId;
-        savePlayerCities(nextCities); snapPawnToCity(dispatcherTarget, cityId);
-        setDispatcherTarget(null); setHighlightCities([]);
-        saveTurnState(consumeAction(turnState));
-        return;
-      }
       if (turnState.pendingCharter) {
         // Charter flight: fly to any city
         const nextCities = [...playerCities]; nextCities[turnState.currentPlayerIndex] = cityId;
         savePlayerCities(nextCities); snapPawnToCity(currentPlayerKey, cityId);
         setHighlightCities([]);
         saveTurnState(consumeAction({ ...turnState, pendingCharter: false }));
-        return;
-      }
-      if (turnState.pendingShuttle) {
-        // Shuttle flight: only valid if target has a research station
-        if (!researchStations.has(cityId) || cityId === currentPlayerCityId) return;
-        const nextCities = [...playerCities]; nextCities[turnState.currentPlayerIndex] = cityId;
-        savePlayerCities(nextCities); snapPawnToCity(currentPlayerKey, cityId);
-        setHighlightCities([]);
-        saveTurnState(consumeAction({ ...turnState, pendingShuttle: false }));
         return;
       }
       // No pending action: block manual cube placement in game phase
@@ -660,10 +848,33 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
     const cur = cityInfection[cityId]?.[color] ?? 0;
     if (cur <= 0) return;
 
+    // Remote Treatment: right-click any cube to remove it; resolve after 2 removals
+    if (eventMode === 'remote-treatment') {
+      const next = { ...cityInfection, [cityId]: { ...cityInfection[cityId], [color]: cur - 1 } };
+      saveCityInfection(next);
+      const ci = COLOR_TO_CURE_IDX[color];
+      if (ci !== undefined && cured[ci] && !eradicated[ci] && totalOfColor(next, color) === 0) {
+        setEradicated(prev => { const n = [...prev]; n[ci] = true; return n; });
+        if (isJan && !diseaseNames[color]) setNamePopupColor(color as DiseaseColor);
+      }
+      const left = eventModeRemaining - 1;
+      if (left <= 0) {
+        cubeSnapshotRef.current = null;
+        setEventMode(null); setEventModeRemaining(0);
+        if (pendingEventCard) resolveEventCard(pendingEventCard);
+      } else {
+        setEventModeRemaining(left);
+      }
+      return;
+    }
+
     if (setup) {
       // In game phase: cube removal only via Treat Disease action
       if (turnState.phase !== "actions") return;
       if (cityId !== currentPlayerCityId) return; // must be in same city
+      // January: COdA-403a costs 2 actions; block if insufficient
+      const isCoda = isJan && codaColor !== null && color === codaColor;
+      if (isCoda && turnState.actionsRemaining < 2) return;
       const ci = COLOR_TO_CURE_IDX[color];
       const isDiseaseCured = ci !== undefined && cured[ci];
       if (isDiseaseCured) {
@@ -672,6 +883,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
         saveCityInfection(next);
         if (ci !== undefined && !eradicated[ci] && totalOfColor(next, color) === 0) {
           setEradicated(prev => { const n = [...prev]; n[ci] = true; return n; });
+          if (isJan && !diseaseNames[color]) setNamePopupColor(color as DiseaseColor);
         }
       } else {
         // Medic removes ALL cubes of a color in one Treat action, even uncured
@@ -680,9 +892,11 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
         saveCityInfection(next);
         if (ci !== undefined && cured[ci] && !eradicated[ci] && totalOfColor(next, color) === 0) {
           setEradicated(prev => { const n = [...prev]; n[ci] = true; return n; });
+          if (isJan && !diseaseNames[color]) setNamePopupColor(color as DiseaseColor);
         }
       }
-      saveTurnState(consumeAction(turnState));
+      const nextTs = isCoda ? consumeAction(consumeAction(turnState)) : consumeAction(turnState);
+      saveTurnState(nextTs);
       return;
     }
 
@@ -733,16 +947,17 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   };
 
   // Cubes of each color on cities (order: black, yellow, red, blue)
-  const placedPerColor = DISEASE_COLORS.map(color => totalOfColor(cityInfection, color));
+  const placedPerColor = useMemo(() => DISEASE_COLORS.map(color => totalOfColor(cityInfection, color)), [cityInfection]);
 
   const allObjectivesDone = objectiveCount > 0 && objectiveCompleted.slice(0, objectiveCount).every(Boolean);
   const cubesExhausted = placedPerColor.some(count => count >= 24);
   const playerDeckEmpty = playerDeck.length === 0 && epidemicCount === 0;
   const outbreakMaxed = outbreakPos >= OUTBREAK_TRACK.length - 1;
   const gameResult: 'win' | 'lose' | null = allObjectivesDone ? 'win'
-    : (outbreakMaxed || playerDeckEmpty || cubesExhausted) ? 'lose'
+    : (gaveUp || outbreakMaxed || playerDeckEmpty || cubesExhausted) ? 'lose'
     : null;
-  const loseReason = outbreakMaxed ? "Too many outbreaks!"
+  const loseReason = gaveUp ? "The team gave up."
+    : outbreakMaxed ? "Too many outbreaks!"
     : playerDeckEmpty ? "Player deck exhausted!"
     : "Disease cubes exhausted!";
 
@@ -756,6 +971,34 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   const dealComplete = activeDealCount >= 2 && dealCounts.slice(0, activeDealCount).every(c => c >= dealRequiredCards);
   // maxDealTargetIdx: highest player index that can receive a card (cannot skip a player)
   const maxDealTargetIdx = Math.min(activeDealCount, 3);
+
+  // Auto-shuffle epidemic cards into the deck when game starts (setup prop arrives after roles chosen).
+  // epidemicCount persists as 0 after embedding, so this only fires on a fresh game (not reload).
+  const setupShuffleRef = useRef(false);
+  useEffect(() => {
+    if (!setup || setupShuffleRef.current || epidemicCount === 0) return;
+    setupShuffleRef.current = true;
+    setIsShufflingPlayer(true);
+    setTimeout(() => setIsShufflingPlayer(false), 900);
+    setPlayerDeck(prev => shuffleEpidemicsIntoDeck(prev, epidemicCount));
+    setEpidemicCount(0);
+    setPlayerFlipped(new Set());
+  }, [setup, epidemicCount]);
+
+  // Stable callback refs so React.memo(CityLayer) isn't defeated by new function objects each render.
+  const _cityClickImpl = useRef(handleCityClick);
+  _cityClickImpl.current = handleCityClick;
+  const cityLayerRightClick = (cityId: string, e: React.MouseEvent) => {
+    if (e.type === "contextmenu") {
+      e.preventDefault();
+      if (setup || scenario !== "board") return;
+      setCityMenu({ cityId, x: e.clientX, y: e.clientY });
+    }
+  };
+  const _cityRightClickImpl = useRef(cityLayerRightClick);
+  _cityRightClickImpl.current = cityLayerRightClick;
+  const stableOnCityClick = useCallback((cityId: string) => _cityClickImpl.current(cityId), []);
+  const stableOnCityRightClick = useCallback((cityId: string, e: React.MouseEvent) => _cityRightClickImpl.current(cityId, e), []);
 
   return (
     <div style={{ maxWidth: 1100, margin: "0 auto" }}>
@@ -833,11 +1076,6 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
               </span>
             );
           })}
-          {dealComplete && (
-            <span style={{ color: "#ffcc44", fontWeight: 700, marginLeft: 4 }}>
-              ⚠ Shuffle 5 epidemic cards into the player deck now!
-            </span>
-          )}
           <button
             disabled={!dealComplete}
             onClick={() => onChooseRoles?.(activeDealCount)}
@@ -876,7 +1114,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
           <span style={{ color: "#ff9933", fontWeight: 700, fontSize: 14 }}>☣ EPIDEMIC</span>
           {epidemicState.phase === 'infect' ? (
             <span style={{ color: "#cc8844" }}>
-              Step 2 — Right-click the <strong>infection deck</strong> → <strong>Draw Bottom</strong>
+              Step 2 — <strong>Left-click</strong> the infection deck to draw the bottom card
             </span>
           ) : (
             <>
@@ -895,20 +1133,6 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
               <span style={{ color: "#cc8844" }}>
                 Step 3 — Right-click the <strong>infection discard</strong> → Shuffle to Intensify
               </span>
-              <button
-                onClick={() => {
-                  setEpidemicState(null);
-                  setEpidemicCount(c => c - 1);
-                  setPlayerFlipped(prev => { const n = new Set(prev); n.delete("epidemic"); return n; });
-                  setPlayerDiscard(prev => [...prev, "epidemic"]);
-                }}
-                style={{
-                  marginLeft: "auto", padding: "4px 14px", fontSize: 11,
-                  background: "#0a1a2a", border: "1px solid #336699", color: "#88bbdd",
-                  borderRadius: 5, cursor: "pointer", whiteSpace: "nowrap",
-                }}>
-                One Quiet Night — Skip
-              </button>
             </>
           )}
         </div>
@@ -937,11 +1161,9 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
           selectedHandCards={selectedHandCards}
           cured={cured}
           roleId={roleId}
-          dispatcherTarget={dispatcherTarget}
+
           quietNight={quietNight}
           eventMode={eventMode}
-          flexibleAidSelected={flexibleAidSelected}
-          pendingEventCard={pendingEventCard}
           handCards={handCards}
           cureThreshold={cureThreshold}
           cubeSnapshotRef={cubeSnapshotRef}
@@ -966,15 +1188,60 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
         />
       )}
 
+      {setup && (
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 4, gap: 6 }}>
+          {undoSnapshot && turnState.phase === "actions" && (
+            <button onClick={restoreUndoSnapshot}
+              style={{ padding: "3px 10px", fontSize: 11, borderRadius: 4, cursor: "pointer", background: "#1a2a1a", border: "1px solid #446644", color: "#88cc88" }}>
+              ↩ Undo
+            </button>
+          )}
+          {confirmGiveUp ? (
+            <>
+              <span style={{ fontSize: 11, color: "#cc8888", alignSelf: "center", marginRight: 8 }}>Give up and lose this game?</span>
+              <button onClick={() => { setGaveUp(true); setConfirmGiveUp(false); setDismissedResult(null); }}
+                style={{ padding: "3px 10px", fontSize: 11, borderRadius: 4, cursor: "pointer", background: "#3a1a1a", border: "1px solid #aa3333", color: "#ff8888", marginRight: 4 }}>
+                Yes, Give Up
+              </button>
+              <button onClick={() => setConfirmGiveUp(false)}
+                style={{ padding: "3px 8px", fontSize: 11, borderRadius: 4, cursor: "pointer", background: "#1a1a1a", border: "1px solid #555", color: "#888" }}>
+                Cancel
+              </button>
+            </>
+          ) : (
+            <button onClick={() => setConfirmGiveUp(true)}
+              style={{ padding: "3px 10px", fontSize: 11, borderRadius: 4, cursor: "pointer", background: "#1a1a1a", border: "1px solid #553333", color: "#aa6666" }}>
+              Give Up
+            </button>
+          )}
+        </div>
+      )}
+
       {(eventMode || quietNight) && (
         <div style={{ textAlign: "center", fontSize: 11, fontFamily: "monospace", marginBottom: 4, color: "#aac" }}>
           {quietNight && turnState.phase === "infect" ? "One Quiet Night active"
             : eventMode === 'govt-grant' ? "Government Grant — click a city"
-            : eventMode === 'remote-treatment' ? `Remote Treatment — click a city (${eventModeRemaining} left)`
-            : eventMode === 'airlift' && !airliftPawn ? "Airlift — tap a pawn"
-            : eventMode === 'airlift' && airliftPawn ? "Airlift — click any city"
+            : eventMode === 'remote-treatment' ? `Remote Treatment — right-click a cube (${eventModeRemaining} left)`
+            : eventMode === 'airlift' ? "Airlift — drag a pawn to any city"
             : eventMode === 'resilient-pop' ? "Resilient Population — click a card in the popup to remove it from the game"
-            : eventMode === 'flexible-aid' ? `Flexible Aid — tap city cards (${flexibleAidSelected.length}/3)`
+            : eventMode === 'flexible-aid' ? (
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                {`Flexible Aid — drag any card to the graveyard (${flexibleAidSelected.length}/3 selected)`}
+                {flexibleAidSelected.length >= 1 && (
+                  <button onClick={() => {
+                    const count = flexibleAidSelected.length;
+                    setTurnState_(prev => {
+                      const base = { ...prev, actionsRemaining: prev.actionsRemaining + count };
+                      const next = (prev.phase === 'draw' && prev.drawCount === 0) ? { ...base, phase: 'actions' as const } : base;
+                      localStorage.setItem(LS_TURN, JSON.stringify(next)); return next;
+                    });
+                    setEventMode(null); setFlexibleAidSelected([]);
+                  }} style={{ padding: "2px 8px", fontSize: 11, borderRadius: 4, cursor: "pointer", background: "#1a3a1a", border: "1px solid #4a9a4a", color: "#88dd88" }}>
+                    OK (+{flexibleAidSelected.length})
+                  </button>
+                )}
+              </span>
+            )
             : null}
         </div>
       )}
@@ -992,6 +1259,18 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
         <button onClick={() => setCalibrating(v => !v)}>
           {calibrating ? "Done calibrating" : "Calibrate markers"}
         </button>
+        <button onClick={() => {
+          if (window.confirm("Reset all game state?")) {
+            clearGameState();
+            localStorage.removeItem(LS_CODA_COLOR);
+            localStorage.removeItem(LS_PANIC_LEVELS);
+            localStorage.removeItem(LS_DISEASE_NAMES);
+            onMainMenu?.();
+            window.location.reload();
+          }
+        }} style={{ background: "#2a1a1a", border: "1px solid #664444", color: "#cc8888" }}>
+          Reset
+        </button>
         {calibrating && (
           <>
             <button onClick={() => {
@@ -1001,6 +1280,12 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
               ].join("\n");
               navigator.clipboard.writeText(text).then(() => alert("Copied!")).catch(() => window.prompt("Tokens", text));
             }}>Copy tokens</button>
+            <button onClick={() => {
+              MARKERS.forEach((m, i) => {
+                setStates(prev => { const next = [...prev]; next[i] = m.def; return next; });
+                localStorage.removeItem(m.key);
+              });
+            }}>Reset markers to default</button>
             <span style={{ color: "#9ab", fontSize: 12, alignSelf: "center" }}>Drag to move · drag ↘ corner to resize</span>
           </>
         )}
@@ -1010,9 +1295,11 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
         ref={boardRef}
         onClick={handleBoardClick}
         onContextMenu={e => e.preventDefault()}
+        onDragStart={e => e.preventDefault()}
         style={{
           position: "relative",
           width: "100%",
+          userSelect: "none",
           aspectRatio: "918 / 568",
           borderRadius: 6,
           cursor: calibrating ? "grab" : "default",
@@ -1026,20 +1313,87 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
             style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "fill", userSelect: "none", pointerEvents: "none" }}
           />
         </div>
+        {/* January: after 2nd epidemic — disease sticker on cube tray + COdA-403a label on cure vial box */}
+        {isJan && codaColor !== null && (() => {
+          const meta = _SUPPLY_META.find(m => m.color === codaColor);
+          if (!meta) return null;
+          const ci = COLOR_TO_CURE_IDX[codaColor];
+          // Cure marker def positions: CURE_INDICES maps ci → MARKERS index
+          const cureMarker = MARKERS[CURE_INDICES[ci]];
+          return (
+            <>
+              {/* Disease sticker at top of the disease cube tray */}
+              <img
+                src={janDiseaseStickerSrc}
+                alt="COdA-403a disease sticker"
+                draggable={false}
+                style={{
+                  position: "absolute",
+                  left: `${meta.iconX}%`,
+                  top: `${meta.iconY - 5.5}%`,
+                  width: "4%",
+                  transform: "translate(-50%, -50%)",
+                  pointerEvents: "none",
+                  userSelect: "none",
+                  zIndex: 5,
+                }}
+              />
+              {/* COdA-403a label in the white cure vial box */}
+              <div style={{
+                position: "absolute",
+                left: `${cureMarker.def.x}%`,
+                top: `${cureMarker.def.y}%`,
+                transform: "translate(-50%, -50%)",
+                fontSize: "0.55vw",
+                fontWeight: 700,
+                color: "#1a1a1a",
+                fontFamily: "monospace",
+                whiteSpace: "nowrap",
+                pointerEvents: "none",
+                userSelect: "none",
+                zIndex: 5,
+              }}>
+                COdA-403a
+              </div>
+            </>
+          );
+        })()}
+
+        {/* Disease supply piles — static scattered positions, front cubes hidden as placed */}
+        {SUPPLY_PILES.flatMap(({ color, fill, src }, ci) => {
+          const remaining = 24 - Math.min(24, placedPerColor[ci]);
+          const pile = SUPPLY_PILES[ci].positions;
+          return [
+            <img key={`supply-icon-${color}`} src={src} alt={color} draggable={false} style={{
+              position: "absolute",
+              left: `${SUPPLY_PILES[ci].iconX}%`, top: `${SUPPLY_PILES[ci].iconY}%`,
+              transform: "translate(-50%, -50%)",
+              width: "5%", height: "5%",
+              objectFit: "contain",
+              pointerEvents: "none",
+              zIndex: 4,
+            }} />,
+            ...pile.slice(0, remaining).map((pos, i) => (
+              <div key={`supply-cube-${color}-${i}`} style={{
+                position: "absolute",
+                left: `${pos.x}%`, top: `${pos.y}%`,
+                width: `${CUBE_W}%`, aspectRatio: "1",
+                transform: "translate(-50%, -50%)",
+                pointerEvents: "none",
+                zIndex: 4 + i,
+              }}>
+                <CubeSvg color={fill} />
+              </div>
+            )),
+          ];
+        })}
+
         <CityLayer
           roadblocks={roadblocks}
           onRoadblockChange={rb => { setRoadblocks(rb); saveRoadblocks(rb); }}
-          onCityClick={calibrating ? undefined : (cityId) => handleCityClick(cityId)}
-          onCityRightClick={calibrating ? undefined : (cityId, e) => {
-            if (e.type === "contextmenu") {
-              e.preventDefault();
-              // City context menu only available in sandbox board mode, pre-game
-              if (setup || scenario !== "board") return;
-              setCityMenu({ cityId, x: e.clientX, y: e.clientY });
-            }
-          }}
+          onCityClick={calibrating ? undefined : stableOnCityClick}
+          onCityRightClick={calibrating ? undefined : stableOnCityRightClick}
           highlightCities={highlightCities.length > 0 ? highlightCities : undefined}
-          highlightClickOnly={turnState.pendingShuttle}
         />
 
         {/* City infection cubes — multi-color, up to 3 per color */}
@@ -1063,6 +1417,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
               const gx = -totalW / 2 + gi * groupSpacing;
               return LAYOUTS[count - 1].map(([dx, dy], i) => (
                 <div key={`${c.id}-${col}-${i}`}
+                  onClick={e => { e.stopPropagation(); if (!onChooseRoles) handleCityClick(c.id); }}
                   onContextMenu={e => {
                     e.preventDefault(); e.stopPropagation();
                     if (!onChooseRoles) handleCityRightClick(c.id, col as DiseaseColor);
@@ -1084,47 +1439,23 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
           });
         })()}
 
-        {/* 96 draggable disease cubes (24 per color) — front cubes hidden when placed on cities */}
-        {cubes.map((cube, i) => {
-          const ci = Math.floor(i / 24);
-          const j = i % 24;
-          if (j >= 24 - Math.min(24, placedPerColor[ci])) return null;
-          const color = CUBE_COLORS[ci];
-          const onCubeDown = (e: React.PointerEvent<HTMLDivElement>) => {
-            if (calibrating) return;
-            e.stopPropagation();
-            e.preventDefault();
-            const el = e.currentTarget; el.setPointerCapture(e.pointerId);
-            const z = ++zCounter.current;
-            setCubeZ(prev => { const n = [...prev]; n[i] = z; return n; });
-            const r = boardRef.current!.getBoundingClientRect();
-            const sx = e.clientX; const sy = e.clientY; const ox = cube.x; const oy = cube.y;
-            const onMove = (ev: PointerEvent) => {
-              const nx = ox + ((ev.clientX - sx) / r.width) * 100;
-              const ny = oy + ((ev.clientY - sy) / r.height) * 100;
-              setCubes(prev => { const n = [...prev]; n[i] = { x: nx, y: ny }; return n; });
-            };
-            const onUp = () => {
-              el.removeEventListener("pointermove", onMove as any);
-              el.removeEventListener("pointerup", onUp);
-              setCubes(prev => prev);
-            };
-            el.addEventListener("pointermove", onMove as any); el.addEventListener("pointerup", onUp);
-          };
-          return (
-            <div key={`cube-${i}`} onPointerDown={onCubeDown} style={{
-              position: "absolute",
-              left: `${cube.x}%`, top: `${cube.y}%`,
-              width: `${CUBE_W}%`, aspectRatio: "1",
-              transform: "translate(-50%, -50%)",
-              cursor: calibrating ? "default" : "grab",
-              zIndex: cubeZ[i] + 5,
-              touchAction: "none", userSelect: "none",
-            }}>
-              <CubeSvg color={color} />
-            </div>
-          );
-        })}
+        {/* Infection deck ghost — always-present right-click target even when deck is empty */}
+        {/* During gameplay only allow right-click when epidemic infect step is pending */}
+        <div
+          onContextMenu={e => {
+            e.preventDefault(); e.stopPropagation();
+            if (setup) return; // right-click menu only in sandbox mode
+            setDeckMenu({ x: e.clientX, y: e.clientY });
+          }}
+          style={{
+            position: "absolute",
+            left: `${cardInfection.x}%`, top: `${cardInfection.y}%`,
+            width: `${cardInfection.w}%`, aspectRatio: "2.5/3.5",
+            transform: "translate(-50%, -50%)",
+            zIndex: 8,
+            cursor: "context-menu",
+          }}
+        />
 
         {/* Infection draw pile — stacked visual */}
         {(() => {
@@ -1156,8 +1487,20 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
             return (
               <div key={`inf-deck-${i}`}
                 onPointerDown={isTop ? onDragDown : undefined}
-                onClick={isTop && !calibrating && !onChooseRoles ? drawInfectionCard : undefined}
-                onContextMenu={isTop && !calibrating ? (e) => { e.preventDefault(); setDeckMenu({ x: e.clientX, y: e.clientY }); } : undefined}
+                onClick={isTop && !calibrating && !onChooseRoles ? (() => {
+                  // Epidemic infect phase: left-click draws bottom card
+                  if (epidemicState?.phase === 'infect') {
+                    if (infectDeck.length === 0) return;
+                    const bottom = infectDeck[0];
+                    setInfectDeck(infectDeck.slice(1));
+                    setInfectDiscard(prev => [...prev, bottom]);
+                    epidemicInfect(bottom);
+                    return;
+                  }
+                  // Normal infect phase or initial setup
+                  if (!setup ? setupRemaining > 0 : turnState.phase === "infect") drawInfectionCard();
+                }) : undefined}
+                onContextMenu={isTop && !calibrating && !setup ? (e) => { e.preventDefault(); setDeckMenu({ x: e.clientX, y: e.clientY }); } : undefined}
                 style={{
                   position: "absolute",
                   left: `${card.x + offset}%`, top: `${card.y - offset * BOARD_RATIO}%`,
@@ -1185,9 +1528,69 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
           });
         })()}
 
+        {/* Debug: epidemic count + click to see full deck */}
+        {boardPxW > 0 && (() => {
+          const embeddedEps = playerDeck.filter(id => id === "epidemic").length;
+          const totalEps = embeddedEps + epidemicCount;
+          return (
+            <>
+              <div
+                onClick={() => setShowDebugDeck(prev => !prev)}
+                style={{
+                  position: "absolute",
+                  left: `${cardPlayer.x}%`, top: `${cardPlayer.y - cardPlayer.w * BOARD_RATIO * 0.8}%`,
+                  transform: "translate(-50%, -50%)",
+                  zIndex: 30,
+                  fontSize: 10, color: "#ffcc44", fontFamily: "system-ui, sans-serif",
+                  whiteSpace: "nowrap", textAlign: "center",
+                  cursor: "pointer", userSelect: "none",
+                }}>
+                {`epidemics: ${totalEps} · ${playerDeck.length} cards [click]`}
+              </div>
+              {showDebugDeck && (
+                <div
+                  onClick={() => setShowDebugDeck(false)}
+                  style={{
+                    position: "absolute",
+                    left: `${cardPlayer.x}%`, top: `${cardPlayer.y + cardPlayer.w * BOARD_RATIO}%`,
+                    transform: "translateX(-50%)",
+                    zIndex: 9999,
+                    background: "#0a1520ee",
+                    border: "1px solid #ffcc44",
+                    borderRadius: 6, padding: "6px 10px",
+                    fontFamily: "system-ui, sans-serif", fontSize: 10,
+                    color: "#ddd", maxHeight: "30vh", overflowY: "auto",
+                    cursor: "pointer", minWidth: 120,
+                  }}>
+                  <div style={{ color: "#ffcc44", fontWeight: 700, marginBottom: 4 }}>
+                    Player Deck (top → bottom)
+                  </div>
+                  {[...playerDeck].reverse().map((id, i) => {
+                    const city = CITIES.find(c => c.id === id);
+                    const isEp = id === "epidemic";
+                    const FUND_NAMES: Record<string, string> = {
+                      fund1: 'One Quiet Night', fund2: 'Remote Treatment',
+                      fund3: 'Government Grant', fund4: 'Resilient Population',
+                      fund5: 'Forecast', fund6: 'Airlift',
+                      fund7: 'Borrowed Time', fund8: 'Flexible Aid',
+                    };
+                    const label = isEp ? "☣ EPIDEMIC" : (city?.name ?? FUND_NAMES[id] ?? id);
+                    const color = isEp ? "#ff6644" : FUND_NAMES[id] ? "#aaddff" : "#ccc";
+                    return (
+                      <div key={i} style={{ color, lineHeight: 1.5 }}>
+                        {i + 1}. {label}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          );
+        })()}
+
         {/* Player deck ghost — always-present right-click target even when deck is empty */}
         <div
-          onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setPlayerDeckMenu({ x: e.clientX, y: e.clientY }); }}
+          onContextMenu={e => { e.preventDefault(); e.stopPropagation(); if (setup) return; setPlayerDeckMenu({ x: e.clientX, y: e.clientY }); }}
           style={{
             position: "absolute",
             left: `${cardPlayer.x}%`, top: `${cardPlayer.y}%`,
@@ -1232,19 +1635,43 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
             const faceUp = isTop && playerFlipped.has(cityId);
             const pxW = boardPxW > 0 ? (card.w / 100) * boardPxW : 0;
 
-            const onTopDown = isTop && !calibrating
+            const canDrawPlayer = isTop && !calibrating && !epidemicState && (
+              (!!setup && turnState.phase === "draw") ||          // in-game draw phase
+              !!onChooseRoles ||                                   // deal phase
+              (!setup && !onChooseRoles && setupRemaining === 0)  // post-infection sandbox
+            );
+            const onTopDown = canDrawPlayer
               ? makePlayerDeckDraw({
                   boardRef, playerDeck, playerDiscard, cardPlayerDiscard, setup, turnState,
-                  handCards, currentPlayerKey, onChooseRoles, maxDealTargetIdx,
+                  handCards, currentPlayerKey, onChooseRoles, maxDealTargetIdx, dealRequiredCards, dealCounts,
                   setPlayerDrag, setPlayerDeck, setPlayerDiscard, setPlayerFlipped,
                   saveTurnState, saveHandCards,
+                  onFlip: (id) => {
+                    const PL_STEP = 0.10;
+                    const plLayers = Math.max(0, Math.min(playerDeck.length, 10));
+                    const plOffset = (plLayers - 1) * PL_STEP;
+                    setFlippingPlayerCard({ cityId: id, x: cardPlayer.x + plOffset, y: cardPlayer.y - plOffset * BOARD_RATIO });
+                    setTimeout(() => setFlippingPlayerCard(null), 550);
+                    if (id === "epidemic") triggerEpidemic();
+                  },
+                  onEpidemic: triggerEpidemic,
+                  onUnflip: (id) => {
+                    const PL_STEP = 0.10;
+                    const plLayers = Math.max(0, Math.min(playerDeck.length, 10));
+                    const plOffset = (plLayers - 1) * PL_STEP;
+                    setFlippingPlayerCard({ cityId: id, x: cardPlayer.x + plOffset, y: cardPlayer.y - plOffset * BOARD_RATIO, reverse: true });
+                    setTimeout(() => {
+                      setFlippingPlayerCard(null);
+                      setPlayerFlipped(prev => { const n = new Set(prev); n.delete(id); return n; });
+                    }, 550);
+                  },
                 }, cityId, faceUp)
               : (isTop ? onDragDown : undefined);
 
             return (
               <div key={`player-deck-${i}`}
                 onPointerDown={onTopDown}
-                onContextMenu={isTop && !calibrating ? e => { e.preventDefault(); e.stopPropagation(); setPlayerDeckMenu({ x: e.clientX, y: e.clientY }); } : undefined}
+                onContextMenu={isTop && !calibrating && !setup ? e => { e.preventDefault(); e.stopPropagation(); setPlayerDeckMenu({ x: e.clientX, y: e.clientY }); } : undefined}
                 style={{
                   position: "absolute",
                   left: `${card.x + offset}%`, top: `${card.y - offset * BOARD_RATIO}%`,
@@ -1256,15 +1683,17 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                   boxSizing: "border-box",
                   opacity: playerDrag?.cityId === cityId ? 0.35 : 1,
                 }}>
-                {faceUp && pxW > 0
-                  ? (isEpidemic
-                      ? <div style={{ width: "100%", aspectRatio: "2.5/3.5", overflow: "hidden" }}><img src={epidemicCardSrc} alt="Epidemic" draggable={false} style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: "bottom", display: "block", pointerEvents: "none" }} /></div>
-                      : isFunding
-                      ? <div style={{ width: "100%", aspectRatio: "2.5/3.5", overflow: "hidden", position: "relative" }}><img src={FUND_IMGS[cityId]} draggable={false} style={{ position: "absolute", bottom: 0, left: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: "bottom", display: "block", pointerEvents: "none" }} /></div>
-                      : <PlayerCard city={city!} width={pxW} />)
-                  : <img src={playerCardBackSrc} alt="" draggable={false}
-                      style={{ width: "100%", height: "auto", display: "block", userSelect: "none", pointerEvents: "none" }} />
-                }
+                {/* Hide top card while stationary flip animation is playing */}
+                {!(isTop && flippingPlayerCard?.cityId === cityId) && (
+                  faceUp && pxW > 0
+                    ? (isEpidemic
+                        ? <div style={{ width: "100%", aspectRatio: "2.5/3.5", overflow: "hidden" }}><img src={epidemicCardSrc} alt="Epidemic" draggable={false} style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: "bottom", display: "block", pointerEvents: "none" }} /></div>
+                        : isFunding
+                        ? <div style={{ width: "100%", aspectRatio: "2.5/3.5", overflow: "hidden" }}><img src={FUND_IMGS[cityId]} draggable={false} style={{ width: "100%", height: "100%", objectFit: "fill", display: "block", pointerEvents: "none" }} /></div>
+                        : <PlayerCard city={city!} width={pxW} />)
+                    : <img src={playerCardBackSrc} alt="" draggable={false}
+                        style={{ width: "100%", height: "auto", display: "block", userSelect: "none", pointerEvents: "none" }} />
+                )}
                 {calibrating && isTop && (
                   <div onPointerDown={onResizeDown}
                     style={{ position: "absolute", bottom: 0, right: 0, width: 10, height: 10, background: "#fff", cursor: "se-resize" }} />
@@ -1333,7 +1762,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
             return (
               <div key={`epidemic-${i}`}
                 onPointerDown={isTop ? onTopDown : undefined}
-                onContextMenu={isTop ? e => { e.preventDefault(); e.stopPropagation(); setPlayerDeckMenu({ x: e.clientX, y: e.clientY }); } : undefined}
+                onContextMenu={isTop && !setup ? e => { e.preventDefault(); e.stopPropagation(); setPlayerDeckMenu({ x: e.clientX, y: e.clientY }); } : undefined}
                 style={{
                   position: "absolute",
                   left: `${card.x + offset}%`,
@@ -1418,6 +1847,19 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
           );
         })()}
 
+        {/* Infection discard ghost — always-present right-click target even when discard is empty */}
+        <div
+          onContextMenu={e => { e.preventDefault(); e.stopPropagation(); if (setup && epidemicState?.phase !== 'intensify') return; setDiscardMenu({ x: e.clientX, y: e.clientY }); }}
+          style={{
+            position: "absolute",
+            left: `${cardInfectionDiscard.x}%`, top: `${cardInfectionDiscard.y}%`,
+            width: `${cardInfectionDiscard.w}%`, aspectRatio: "2.5/3.5",
+            transform: "translate(-50%, -50%)",
+            zIndex: 8,
+            cursor: "context-menu",
+          }}
+        />
+
         {/* Infection discard pile — fanned face up */}
         {infectDiscard.length > 0 && boardPxW > 0 && (() => {
           const card = cardInfectionDiscard;
@@ -1447,7 +1889,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                 onClick={isTop && !calibrating ? () => {
                   setShowDiscardPopup(true);
                 } : undefined}
-                onContextMenu={isTop && !calibrating ? (e) => { e.preventDefault(); setDiscardMenu({ x: e.clientX, y: e.clientY }); } : undefined}
+                onContextMenu={isTop && !calibrating ? (e) => { e.preventDefault(); if (setup && epidemicState?.phase !== 'intensify') return; setDiscardMenu({ x: e.clientX, y: e.clientY }); } : undefined}
                 style={{
                   position: "absolute",
                   left: `${card.x + offset}%`, top: `${card.y - offset * BOARD_RATIO}%`,
@@ -1459,11 +1901,91 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                   boxShadow: isTop && epidemicState ? "0 0 0 2px #ff9933, 0 0 16px 4px #ff993366" : "none",
                   borderRadius: isTop && epidemicState ? 4 : 0,
                 }}>
-                <InfectionCard city={city} width={pxW} />
+                {/* Hide top card while fly+flip animation is playing */}
+                {!(isTop && flippingInfCard?.cityId === city.id) && (
+                  <InfectionCard city={city} width={pxW} />
+                )}
               </div>
             );
           });
         })()}
+
+        {/* Infection card fly+flip overlay */}
+        {flippingInfCard && boardPxW > 0 && (() => {
+          const city = CITIES.find(c => c.id === flippingInfCard.cityId);
+          const pxW = (cardInfectionDiscard.w / 100) * boardPxW;
+          if (!city || pxW <= 0) return null;
+          return (
+            <FlyFlipCard
+              key={flippingInfCard.cityId + Date.now()}
+              fromX={flippingInfCard.fromX} fromY={flippingInfCard.fromY}
+              toX={flippingInfCard.toX} toY={flippingInfCard.toY}
+              cardW={pxW} cardH={pxW * (2.5 / 3.5)}
+              backSrc={infectionCardBackSrc}
+              front={<InfectionCard city={city} width={pxW} />}
+              boardW={boardPxW} boardH={boardPxW / BOARD_RATIO}
+              duration={600}
+              onComplete={() => setFlippingInfCard(null)}
+            />
+          );
+        })()}
+
+        {/* Infection shuffle animation overlay */}
+        {isShufflingInfection && boardPxW > 0 && (
+          <ShuffleAnimation
+            discardPos={cardInfectionDiscard}
+            deckPos={cardInfection}
+            cardSrc={infectionCardBackSrc}
+            count={infectDiscard.length}
+            boardW={boardPxW}
+            boardH={boardPxW / BOARD_RATIO}
+            duration={800}
+            onComplete={() => setIsShufflingInfection(false)}
+          />
+        )}
+
+        {/* Player card stationary flip overlay */}
+        {flippingPlayerCard && boardPxW > 0 && (() => {
+          const pxW = (cardPlayer.w / 100) * boardPxW;
+          const pxH = pxW * (3.5 / 2.5);
+          const city = CITIES.find(c => c.id === flippingPlayerCard.cityId);
+          if (pxW <= 0) return null;
+          const front = city
+            ? <PlayerCard city={city} width={pxW} />
+            : <img src={flippingPlayerCard.cityId === "epidemic" ? epidemicCardSrc : playerCardBackSrc}
+                draggable={false} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />;
+          return (
+            <div key={flippingPlayerCard.cityId + Date.now()} style={{
+              position: "absolute",
+              left: `${flippingPlayerCard.x}%`, top: `${flippingPlayerCard.y}%`,
+              transform: "translate(-50%, -50%)",
+              zIndex: 9999, pointerEvents: "none",
+            }}>
+              <CardFlip
+                front={front}
+                backSrc={playerCardBackSrc}
+                width={pxW} height={pxH}
+                duration={500}
+                reverse={flippingPlayerCard.reverse}
+                onComplete={() => {/* timing handled by setTimeout in onFlip/onUnflip */}}
+              />
+            </div>
+          );
+        })()}
+
+        {/* Player deck shuffle animation overlay */}
+        {isShufflingPlayer && boardPxW > 0 && (
+          <ShuffleAnimation
+            discardPos={cardPlayerDiscard}
+            deckPos={cardPlayer}
+            cardSrc={playerCardBackSrc}
+            count={Math.min(playerDiscard.length + handCards.p1.length + handCards.p2.length + handCards.p3.length + handCards.p4.length, 8)}
+            boardW={boardPxW}
+            boardH={boardPxW / BOARD_RATIO}
+            duration={800}
+            onComplete={() => setIsShufflingPlayer(false)}
+          />
+        )}
 
         {/* Player hand areas — always visible in deal phase, dashed in calibrate mode */}
         {(calibrating || !!onChooseRoles) && (['p1', 'p2', 'p3', 'p4'] as const).map(player => {
@@ -1550,24 +2072,29 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
             el.addEventListener("pointermove", onMove as any); el.addEventListener("pointerup", onUp);
           };
           const isPlayerRS = setup && city.id === currentPlayerCityId && turnState.phase === "actions";
+          const rsHand = isPlayerRS ? currentPlayerHand : [];
+          const canShuttle = isPlayerRS && researchStations.size > 1;
+          const canCure = isPlayerRS && DISEASE_COLORS.some(col => {
+            const ci = COLOR_TO_CURE_IDX[col]; if (ci === undefined || cured[ci]) return false;
+            return rsHand.filter(id => CITIES.find(c2 => c2.id === id)?.color === col).length >= cureThreshold;
+          });
+          const rsHasAction = canShuttle || canCure;
+          const inFlightMode = turnState.pendingCharter || turnState.pendingShuttle || !!eventMode;
           return (
-            <div key={`rs-${city.id}`} onPointerDown={onDragDown}
+            <div key={`rs-${city.id}`} onPointerDown={inFlightMode ? undefined : onDragDown}
               onClick={e => {
-                if (!isPlayerRS) return;
-                e.stopPropagation();
-                // Check available actions
-                const canShuttle = researchStations.size > 1;
-                const hand = currentPlayerHand();
-                const canCure = DISEASE_COLORS.some(col => {
-                  const ci = COLOR_TO_CURE_IDX[col]; if (ci === undefined || cured[ci]) return false;
-                  return hand.filter(id => CITIES.find(c2 => c2.id === id)?.color === col).length >= cureThreshold;
-                });
-                if (!canShuttle && !canCure) return;
-                setRsActionMenu({ cityId: city.id, x: e.clientX, y: e.clientY });
+                // During charter/shuttle/airlift modes, left-click RS counts as clicking its city
+                if (inFlightMode) { e.stopPropagation(); handleCityClick(city.id); return; }
+                // Otherwise left-click does nothing (cure/shuttle via right-click only)
               }}
               onContextMenu={e => {
-                if (setup) return; // disable RS removal in game phase
                 e.preventDefault(); e.stopPropagation();
+                if (setup) {
+                  // Game phase: right-click opens cure/shuttle menu
+                  if (rsHasAction) setRsActionMenu({ cityId: city.id, x: e.clientX, y: e.clientY });
+                  return;
+                }
+                // Pre-game: right-click removes RS
                 const next = new Set(researchStations); next.delete(city.id);
                 setResearchStations(next);
                 localStorage.setItem(LS_RESEARCH_STATIONS, JSON.stringify([...next]));
@@ -1578,9 +2105,9 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                 width: `${RESEARCH_W}%`, aspectRatio: "1",
                 transform: "translate(-50%, -50%)",
                 zIndex: 20,
-                cursor: isPlayerRS ? "pointer" : calibrating ? "default" : "grab",
+                cursor: inFlightMode ? "pointer" : calibrating ? "default" : "grab",
                 touchAction: "none", userSelect: "none",
-                boxShadow: isPlayerRS ? "0 0 0 2px #ffdd44, 0 0 10px 3px #ffdd4488" : "none",
+                boxShadow: rsActionMenu?.cityId === city.id ? "0 0 0 2px #ffdd44, 0 0 10px 3px #ffdd4488" : "none",
               }}>
               <img src={researchSrc} alt="Research station" draggable={false}
                 style={{ width: "100%", height: "100%", objectFit: "fill", display: "block", pointerEvents: "none" }} />
@@ -1588,8 +2115,8 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
           );
         })}
 
-        {/* Panic level stickers — rendered on each city's tray */}
-        {CITIES.map(city => {
+        {/* Panic level stickers — month 1 onward only */}
+        {scenario !== "month0" && CITIES.map(city => {
           const level = panicLevels[city.id] ?? 0;
           if (level === 0) return null;
           const t = city.id === "ho-chi-minh-city" ? hcmcTray : (PANIC_TRAY_POS[city.id] ?? { x: city.pos.x, y: city.pos.y });
@@ -1620,7 +2147,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
               zIndex: 8,
               cursor: setup ? "default" : "context-menu",
             }}>
-            <img src={objectiveSrc} alt="Objective" draggable={false}
+            <img src={(isJan && codaColor !== null) ? objectiveUpdatedSrc : objectiveSrc} alt="Objective" draggable={false}
               style={{ width: "100%", height: "auto", display: "block", userSelect: "none", pointerEvents: "none" }} />
             {objectiveCompleted[i] && (
               <div style={{
@@ -1653,9 +2180,44 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
               handCards, cardPlayerDiscard,
               handAreas: { p1: HAND_P1, p2: HAND_P2, p3: HAND_P3, p4: HAND_P4 },
               activePlayers, cureSelecting, eventMode, pendingEventCard, playerCities,
-              playFundCard, handStackOffset, snapPawnToCity, savePlayerCities, saveHandCards,
-              saveTurnState, consumeAction, setHandDrag, setHandHover, setFlexibleAidSelected,
+              handStackOffset, snapPawnToCity, savePlayerCities, saveHandCards,
+              saveTurnState, consumeAction, setHandDrag, setHandHover, flexibleAidSelected, setFlexibleAidSelected,
               setSelectedHandCards, setPlayerDiscard, setPendingDiscardMenu,
+              canPlayFund: (cardId: string) => {
+                if (cardId === 'fund4') return infectDiscard.length > 0;
+                if (cardId === 'fund8') return turnState.phase === 'actions' || (turnState.phase === 'draw' && turnState.drawCount === 0) || turnState.phase === 'discard' || turnState.phase === 'discard-action';
+                return true;
+              },
+              onFlexibleAidComplete: () => {
+                // Auto-triggered when 3rd card is dragged to graveyard
+                setTurnState_(prev => {
+                  const count = flexibleAidSelected.length + 1; // +1 because state hasn't updated yet
+                  const base = { ...prev, actionsRemaining: prev.actionsRemaining + count };
+                  const next = (prev.phase === 'draw' && prev.drawCount === 0) ? { ...base, phase: 'actions' as const } : base;
+                  localStorage.setItem(LS_TURN, JSON.stringify(next)); return next;
+                });
+                setEventMode(null); setFlexibleAidSelected([]);
+              },
+              onFundCardDiscard: (cardId: string, _fundPlayer: string, _fundIdx: number) => {
+                if (!setup) return;
+                if (cardId === 'fund1') { setQuietNight(true); return; }
+                if (cardId === 'fund5') { openForecast(); return; }
+                if (cardId === 'fund7') {
+                  if (turnState.phase === 'actions') {
+                    setTurnState_(prev => { const next = { ...prev, actionsRemaining: prev.actionsRemaining + 2 }; localStorage.setItem(LS_TURN, JSON.stringify(next)); return next; });
+                  } else if (turnState.phase === 'draw' && turnState.drawCount === 0) {
+                    setTurnState_(prev => { const next = { ...prev, phase: 'actions' as const, actionsRemaining: prev.actionsRemaining + 2 }; localStorage.setItem(LS_TURN, JSON.stringify(next)); return next; });
+                  } else {
+                    setBonusActionsNextTurn(b => b + 2);
+                  }
+                  return;
+                }
+                if (cardId === 'fund2') { if (DISEASE_COLORS.reduce((s, col) => s + totalOfColor(cityInfection, col), 0) === 0) return; cubeSnapshotRef.current = cityInfection; setEventMode('remote-treatment'); setEventModeRemaining(2); }
+                else if (cardId === 'fund3') { setEventMode('govt-grant'); setHighlightCities(CITIES.map(c => c.id)); }
+                else if (cardId === 'fund4') { setEventMode('resilient-pop'); setShowDiscardPopup(true); }
+                else if (cardId === 'fund6') { setEventMode('airlift'); }
+                else if (cardId === 'fund8') { setEventMode('flexible-aid'); setFlexibleAidSelected([]); }
+              },
             }, { player, idx: i, cityId, isFundingHand });
             return (
               <div key={`hand-${player}-${cityId}-${i}`}
@@ -1667,8 +2229,10 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                   left: `${area.x}%`,
                   top: `${areaTop + i * stackOffset}%`,
                   width: `${area.w}%`,
-                  transform: "translateX(-50%)",
-                  zIndex: 15 + i,
+                  transform: (isFundingHand && !handDrag && handHover?.player === player && handHover?.idx === i) ? "translateX(-50%) scale(1.4)" : "translateX(-50%)",
+                  transformOrigin: (player === 'p2' || player === 'p4') ? "100% 50%" : "0% 50%",
+                  transition: isFundingHand ? "transform 0.12s ease" : undefined,
+                  zIndex: (handHover?.player === player && handHover?.idx === i) ? 410 : 15 + i,
                   cursor: "grab",
                   opacity: isDragging ? 0.25 : 1,
                   touchAction: "none", userSelect: "none",
@@ -1679,7 +2243,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                 {city
                   ? <PlayerCard city={city} width={pxW} />
                   : isFundingHand
-                  ? <div style={{ width: "100%", aspectRatio: "2.5/3.5", overflow: "hidden", position: "relative" }}><img src={FUND_IMGS[cityId]} draggable={false} style={{ position: "absolute", bottom: 0, left: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: "bottom", display: "block", pointerEvents: "none" }} /></div>
+                  ? <div style={{ width: "100%", aspectRatio: "2.5/3.5", overflow: "hidden" }}><img src={FUND_IMGS[cityId]} draggable={false} style={{ width: "100%", height: "100%", objectFit: "fill", display: "block", pointerEvents: "none" }} /></div>
                   : <div style={{ width: "100%", aspectRatio: "2.5/3.5", overflow: "hidden" }}><img src={epidemicCardSrc} alt="Epidemic" draggable={false} style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: "bottom", display: "block", pointerEvents: "none" }} /></div>
                 }
               </div>
@@ -1713,28 +2277,24 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
             const onMove = (ev: PointerEvent) => save({ ...t, x: ox + ((ev.clientX - sx) / r.width) * 100, y: oy + ((ev.clientY - sy) / r.height) * 100 });
             const onUp = (ev: PointerEvent) => {
               el.removeEventListener("pointermove", onMove as any); el.removeEventListener("pointerup", onUp);
+              const moved = Math.hypot(ev.clientX - sx, ev.clientY - sy) > 6;
+              // Airlift: drag pawn to any city — works at any phase, any player's turn
+              if (moved && eventMode === 'airlift') {
+                const dropX = ox + ((ev.clientX - sx) / r.width) * 100;
+                const dropY = oy + ((ev.clientY - sy) / r.height) * 100;
+                const targetId = nearestCity(dropX, dropY);
+                if (targetId) {
+                  const pi = (['p1','p2','p3','p4'] as const).indexOf(key as 'p1'|'p2'|'p3'|'p4');
+                  const nextCities = [...playerCities]; nextCities[pi] = targetId;
+                  savePlayerCities(nextCities); snapPawnToCity(key, targetId);
+                  setEventMode(null); setAirliftPawn(null); setHighlightCities([]);
+                  if (pendingEventCard) resolveEventCard(pendingEventCard);
+                } else { save({ ...t, x: ox, y: oy }); }
+                return;
+              }
               if (!setup || turnState.phase !== "actions") return;
               const pi = (['p1','p2','p3','p4'] as const).indexOf(key as 'p1'|'p2'|'p3'|'p4');
-              const moved = Math.hypot(ev.clientX - sx, ev.clientY - sy) > 6;
               if (!moved) {
-                // Tap: Airlift pawn-select
-                if (eventMode === 'airlift') {
-                  if (airliftPawn === key) { setAirliftPawn(null); setHighlightCities([]); }
-                  else { setAirliftPawn(key); setHighlightCities(CITIES.map(c => c.id)); }
-                  save({ ...t, x: ox, y: oy }); return;
-                }
-                // Tap: Dispatcher transport-select
-                if (roleId === 'dispatcher') {
-                  if (dispatcherTarget === key) {
-                    setDispatcherTarget(null); setHighlightCities([]);
-                  } else {
-                    setDispatcherTarget(key);
-                    const targets = playerCities
-                      .map((cid, idx) => idx !== pi ? cid : null)
-                      .filter(Boolean) as string[];
-                    setHighlightCities([...new Set(targets)]);
-                  }
-                }
                 save({ ...t, x: ox, y: oy });
                 return;
               }
@@ -1743,10 +2303,21 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
               const dropX = ox + ((ev.clientX - sx) / r.width) * 100;
               const dropY = oy + ((ev.clientY - sy) / r.height) * 100;
               const targetId = nearestCity(dropX, dropY);
-              const movedPawnCityId = playerCities[pi] ?? "atlanta";
+              // Prefer logical city; fall back to nearest city to the token's visual position
+              // so pawns placed manually (not via card action) still validate correctly.
+              const movedPawnCityId = playerCities[pi] ?? nearestCity(ox, oy) ?? "atlanta";
               const movedPawnCity = CITIES.find(c2 => c2.id === movedPawnCityId);
               const isNeighbor = targetId && (movedPawnCity?.neighbors.includes(targetId) ?? false);
-              if (isNeighbor && targetId) {
+              // Dispatcher can also move any pawn to a city occupied by another active player
+              const isDispatcherOccupied = roleId === 'dispatcher' && targetId &&
+                (['p1','p2','p3','p4'] as const).some((pk, pidx) =>
+                  pk !== key &&
+                  (activePlayers as readonly string[]).includes(pk) &&
+                  playerCities[pidx] === targetId
+                );
+              const isShuttle = targetId && targetId !== movedPawnCityId &&
+                researchStations.has(movedPawnCityId) && researchStations.has(targetId);
+              if (targetId && (isNeighbor || isDispatcherOccupied || isShuttle)) {
                 const nextCities = [...playerCities]; nextCities[pi] = targetId;
                 savePlayerCities(nextCities);
                 snapPawnToCity(key, targetId);
@@ -1766,29 +2337,41 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
             const onUp = () => { el.removeEventListener("pointermove", onMove as any); el.removeEventListener("pointerup", onUp); };
             el.addEventListener("pointermove", onMove as any); el.addEventListener("pointerup", onUp);
           } : undefined;
+          const isInteractivePawn = !setup || calibrating ||
+            eventMode === 'airlift' ||   // airlift: tap any pawn at any phase
+            (turnState.phase === "actions" && (
+              key === currentPlayerKey ||
+              roleId === 'dispatcher'
+            ));
           return (
-            <div key={key} onPointerDown={onDragDown}
+            <div key={key}
               style={{
                 position: "absolute",
                 left: `${t.x}%`, top: `${t.y}%`,
                 width: `${t.w}%`, height: `${aspectH}%`,
                 transform: "translate(-50%, -50%)",
-                zIndex: 25,
-                cursor: calibrating ? "default" : "grab",
+                zIndex: isInteractivePawn ? 25 : 10,
                 outline: calibrating ? "2px dashed #fff" : "none",
                 boxSizing: "border-box",
                 touchAction: "none", userSelect: "none",
-                filter: "drop-shadow(0 3px 6px #0008)",
+                opacity: isInteractivePawn ? 1 : 0.35,
+                pointerEvents: "none",
               }}>
-              <svg viewBox="0 0 100 150" style={{ width: "100%", height: "100%", display: "block", pointerEvents: "none" }}>
+              <svg viewBox="0 0 100 150" style={{ width: "100%", height: "100%", display: "block", pointerEvents: "none", cursor: calibrating ? "default" : isInteractivePawn ? "grab" : "default" }}>
                 <path d="M 36,50 C 18,68 10,105 12,132 Q 12,148 50,148 Q 88,148 88,132 C 90,105 82,68 64,50 Z" fill={color} stroke={color === "#f0f0f0" ? "#999" : "none"} strokeWidth={color === "#f0f0f0" ? 1.5 : 0} />
                 <ellipse cx="50" cy="50" rx="15" ry="8" fill={color} />
                 <circle cx="50" cy="28" r="24" fill={color} stroke={color === "#f0f0f0" ? "#999" : "none"} strokeWidth={color === "#f0f0f0" ? 1.5 : 0} />
                 <circle cx="40" cy="20" r="7" fill="rgba(255,255,255,0.30)" />
+                {/* Bottom-half drag handle only — top half is click-through */}
+                {isInteractivePawn && (
+                  <rect x="0" y="75" width="100" height="75" fill="transparent"
+                    style={{ pointerEvents: "all", cursor: calibrating ? "default" : "grab" }}
+                    onPointerDown={onDragDown as unknown as React.PointerEventHandler<SVGRectElement>} />
+                )}
               </svg>
               {calibrating && (
                 <div onPointerDown={onResizeDown}
-                  style={{ position: "absolute", bottom: 0, right: 0, width: 10, height: 10, background: "#fff", cursor: "se-resize" }} />
+                  style={{ position: "absolute", bottom: 0, right: 0, width: 10, height: 10, background: "#fff", cursor: "se-resize", pointerEvents: "auto" }} />
               )}
             </div>
           );
@@ -1861,7 +2444,11 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
           if (!roleSrc) return null;
           const color = playerColors[pid];
           const isLeft = pid === 'p1' || pid === 'p3';
-          const iconY = area.y - area.h / 2 - 10;
+          // P1/P2 (top): icon floats above their hand area
+          // P3/P4 (bottom): icon sits at the top of their hand area to avoid overlapping P1/P2 cards
+          const iconY = (pid === 'p3' || pid === 'p4')
+            ? area.y - area.h / 2 + 3
+            : area.y - area.h / 2 - 10;
           return (
             <div
               key={`char-icon-${pid}`}
@@ -1901,7 +2488,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                   <img
                     src={roleSrc}
                     draggable={false}
-                    style={{ width: 180, height: "auto", borderRadius: 10, boxShadow: "0 8px 36px #000e", display: "block", userSelect: "none" }}
+                    style={{ width: 280, height: "auto", borderRadius: 10, boxShadow: "0 8px 36px #000e", display: "block", userSelect: "none" }}
                   />
                 </div>
               )}
@@ -1976,8 +2563,9 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
               calibrating={calibrating && !m.fixed}
               onChange={update(i)}
               tintColor={m.tintColor}
+              cssFilter={m.cssFilter}
               eradicated={ci >= 0 ? eradicated[ci] : false}
-              eradicatedColor={m.tintColor === "#FFFA73" ? "#666" : "white"}
+              eradicatedColor={m.cssFilter?.includes("hue-rotate(58") ? "#666" : "white"}
               onActivate={isCured && !calibrating && !onChooseRoles && !setup ? () => {
                 setEradicated(prev => {
                   const next = [...prev];
@@ -1988,6 +2576,11 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
             />
           );
         })}
+
+        {/* Block all board interaction when infection is complete and waiting to proceed */}
+        {!setup && !!onInfectionDone && setupRemaining === 0 && (
+          <div style={{ position: "absolute", inset: 0, zIndex: 900, cursor: "default" }} />
+        )}
       </div>
 
       {/* City context menu */}
@@ -2105,8 +2698,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
       {/* Infection deck context menu */}
       {deckMenu && (
         <ContextMenu variant="blue" x={deckMenu.x} y={deckMenu.y} minWidth={140} onClose={() => setDeckMenu(null)}>
-          <MenuItem variant="blue" onClick={shuffleDeck}>Shuffle</MenuItem>
-          <MenuItem variant="blue" onClick={openForecast}>Forecast</MenuItem>
+          {!setup && <MenuItem variant="blue" onClick={shuffleDeck}>Shuffle</MenuItem>}
           <MenuItem variant="blue" onClick={() => {
             if (infectDeck.length === 0) return;
             const bottom = infectDeck[0];
@@ -2196,7 +2788,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
       {playerDeckMenu && (
         <ContextMenu x={playerDeckMenu.x} y={playerDeckMenu.y} minWidth={120}
           wrapStyle={{ padding: 3 }} onClose={() => setPlayerDeckMenu(null)}>
-          <MenuItem radius={3} onClick={() => {
+          {!setup && <MenuItem radius={3} onClick={() => {
             const allCards = [...handCards.p1, ...handCards.p2, ...playerDiscard];
             const cityCards = allCards.filter(id => id !== "epidemic");
             const epidemicCards = allCards.filter(id => id === "epidemic").length;
@@ -2209,39 +2801,17 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
             setPlayerDeckMenu(null);
           }}>
             Recall
-          </MenuItem>
-          <MenuItem radius={3} onClick={() => {
-            // Count ALL epidemics: standalone stack + any already embedded in deck
-            const embeddedEpidemics = playerDeck.filter(id => id === "epidemic").length;
-            const totalEpidemics = epidemicCount + embeddedEpidemics;
-            const cityCards = shuffle(playerDeck.filter(id => id !== "epidemic"));
-            const numPiles = Math.max(1, Math.min(totalEpidemics || 5, 5));
-            const base = Math.floor(cityCards.length / numPiles);
-            const extras = cityCards.length % numPiles;
-            // Build piles (extras piles get one extra card)
-            const piles: string[][] = [];
-            let idx = 0;
-            for (let p = 0; p < numPiles; p++) {
-              const size = base + (p < extras ? 1 : 0);
-              piles.push(cityCards.slice(idx, idx + size));
-              idx += size;
-            }
-            // Insert 1 epidemic per pile at a random position, then shuffle the pile
-            // so the epidemic's position is fully random (prevents it from sitting at top)
-            for (let p = 0; p < numPiles && p < totalEpidemics; p++) {
-              const at = Math.floor(Math.random() * (piles[p].length + 1));
-              piles[p].splice(at, 0, "epidemic");
-              piles[p] = shuffle(piles[p]);
-            }
-            // Sort ascending by size (smaller piles at bottom = drawn last)
-            piles.sort((a, b) => a.length - b.length);
-            setPlayerDeck(piles.flat());
+          </MenuItem>}
+          {!setup && <MenuItem radius={3} onClick={() => {
+            setIsShufflingPlayer(true);
+            setTimeout(() => setIsShufflingPlayer(false), 900);
+            setPlayerDeck(prev => shuffleEpidemicsIntoDeck(prev, epidemicCount));
             setEpidemicCount(0);
             setPlayerFlipped(new Set());
             setPlayerDeckMenu(null);
           }}>
             Shuffle
-          </MenuItem>
+          </MenuItem>}
         </ContextMenu>
       )}
 
@@ -2311,18 +2881,8 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
       {rsActionMenu && (
         <ContextMenu x={rsActionMenu.x} y={rsActionMenu.y} minWidth={150}
           overlayZIndex={1100} onClose={() => setRsActionMenu(null)}>
-          {researchStations.size > 1 && (
-            <MenuItem padding="9px 14px" onClick={() => {
-              const otherRS = [...researchStations].filter(id => id !== currentPlayerCityId);
-              setHighlightCities(otherRS);
-              saveTurnState({ ...turnState, pendingShuttle: true });
-              setRsActionMenu(null);
-            }}>
-              Shuttle Flight
-            </MenuItem>
-          )}
           {(() => {
-            const hand = currentPlayerHand();
+            const hand = currentPlayerHand;
             const cureColor = DISEASE_COLORS.find(col => {
               const ci = COLOR_TO_CURE_IDX[col]; if (ci === undefined || cured[ci]) return false;
               return hand.filter(id => CITIES.find(c => c.id === id)?.color === col).length >= cureThreshold;
@@ -2340,6 +2900,35 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
         </ContextMenu>
       )}
 
+      {/* January: COdA naming popup */}
+      {isJan && codaPopupOpen && (
+        <CodaPopup
+          codaColor={codaColor}
+          candidates={codaCandidates}
+          onChoose={(color) => {
+            setCodaColor(color as DiseaseColor);
+            localStorage.setItem(LS_CODA_COLOR, color);
+            setCodaCandidates([]);
+            setCodaPopupOpen(false);
+          }}
+          onClickOverlay={() => { if (codaColor !== null) setCodaPopupOpen(false); }}
+        />
+      )}
+
+      {/* January: disease naming on eradication */}
+      {isJan && namePopupColor && (
+        <DiseaseNamePopup
+          color={namePopupColor}
+          currentName={diseaseNames[namePopupColor] ?? ''}
+          onConfirm={(name) => {
+            const next = { ...diseaseNames, [namePopupColor]: name };
+            setDiseaseNames(next);
+            localStorage.setItem(LS_DISEASE_NAMES, JSON.stringify(next));
+            setNamePopupColor(null);
+          }}
+        />
+      )}
+
       {/* Win / Lose overlay */}
       {gameResult !== null && gameResult !== dismissedResult && (
         <GameOverOverlay
@@ -2348,6 +2937,8 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
           onContinue={() => setDismissedResult(gameResult)}
           onRestart={onRestart}
           onMainMenu={onMainMenu}
+          janWinBonusSrc={isJan ? janWinBonusSrc : undefined}
+          janEndgameSrc={isJan ? janEndgameSrc : undefined}
         />
       )}
 
@@ -2363,6 +2954,20 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
             if (pendingEventCard) resolveEventCard(pendingEventCard);
           }}
         />
+      )}
+      {/* Action log */}
+      {actionLog.length > 0 && (
+        <div style={{
+          marginTop: 8, padding: "6px 12px",
+          background: "#060c12", border: "1px solid #1a2a3a",
+          borderRadius: 6, fontFamily: "system-ui, sans-serif", fontSize: 11,
+          color: "#889", maxHeight: 120, overflowY: "auto",
+          display: "flex", flexDirection: "column-reverse",
+        }}>
+          {[...actionLog].reverse().map((entry, i) => (
+            <div key={i} style={{ lineHeight: 1.8, color: i === 0 ? "#aac" : "#667" }}>{entry}</div>
+          ))}
+        </div>
       )}
     </div>
   );
