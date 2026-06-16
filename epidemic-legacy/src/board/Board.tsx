@@ -11,7 +11,6 @@ import objectiveSrc from "../../object/objective1.png";
 import objectiveUpdatedSrc  from "../../object/Jan/objective1update.png";
 import janWinBonusSrc       from "../../object/Jan/winbonus.png";
 import janEndgameSrc        from "../../object/Jan/end game upgrade.png";
-import janUpdateBoardSrc    from "../../object/Jan/update.png";
 import janDiseaseStickerSrc from "../../object/Jan/disease sticker.png";
 import researchSrc from "../../object/research.png";
 import panicLevel1Src from "../../object/paniclevel1.png";
@@ -41,6 +40,10 @@ import fund5Src from "../../object/forecast.png";
 import fund6Src from "../../object/airlift.png";
 import fund7Src from "../../object/borrowedtime.png";
 import fund8Src from "../../object/flexibleaid.png";
+import diseaseCubeBlackSrc  from "../../object/diseasecubeblack.png";
+import diseaseCubeBlueSrc   from "../../object/diseasecubeblue.png";
+import diseaseCubeRedSrc    from "../../object/diseasecubered.png";
+import diseaseCubeYellowSrc from "../../object/diseasecubeyellow.png";
 import type { PreGameSetup } from "./PreGamePhase";
 import { BOARD_RATIO, CUBE_W, shuffle, defaultCubes, inBox } from "./boardGeometry";
 import { PANIC_TRAY_POS, OBJECTIVE_SLOTS, OUTBREAK_TRACK, INFECTION_TRACK } from "./boardLayout";
@@ -69,6 +72,9 @@ import { makePlayerDeckDraw, makeHandCardPointerDown } from "./handInteractions"
 
 const COLOR_TO_CUBE: Record<string, string> = {
   blue: "#0A00A1", yellow: "#FFFA73", black: "#1a1a1a", red: "#cc1111",
+};
+const COLOR_TO_CUBE_IMG: Record<string, string> = {
+  black: diseaseCubeBlackSrc, blue: diseaseCubeBlueSrc, red: diseaseCubeRedSrc, yellow: diseaseCubeYellowSrc,
 };
 const DISEASE_COLORS = ["black", "yellow", "red", "blue"] as const;
 type DiseaseColor = typeof DISEASE_COLORS[number];
@@ -298,7 +304,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   // Snapshot of cube state when Remote Treatment starts, so cancelling part-way
   // through restores any cubes already removed.
   const cubeSnapshotRef = useRef<CityInfectionMap | null>(null);
-  const [airliftPawn, setAirliftPawn] = useState<string | null>(null);
+  const [, setAirliftPawn] = useState<string | null>(null);
   const [flexibleAidSelected, setFlexibleAidSelected] = useState<string[]>([]);
   // Bonus actions stored when Borrowed Time is played outside the actions phase
   const [bonusActionsNextTurn, setBonusActionsNextTurn] = useState(0);
@@ -1360,7 +1366,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
         })()}
 
         {/* Disease supply piles — static scattered positions, front cubes hidden as placed */}
-        {SUPPLY_PILES.flatMap(({ color, fill, src }, ci) => {
+        {SUPPLY_PILES.flatMap(({ color, src }, ci) => {
           const remaining = 24 - Math.min(24, placedPerColor[ci]);
           const pile = SUPPLY_PILES[ci].positions;
           return [
@@ -1382,7 +1388,8 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                 pointerEvents: "none",
                 zIndex: 4 + i,
               }}>
-                <CubeSvg color={fill} />
+                <img src={COLOR_TO_CUBE_IMG[color]} alt={`${color} cube`} draggable={false}
+                  style={{ width: "100%", height: "100%", display: "block", pointerEvents: "none" }} />
               </div>
             )),
           ];
@@ -1698,86 +1705,6 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                   <div onPointerDown={onResizeDown}
                     style={{ position: "absolute", bottom: 0, right: 0, width: 10, height: 10, background: "#fff", cursor: "se-resize" }} />
                 )}
-              </div>
-            );
-          });
-        })()}
-
-        {/* Epidemic standalone pile — hidden (epidemicCount used only for shuffle logic) */}
-        {false && epidemicCount > 0 && boardPxW > 0 && (() => {
-          const card = cardPlayer;
-          const eStep = 0.06;
-          const epidemicFaceUp = playerFlipped.has("epidemic");
-          const onTopDown = (e: React.PointerEvent<HTMLDivElement>) => {
-            if (calibrating || e.button !== 0) return;
-            e.stopPropagation(); e.preventDefault();
-            const el = e.currentTarget; el.setPointerCapture(e.pointerId);
-            const r = boardRef.current!.getBoundingClientRect();
-            const toPct = (ev: PointerEvent) => ({ x: ((ev.clientX - r.left) / r.width) * 100, y: ((ev.clientY - r.top) / r.height) * 100 });
-            let moved = false;
-            const sx = e.clientX; const sy = e.clientY;
-            const onMove = (ev: PointerEvent) => {
-              if (!moved && Math.hypot(ev.clientX - sx, ev.clientY - sy) > 6) moved = true;
-              if (moved && epidemicFaceUp) setPlayerDrag({ cityId: "epidemic", ...toPct(ev) });
-            };
-            const onUp = (ev: PointerEvent) => {
-              el.removeEventListener("pointermove", onMove as any);
-              el.removeEventListener("pointerup", onUp);
-              setPlayerDrag(null);
-              if (!moved) {
-                if (!epidemicFaceUp) {
-                  // Flip face-up → trigger epidemic sequence
-                  setPlayerFlipped(prev => { const n = new Set(prev); n.add("epidemic"); return n; });
-                  triggerEpidemic();
-                } else {
-                  setPlayerFlipped(prev => { const n = new Set(prev); n.delete("epidemic"); return n; });
-                }
-                return;
-              }
-              if (!epidemicFaceUp) return;
-              const pos = toPct(ev);
-              const nearDiscard = Math.abs(pos.x - cardPlayerDiscard.x) < 10 && Math.abs(pos.y - cardPlayerDiscard.y) < 10;
-              const leftSide2 = pos.x < 5; const rightSide2 = pos.x > 95; const topHalf2 = pos.y < 51;
-              const epicHand: string | null = leftSide2 ? (topHalf2 ? 'p1' : 'p3') : rightSide2 ? (topHalf2 ? 'p2' : 'p4') : null;
-              if (nearDiscard) {
-                setEpidemicCount(c => c - 1);
-                setPlayerFlipped(prev => { const n = new Set(prev); n.delete("epidemic"); return n; });
-                setPlayerDiscard(prev => [...prev, "epidemic"]);
-              } else if (epicHand) {
-                setEpidemicCount(c => c - 1);
-                setPlayerFlipped(prev => { const n = new Set(prev); n.delete("epidemic"); return n; });
-                const dest = (handCards as Record<string,string[]>)[epicHand] ?? [];
-                saveHandCards({ ...handCards, [epicHand]: [...dest, "epidemic"] });
-              }
-            };
-            el.addEventListener("pointermove", onMove as any);
-            el.addEventListener("pointerup", onUp);
-          };
-          // Epidemic pile sits below the player deck — base is card height below deck centre
-          const cardH = (card.w / 100) * (3.5 / 2.5) / BOARD_RATIO * 100; // % board height
-          const baseDown = cardH * 0.85; // shift down ~85% of one card height
-          return Array.from({ length: epidemicCount }, (_, i) => {
-            const isTop = i === epidemicCount - 1;
-            const offset = i * eStep;
-            return (
-              <div key={`epidemic-${i}`}
-                onPointerDown={isTop ? onTopDown : undefined}
-                onContextMenu={isTop && !setup ? e => { e.preventDefault(); e.stopPropagation(); setPlayerDeckMenu({ x: e.clientX, y: e.clientY }); } : undefined}
-                style={{
-                  position: "absolute",
-                  left: `${card.x + offset}%`,
-                  top: `${card.y + baseDown + offset * BOARD_RATIO}%`,
-                  width: `${card.w}%`,
-                  transform: "translate(-50%, -50%)",
-                  zIndex: 7 + i,  /* below player deck (zIndex 9+) */
-                  cursor: isTop ? (epidemicFaceUp ? "grab" : "pointer") : "default",
-                  touchAction: "none", userSelect: "none",
-                  opacity: isTop && playerDrag?.cityId === "epidemic" ? 0.25 : 1,
-                }}>
-                {isTop && epidemicFaceUp
-                  ? <div style={{ width: "100%", aspectRatio: "2.5/3.5", overflow: "hidden" }}><img src={epidemicCardSrc} alt="Epidemic" draggable={false} style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: "bottom", display: "block", pointerEvents: "none" }} /></div>
-                  : <img src={playerCardBackSrc} alt="" draggable={false} style={{ width: "100%", height: "auto", display: "block", pointerEvents: "none" }} />
-                }
               </div>
             );
           });
