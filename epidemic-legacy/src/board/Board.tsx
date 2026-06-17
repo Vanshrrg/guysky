@@ -67,8 +67,8 @@ import {
   loadCard, loadTrackPos, loadHandCards, loadResearchStations, loadResearchPos,
   loadPanicLevels, loadHcmc, loadTurnState, loadPlayerCities, loadCodaColor, loadDiseaseNames, clearGameState,
   loadResearchStickers, loadResearchStickersDestroyed, loadResearchStickerPos, loadDestroyedStickerPos,
-  LS_MUTATIONS, LS_MUTATION_STICKER_POS, LS_MUTATION_MARKER_POS,
-  loadMutations, loadMutationStickerPos, loadMutationMarkerPos,
+  LS_MUTATIONS, LS_MUTATION_POSITIONS, DEF_MUTATION_POSITIONS,
+  loadMutations, loadMutationPositions,
   LS_CITY_STICKER_OVERRIDES, loadCityStickerOverrides,
   type StickerPos,
 } from "./boardStorage";
@@ -322,8 +322,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   const [destroyedStickerPos, setDestroyedStickerPos] = useState<StickerPos>(() => loadDestroyedStickerPos());
   // Positive mutations: per-disease-color tier level (0–4), persistent across games.
   const [mutationLevels, setMutationLevels] = useState<Record<string, number>>(() => loadMutations());
-  const [mutationStickerPos, setMutationStickerPos] = useState<CardState>(() => loadMutationStickerPos());
-  const [mutationMarkerPos, setMutationMarkerPos] = useState<StickerPos>(() => loadMutationMarkerPos());
+  const [mutationPositions, setMutationPositions] = useState<CardState[]>(() => loadMutationPositions());
   // Post-game upgrade flow: how many of the 2 picks are left, and whether we're
   // waiting for the player to click a city to place a Research Station sticker.
   const [upgradePicksRemaining, setUpgradePicksRemaining] = useState(0);
@@ -1609,20 +1608,17 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
         {calibrating && (
           <>
             <button onClick={() => {
-              const text = `research sticker: { dx: ${stickerPos.dx.toFixed(2)}, dy: ${stickerPos.dy.toFixed(2)}, w: ${stickerPos.w.toFixed(2)} }`;
-              navigator.clipboard.writeText(text).then(() => alert("Copied!")).catch(() => window.prompt("Sticker pos", text));
-            }}>Copy sticker coords</button>
+              const text = `hcmcTray: { x: ${hcmcTray.x.toFixed(2)}, y: ${hcmcTray.y.toFixed(2)} }`;
+              navigator.clipboard.writeText(text).then(() => alert("Copied!")).catch(() => window.prompt("HCMC pos", text));
+            }}>Copy HCMC pos</button>
             <button onClick={() => {
-              const copy = { ...stickerPos };
-              setDestroyedStickerPos(copy);
-              localStorage.setItem(LS_DESTROYED_STICKER_POS, JSON.stringify(copy));
-            }}>Copy sticker size/pos → destroyed</button>
+              const text = mutationPositions.map((p, i) => `tier${i + 1}: { x: ${p.x.toFixed(2)}, y: ${p.y.toFixed(2)}, w: ${p.w.toFixed(2)} }`).join("\n");
+              navigator.clipboard.writeText(text).then(() => alert("Copied!")).catch(() => window.prompt("Mutation positions", text));
+            }}>Copy mutation pos</button>
             <button onClick={() => {
-              MARKERS.forEach((m, i) => {
-                setStates(prev => { const next = [...prev]; next[i] = m.def; return next; });
-                localStorage.removeItem(m.key);
-              });
-            }}>Reset markers to default</button>
+              const text = `stickerPos: { dx: ${stickerPos.dx.toFixed(2)}, dy: ${stickerPos.dy.toFixed(2)}, w: ${stickerPos.w.toFixed(2)} }`;
+              navigator.clipboard.writeText(text).then(() => alert("Copied!")).catch(() => window.prompt("RS sticker pos", text));
+            }}>Copy RS sticker pos</button>
             <span style={{ color: "#9ab", fontSize: 12, alignSelf: "center" }}>Drag to move · drag ↘ corner to resize</span>
           </>
         )}
@@ -1700,62 +1696,62 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
             Tier 1 anchored at mutationStickerPos; each subsequent tier offsets downward
             by sticker height (w * 1.1 since stickers are ~square). Calibratable. */}
         {(() => {
-          const tierGap = mutationStickerPos.w * 1.15;
-          const saveMutStickerPos = (p: typeof mutationStickerPos) => {
-            setMutationStickerPos(p);
-            localStorage.setItem(LS_MUTATION_STICKER_POS, JSON.stringify(p));
+          const saveMutPositions = (next: CardState[]) => {
+            setMutationPositions(next);
+            localStorage.setItem(LS_MUTATION_POSITIONS, JSON.stringify(next));
           };
-          const saveMutMarkerPos = (p: StickerPos) => {
-            setMutationMarkerPos(p);
-            localStorage.setItem(LS_MUTATION_MARKER_POS, JSON.stringify(p));
-          };
-          // In calibrate mode always show tier 1 + one marker so they can be positioned
-          const previewTiers = calibrating ? [1] : [];
-          const activeTiers = ([1, 2, 3, 4] as const).filter(t => mutCountAtLeast(t) >= 1);
-          const renderedTiers = [...new Set([...activeTiers, ...previewTiers])].sort();
+          // In calibrate mode show all 4 tiers; otherwise only tiers with at least one disease
+          const renderedTiers: (1|2|3|4)[] = calibrating
+            ? [1, 2, 3, 4]
+            : ([1, 2, 3, 4] as const).filter(t => mutCountAtLeast(t) >= 1);
           if (renderedTiers.length === 0) return null;
           return (
             <>
               {renderedTiers.map(tier => {
-                const tierIdx = tier - 1; // 0-based
-                const x = mutationStickerPos.x;
-                const y = mutationStickerPos.y + tierIdx * tierGap;
-                const w = mutationStickerPos.w;
+                const ti = tier - 1;
+                const pos = mutationPositions[ti] ?? DEF_MUTATION_POSITIONS[ti];
                 const colorsAtTier = DISEASE_COLORS.filter(c => (mutationLevels[c] ?? 0) >= tier);
-                const previewColors = calibrating && colorsAtTier.length === 0 ? ["red" as DiseaseColor] : colorsAtTier;
                 return (
                   <Fragment key={`mut-tier-${tier}`}>
-                    {/* Tier sticker image */}
                     <div
-                      onPointerDown={calibrating && tier === 1 ? (e: React.PointerEvent<HTMLDivElement>) => {
+                      onPointerDown={calibrating ? (e: React.PointerEvent<HTMLDivElement>) => {
                         e.stopPropagation(); e.preventDefault();
                         const el = e.currentTarget; el.setPointerCapture(e.pointerId);
                         const r = boardRef.current!.getBoundingClientRect();
                         const sx = e.clientX; const sy = e.clientY;
-                        const ox = mutationStickerPos.x; const oy = mutationStickerPos.y;
-                        const onMove = (ev: PointerEvent) => saveMutStickerPos({ ...mutationStickerPos, x: ox + ((ev.clientX - sx) / r.width) * 100, y: oy + ((ev.clientY - sy) / r.height) * 100 });
+                        const ox = pos.x; const oy = pos.y;
+                        const onMove = (ev: PointerEvent) => {
+                          const next = [...mutationPositions];
+                          next[ti] = { ...pos, x: ox + ((ev.clientX - sx) / r.width) * 100, y: oy + ((ev.clientY - sy) / r.height) * 100 };
+                          saveMutPositions(next);
+                        };
                         const onUp = () => { el.removeEventListener("pointermove", onMove as EventListener); el.removeEventListener("pointerup", onUp); };
                         el.addEventListener("pointermove", onMove as EventListener); el.addEventListener("pointerup", onUp);
                       } : undefined}
                       style={{
                         position: "absolute",
-                        left: `${x}%`, top: `${y}%`,
-                        width: `${w}%`,
+                        left: `${pos.x}%`, top: `${pos.y}%`,
+                        width: `${pos.w}%`,
                         transform: "translate(-50%, -50%)",
-                        zIndex: 5, pointerEvents: calibrating && tier === 1 ? "auto" : "none",
-                        cursor: calibrating && tier === 1 ? "grab" : "default",
-                        outline: calibrating && tier === 1 ? "1px dashed #3ddc6d" : "none",
+                        zIndex: 5,
+                        pointerEvents: calibrating ? "auto" : "none",
+                        cursor: calibrating ? "grab" : "default",
+                        outline: calibrating ? "1px dashed #3ddc6d" : "none",
                       }}>
-                      <img src={MUT_STICKER_SRCS[tierIdx]} alt={MUT_NAMES[tier]} draggable={false}
+                      <img src={MUT_STICKER_SRCS[ti]} alt={MUT_NAMES[tier]} draggable={false}
                         style={{ width: "100%", height: "auto", display: "block", userSelect: "none", pointerEvents: "none" }} />
-                      {calibrating && tier === 1 && (
+                      {calibrating && (
                         <div
                           onPointerDown={(e: React.PointerEvent<HTMLDivElement>) => {
                             e.stopPropagation(); e.preventDefault();
                             const el = e.currentTarget; el.setPointerCapture(e.pointerId);
                             const r = boardRef.current!.getBoundingClientRect();
-                            const sx = e.clientX; const ow = mutationStickerPos.w;
-                            const onMove = (ev: PointerEvent) => saveMutStickerPos({ ...mutationStickerPos, w: Math.max(0.5, ow + ((ev.clientX - sx) / r.width) * 100) });
+                            const sx = e.clientX; const ow = pos.w;
+                            const onMove = (ev: PointerEvent) => {
+                              const next = [...mutationPositions];
+                              next[ti] = { ...pos, w: Math.max(0.5, ow + ((ev.clientX - sx) / r.width) * 100) };
+                              saveMutPositions(next);
+                            };
                             const onUp = () => { el.removeEventListener("pointermove", onMove as EventListener); el.removeEventListener("pointerup", onUp); };
                             el.addEventListener("pointermove", onMove as EventListener); el.addEventListener("pointerup", onUp);
                           }}
@@ -1763,49 +1759,21 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                         />
                       )}
                     </div>
-
-                    {/* Per-color disease cube markers beside this tier sticker */}
-                    {previewColors.map((col, mi) => {
-                      const mx = x + mutationMarkerPos.dx + mi * (mutationMarkerPos.w * 1.3);
-                      const my = y + mutationMarkerPos.dy;
-                      const mw = mutationMarkerPos.w;
+                    {/* Per-color disease cube markers beside this tier sticker (display only) */}
+                    {colorsAtTier.map((col, mi) => {
+                      const DEF_MUT_MARKER_DX = 2.5; const DEF_MUT_MARKER_DY = 0; const DEF_MUT_MARKER_W = 1.3;
+                      const mx = pos.x + DEF_MUT_MARKER_DX + mi * (DEF_MUT_MARKER_W * 1.3);
+                      const my = pos.y + DEF_MUT_MARKER_DY;
                       return (
-                        <div key={`mut-marker-${tier}-${col}`}
-                          onPointerDown={calibrating && mi === 0 && tier === 1 ? (e: React.PointerEvent<HTMLDivElement>) => {
-                            e.stopPropagation(); e.preventDefault();
-                            const el = e.currentTarget; el.setPointerCapture(e.pointerId);
-                            const r = boardRef.current!.getBoundingClientRect();
-                            const sx = e.clientX; const sy = e.clientY;
-                            const odx = mutationMarkerPos.dx; const ody = mutationMarkerPos.dy;
-                            const onMove = (ev: PointerEvent) => saveMutMarkerPos({ ...mutationMarkerPos, dx: odx + ((ev.clientX - sx) / r.width) * 100, dy: ody + ((ev.clientY - sy) / r.height) * 100 });
-                            const onUp = () => { el.removeEventListener("pointermove", onMove as EventListener); el.removeEventListener("pointerup", onUp); };
-                            el.addEventListener("pointermove", onMove as EventListener); el.addEventListener("pointerup", onUp);
-                          } : undefined}
-                          style={{
-                            position: "absolute",
-                            left: `${mx}%`, top: `${my}%`,
-                            width: `${mw}%`, aspectRatio: "1",
-                            transform: "translate(-50%, -50%)",
-                            zIndex: 6, pointerEvents: calibrating && mi === 0 && tier === 1 ? "auto" : "none",
-                            cursor: calibrating && mi === 0 && tier === 1 ? "grab" : "default",
-                            outline: calibrating && mi === 0 && tier === 1 ? "1px dashed #3ddc6d" : "none",
-                          }}>
+                        <div key={`mut-marker-${tier}-${col}`} style={{
+                          position: "absolute",
+                          left: `${mx}%`, top: `${my}%`,
+                          width: `${DEF_MUT_MARKER_W}%`, aspectRatio: "1",
+                          transform: "translate(-50%, -50%)",
+                          zIndex: 6, pointerEvents: "none",
+                        }}>
                           <img src={COLOR_TO_CUBE_IMG[col]} alt={col} draggable={false}
                             style={{ width: "100%", height: "100%", display: "block", pointerEvents: "none" }} />
-                          {calibrating && mi === 0 && tier === 1 && (
-                            <div
-                              onPointerDown={(e: React.PointerEvent<HTMLDivElement>) => {
-                                e.stopPropagation(); e.preventDefault();
-                                const el = e.currentTarget; el.setPointerCapture(e.pointerId);
-                                const r = boardRef.current!.getBoundingClientRect();
-                                const sx = e.clientX; const ow = mutationMarkerPos.w;
-                                const onMove = (ev: PointerEvent) => saveMutMarkerPos({ ...mutationMarkerPos, w: Math.max(0.3, ow + ((ev.clientX - sx) / r.width) * 100) });
-                                const onUp = () => { el.removeEventListener("pointermove", onMove as EventListener); el.removeEventListener("pointerup", onUp); };
-                                el.addEventListener("pointermove", onMove as EventListener); el.addEventListener("pointerup", onUp);
-                              }}
-                              style={{ position: "absolute", bottom: 0, right: 0, width: 8, height: 8, background: "#3ddc6d", cursor: "se-resize", pointerEvents: "auto" }}
-                            />
-                          )}
                         </div>
                       );
                     })}
@@ -2518,9 +2486,8 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
             const next = researchStickersDestroyed.filter(c => c !== id);
             setResearchStickersDestroyed(next); localStorage.setItem(LS_RESEARCH_STICKERS_DESTROYED, JSON.stringify(next));
           };
-          const destroyedIds = calibrating
-            ? [...new Set([...researchStickersDestroyed, "atlanta"])]
-            : researchStickersDestroyed;
+          // Always show one atlanta preview for each type so positions are visible outside calibrate mode
+          const destroyedIds = [...new Set([...researchStickersDestroyed, "atlanta"])];
           return (
             <>
               {renderGroup(researchStickers, researchStickerSrc, "Research station sticker", stickerPos, activeHandlers, removeRsSticker)}
@@ -2756,15 +2723,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
             };
             el.addEventListener("pointermove", onMove as any); el.addEventListener("pointerup", onUp);
           };
-          const onResizeDown = calibrating ? (e: React.PointerEvent<HTMLDivElement>) => {
-            e.stopPropagation(); e.preventDefault();
-            const el = e.currentTarget; el.setPointerCapture(e.pointerId);
-            const r = boardRef.current!.getBoundingClientRect();
-            const sx = e.clientX; const ow = t.w;
-            const onMove = (ev: PointerEvent) => save({ ...t, w: Math.max(0.5, ow + ((ev.clientX - sx) / r.width) * 100) });
-            const onUp = () => { el.removeEventListener("pointermove", onMove as any); el.removeEventListener("pointerup", onUp); };
-            el.addEventListener("pointermove", onMove as any); el.addEventListener("pointerup", onUp);
-          } : undefined;
+          const onResizeDown = undefined; // pawn resize calibration finished
           const isInteractivePawn = !setup || calibrating ||
             eventMode === 'airlift' ||   // airlift: tap any pawn at any phase
             (turnState.phase === "actions" && (

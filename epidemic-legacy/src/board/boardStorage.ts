@@ -173,6 +173,19 @@ export function loadMutationMarkerPos(): StickerPos {
   return DEF_MUTATION_MARKER_POS;
 }
 
+// Positive-mutation tier stickers: 4 individual positions (one per tier, 1-indexed → index 0–3).
+export const LS_MUTATION_POSITIONS = "epidemic.mutation-positions.v1";
+const _mutGap = DEF_MUTATION_STICKER_POS.w * 1.15;
+export const DEF_MUTATION_POSITIONS: CardState[] = [0, 1, 2, 3].map(i => ({
+  x: DEF_MUTATION_STICKER_POS.x,
+  y: DEF_MUTATION_STICKER_POS.y + i * _mutGap,
+  w: DEF_MUTATION_STICKER_POS.w,
+}));
+export function loadMutationPositions(): CardState[] {
+  try { const r = localStorage.getItem(LS_MUTATION_POSITIONS); if (r) return JSON.parse(r); } catch { /* ignore */ }
+  return DEF_MUTATION_POSITIONS.map(p => ({ ...p }));
+}
+
 // Per-city sticker position overrides (dx/dy/w relative to global StickerPos).
 // Pre-seeded with London's calibrated offset so it looks right out of the box.
 export const LS_CITY_STICKER_OVERRIDES = "epidemic.city-sticker-overrides.v1";
