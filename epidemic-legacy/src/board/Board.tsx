@@ -2411,6 +2411,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                 zIndex: 20,
                 cursor: inFlightMode ? "pointer" : "default",
                 touchAction: "none", userSelect: "none",
+                pointerEvents: calibrating ? "none" : "auto",
                 boxShadow: rsActionMenu?.cityId === city.id ? "0 0 0 2px #ffdd44, 0 0 10px 3px #ffdd4488" : "none",
               }}>
               <img src={researchSrc} alt="Research station" draggable={false}
