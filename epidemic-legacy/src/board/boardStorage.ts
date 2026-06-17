@@ -173,6 +173,17 @@ export function loadMutationMarkerPos(): StickerPos {
   return DEF_MUTATION_MARKER_POS;
 }
 
+// Per-city sticker position overrides (dx/dy/w relative to global StickerPos).
+// Pre-seeded with London's calibrated offset so it looks right out of the box.
+export const LS_CITY_STICKER_OVERRIDES = "epidemic.city-sticker-overrides.v1";
+const DEF_CITY_STICKER_OVERRIDES: Record<string, Partial<StickerPos>> = {
+  london: { dx: 18.98, dy: -15.66, w: 1.27 },
+};
+export function loadCityStickerOverrides(): Record<string, Partial<StickerPos>> {
+  try { const r = localStorage.getItem(LS_CITY_STICKER_OVERRIDES); if (r) return JSON.parse(r); } catch { /* ignore */ }
+  return { ...DEF_CITY_STICKER_OVERRIDES };
+}
+
 // ─── Per-game reset ───────────────────────────────────────────────────────
 // All per-game state keys — cleared on Restart / Main Menu so a new game starts
 // fresh. Deliberately EXCLUDES calibration/layout positions (marker positions,

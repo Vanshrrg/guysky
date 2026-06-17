@@ -69,6 +69,7 @@ import {
   loadResearchStickers, loadResearchStickersDestroyed, loadResearchStickerPos, loadDestroyedStickerPos,
   LS_MUTATIONS, LS_MUTATION_STICKER_POS, LS_MUTATION_MARKER_POS,
   loadMutations, loadMutationStickerPos, loadMutationMarkerPos,
+  LS_CITY_STICKER_OVERRIDES, loadCityStickerOverrides,
   type StickerPos,
 } from "./boardStorage";
 import { MARKERS, CURE_INDICES, COLOR_TO_CURE_IDX, loadMarker, loadCured, loadEradicated } from "./boardMarkers";
@@ -328,6 +329,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   const [upgradePicksRemaining, setUpgradePicksRemaining] = useState(0);
   const [pickingStickerCity, setPickingStickerCity] = useState(false);
   const [pickingMutation, setPickingMutation] = useState(false); // choosing which eradicated disease to mutate
+  const [cityStickerOverrides, setCityStickerOverrides] = useState<Record<string, Partial<StickerPos>>>(() => loadCityStickerOverrides());
   const eligibleStickerCities = useRef<Set<string>>(new Set());
   const [stationCapPick, setStationCapPick] = useState<string[] | null>(null); // null = inactive; else cities chosen so far
   const destroyStickerIfAny = (cityId: string) => {
@@ -1296,7 +1298,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   const cityLayerRightClick = (cityId: string, e: React.MouseEvent) => {
     if (e.type === "contextmenu") {
       e.preventDefault();
-      if (setup || scenario !== "board") return;
+      if (!calibrating && (setup || scenario !== "board")) return;
       setCityMenu({ cityId, x: e.clientX, y: e.clientY });
     }
   };
@@ -1821,7 +1823,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
           roadblocks={roadblocks}
           onRoadblockChange={rb => { setRoadblocks(rb); saveRoadblocks(rb); }}
           onCityClick={calibrating ? undefined : stableOnCityClick}
-          onCityRightClick={calibrating ? undefined : stableOnCityRightClick}
+          onCityRightClick={stableOnCityRightClick}
           highlightCities={highlightCities.length > 0 ? highlightCities : undefined}
         />
 
@@ -2465,6 +2467,12 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
           });
           const saveStickerPos = (p: StickerPos) => { setStickerPos(p); localStorage.setItem(LS_RESEARCH_STICKER_POS, JSON.stringify(p)); };
           const saveDestroyedStickerPos = (p: StickerPos) => { setDestroyedStickerPos(p); localStorage.setItem(LS_DESTROYED_STICKER_POS, JSON.stringify(p)); };
+          const saveCityStickerOverride = (cityId: string, p: StickerPos) => {
+            // Store only the delta from the current global stickerPos so the override is portable.
+            const next = { ...cityStickerOverrides, [cityId]: { dx: p.dx, dy: p.dy, w: p.w } };
+            setCityStickerOverrides(next);
+            localStorage.setItem(LS_CITY_STICKER_OVERRIDES, JSON.stringify(next));
+          };
           const activeHandlers = makeHandlers(stickerPos, saveStickerPos);
           const destroyedHandlers = makeHandlers(destroyedStickerPos, saveDestroyedStickerPos);
           const renderGroup = (
@@ -2473,24 +2481,27 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
           ) => ids.map(id => {
             const city = CITIES.find(c => c.id === id);
             if (!city) return null;
+            const ov = cityStickerOverrides[id];
+            const effPos: StickerPos = ov ? { ...pos, ...ov } : pos;
+            const cityHandlers = ov ? makeHandlers(effPos, (p) => saveCityStickerOverride(id, p)) : handlers;
             return (
               <div key={`${alt}-${id}`}
-                onPointerDown={handlers.onDragDown}
+                onPointerDown={cityHandlers.onDragDown}
                 style={{
                   position: "absolute",
-                  left: `${city.pos.x + pos.dx}%`, top: `${city.pos.y + pos.dy}%`,
-                  width: `${pos.w}%`, aspectRatio: "1",
+                  left: `${city.pos.x + effPos.dx}%`, top: `${city.pos.y + effPos.dy}%`,
+                  width: `${effPos.w}%`, aspectRatio: "1",
                   transform: "translate(-50%, -50%)",
                   zIndex: 10,
                   cursor: calibrating ? "grab" : "default",
                   pointerEvents: calibrating ? "auto" : "none",
-                  outline: calibrating ? "1px dashed #fff" : "none",
+                  outline: calibrating ? (ov ? "1px dashed #ff0" : "1px dashed #fff") : "none",
                   boxSizing: "border-box",
                 }}>
                 <img src={src} alt={alt} draggable={false}
                   style={{ width: "100%", height: "100%", objectFit: "fill", display: "block", userSelect: "none", pointerEvents: "none" }} />
                 {calibrating && (
-                  <div onPointerDown={handlers.onResizeDown}
+                  <div onPointerDown={cityHandlers.onResizeDown}
                     style={{ position: "absolute", bottom: 0, right: 0, width: 10, height: 10, background: "#fff", cursor: "se-resize", pointerEvents: "auto" }} />
                 )}
               </div>
@@ -3133,6 +3144,79 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                   </div>
                 )}
               </div>
+
+              {/* Calibrate-only sticker & cube controls */}
+              {calibrating && (() => {
+                const hasRsSticker = researchStickers.includes(cityMenu.cityId);
+                const hasDestroyedSticker = researchStickersDestroyed.includes(cityMenu.cityId);
+                const toggleRsSticker = () => {
+                  if (hasRsSticker) {
+                    const next = researchStickers.filter(c => c !== cityMenu.cityId);
+                    setResearchStickers(next); localStorage.setItem(LS_RESEARCH_STICKERS, JSON.stringify(next));
+                  } else {
+                    const next = [...researchStickers, cityMenu.cityId];
+                    setResearchStickers(next); localStorage.setItem(LS_RESEARCH_STICKERS, JSON.stringify(next));
+                  }
+                  setCityMenu(null); setCityMenuHover(null);
+                };
+                const toggleDestroyedSticker = () => {
+                  if (hasDestroyedSticker) {
+                    const next = researchStickersDestroyed.filter(c => c !== cityMenu.cityId);
+                    setResearchStickersDestroyed(next); localStorage.setItem(LS_RESEARCH_STICKERS_DESTROYED, JSON.stringify(next));
+                  } else {
+                    const next = [...researchStickersDestroyed, cityMenu.cityId];
+                    setResearchStickersDestroyed(next); localStorage.setItem(LS_RESEARCH_STICKERS_DESTROYED, JSON.stringify(next));
+                  }
+                  setCityMenu(null); setCityMenuHover(null);
+                };
+                const cubeColors: DiseaseColor[] = ["black", "yellow", "red", "blue"];
+                const cubeHex: Record<DiseaseColor, string> = { black: "#aaa", yellow: "#ffe566", red: "#ff4444", blue: "#5599ff" };
+                const cityCubes = cityInfection[cityMenu.cityId] ?? {};
+                const setCubeCount = (col: DiseaseColor, n: number) => {
+                  const next = { ...cityInfection, [cityMenu.cityId]: { ...cityCubes, [col]: n } };
+                  saveCityInfection(next);
+                };
+                return (
+                  <>
+                    <div style={{ borderTop: "1px solid #222", margin: "3px 4px" }} />
+                    <div onClick={toggleRsSticker}
+                      style={{ ...itemStyle(true), cursor: "pointer", color: hasRsSticker ? "#6ddc6d" : "#e8e8e8" }}
+                      onMouseEnter={e => { e.currentTarget.style.background = "#23282f"; }}
+                      onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+                      RS Sticker {hasRsSticker ? "✓" : "+"}
+                    </div>
+                    <div onClick={toggleDestroyedSticker}
+                      style={{ ...itemStyle(true), cursor: "pointer", color: hasDestroyedSticker ? "#f66" : "#e8e8e8" }}
+                      onMouseEnter={e => { e.currentTarget.style.background = "#23282f"; }}
+                      onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+                      Destroyed Sticker {hasDestroyedSticker ? "✓" : "+"}
+                    </div>
+                    <div style={{ borderTop: "1px solid #222", margin: "3px 4px" }} />
+                    {cubeColors.map(col => {
+                      const cur = cityCubes[col] ?? 0;
+                      return (
+                        <div key={col} style={{ display: "flex", alignItems: "center", gap: 4, padding: "4px 8px" }}>
+                          <span style={{ color: cubeHex[col], fontSize: 11, width: 42, flexShrink: 0 }}>{col}</span>
+                          {[0, 1, 2, 3].map(n => (
+                            <div key={n} onClick={() => setCubeCount(col, n)}
+                              style={{
+                                width: 20, height: 20, borderRadius: 3, cursor: "pointer",
+                                background: n === cur ? cubeHex[col] : "#222",
+                                border: `1px solid ${n === cur ? cubeHex[col] : "#444"}`,
+                                display: "flex", alignItems: "center", justifyContent: "center",
+                                fontSize: 11, color: n === cur ? "#000" : "#666",
+                              }}
+                              onMouseEnter={e => { e.currentTarget.style.opacity = "0.8"; }}
+                              onMouseLeave={e => { e.currentTarget.style.opacity = "1"; }}>
+                              {n}
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })}
+                  </>
+                );
+              })()}
 
           </ContextMenu>
         );
