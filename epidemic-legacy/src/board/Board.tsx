@@ -3513,6 +3513,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
           borderRadius: 10, padding: "10px 20px", color: "#cfe8ff",
           fontFamily: "system-ui, sans-serif", fontSize: 13, textAlign: "center",
           boxShadow: "0 4px 24px #000c",
+          pointerEvents: "none",
         }}>
           Click a city that had a research station this game to place its sticker.
         </div>
