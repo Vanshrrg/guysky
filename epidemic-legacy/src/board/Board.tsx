@@ -58,14 +58,14 @@ import {
   LS_CURED, LS_CITY_INFECTION, LS_ERADICATED, LS_OUTBREAK_POS, LS_INFECTION_POS,
   LS_HAND_CARDS, LS_CARD_INFECTION, LS_CARD_PLAYER, LS_CARD_INFECTION_DISCARD,
   LS_CARD_PLAYER_DISCARD, LS_TOKEN_P1, LS_TOKEN_P2, LS_TOKEN_P3, LS_TOKEN_P4,
-  LS_RESEARCH_STATIONS, LS_RESEARCH_POS, LS_PANIC_LEVELS, LS_HCMC_TRAY,
+  LS_RESEARCH_STATIONS, LS_RESEARCH_POS, LS_PANIC_LEVELS,
   LS_TURN, LS_PLAYER_CITIES, LS_INFECT_DECK, LS_INFECT_DISCARD, LS_PLAYER_DECK, LS_EPIDEMIC_COUNT,
   LS_CODA_COLOR, LS_DISEASE_NAMES,
   LS_RESEARCH_STICKERS, LS_RESEARCH_STICKERS_DESTROYED, LS_RESEARCH_STICKER_POS, LS_DESTROYED_STICKER_POS,
   DEF_CARD_INFECTION, DEF_CARD_PLAYER, DEF_CARD_INFECTION_DISCARD, DEF_CARD_PLAYER_DISCARD,
   DEF_TOKEN_P1, DEF_TOKEN_P2, DEF_TOKEN_P3, DEF_TOKEN_P4,
   loadCard, loadTrackPos, loadHandCards, loadResearchStations, loadResearchPos,
-  loadPanicLevels, loadHcmc, loadTurnState, loadPlayerCities, loadCodaColor, loadDiseaseNames, clearGameState,
+  loadPanicLevels, loadTurnState, loadPlayerCities, loadCodaColor, loadDiseaseNames, clearGameState,
   loadResearchStickers, loadResearchStickersDestroyed, loadResearchStickerPos, loadDestroyedStickerPos,
   LS_MUTATIONS, LS_MUTATION_POSITIONS, DEF_MUTATION_POSITIONS,
   loadMutations, loadMutationPositions,
@@ -248,7 +248,7 @@ const SCENARIO_LABELS: Record<string, string> = {
   sep: "September", oct: "October", nov: "November", dec: "December",
 };
 
-export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month0", onInfectionDone, onChooseRoles, onResumeRoles, onRestart, onMainMenu }: {
+export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month0", onInfectionDone, onChooseRoles, onResumeRoles, onRestart, onMainMenu, onDoneCalibrating }: {
   setup?: PreGameSetup;
   fundingCards?: string[];   // passed before setup is ready (deal phase)
   scenario?: string;
@@ -257,6 +257,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   onResumeRoles?: () => void;
   onRestart?: () => void;
   onMainMenu?: () => void;
+  onDoneCalibrating?: () => void;
 }) {
   const boardRef = useRef<HTMLDivElement>(null);
   const [calibrating, setCalibrating] = useState(false);
@@ -285,7 +286,6 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   const [cardPlayer, setCardPlayer] = useState<CardState>(() => loadCard(LS_CARD_PLAYER, DEF_CARD_PLAYER));
   const [cardInfectionDiscard, setCardInfectionDiscard] = useState<CardState>(() => loadCard(LS_CARD_INFECTION_DISCARD, DEF_CARD_INFECTION_DISCARD));
   const [cardPlayerDiscard] = useState<CardState>(() => loadCard(LS_CARD_PLAYER_DISCARD, DEF_CARD_PLAYER_DISCARD));
-  const [hcmcTray, setHcmcTray] = useState<{ x: number; y: number }>(() => loadHcmc());
   // 0 when epidemics are embedded in the deck (deal/game phases); 5 for raw board view
   const [epidemicCount, setEpidemicCount] = useState(() => {
     try { const r = localStorage.getItem(LS_EPIDEMIC_COUNT); if (r !== null) return Number(r); } catch { /* ignore */ }
@@ -328,6 +328,8 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   const [upgradePicksRemaining, setUpgradePicksRemaining] = useState(0);
   const [showRSStickerPanel, setShowRSStickerPanel] = useState(false);
   const [pickingMutation, setPickingMutation] = useState(false); // choosing which eradicated disease to mutate
+  const [mutDragTier, setMutDragTier] = useState<1|2|3|4|null>(null);
+  const mutGhostRef = useRef<HTMLDivElement>(null);
   const [cityStickerOverrides, setCityStickerOverrides] = useState<Record<string, Partial<StickerPos>>>(() => loadCityStickerOverrides());
   const eligibleStickerCities = useRef<Set<string>>(new Set());
   const [stationCapPick, setStationCapPick] = useState<string[] | null>(null); // null = inactive; else cities chosen so far
@@ -544,6 +546,65 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   // shaves one), and how many diseases currently hold at least a given tier.
   const cureThresholdFor = (col: DiseaseColor) => cureThreshold - ((mutationLevels[col] ?? 0) >= 3 ? 1 : 0);
   const mutCountAtLeast = (tier: number) => DISEASE_COLORS.filter(c => (mutationLevels[c] ?? 0) >= tier).length;
+
+  const startMutDrag = (tier: 1|2|3|4, e: React.PointerEvent) => {
+    e.preventDefault(); e.stopPropagation();
+    const ghost = mutGhostRef.current;
+    if (!ghost) return;
+    setMutDragTier(tier);
+    const originX = e.clientX; const originY = e.clientY;
+    ghost.style.display = "block";
+    ghost.style.transition = "none";
+    ghost.style.left = `${originX}px`;
+    ghost.style.top = `${originY}px`;
+    // Capture current closure values so handler is stable during gesture
+    const snapLevels = mutationLevels;
+    const snapErad = eradicated;
+    const onMove = (ev: PointerEvent) => {
+      ghost.style.left = `${ev.clientX}px`;
+      ghost.style.top = `${ev.clientY}px`;
+    };
+    const onUp = (ev: PointerEvent) => {
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+      const board = boardRef.current;
+      if (!board) { ghost.style.display = "none"; setMutDragTier(null); return; }
+      const br = board.getBoundingClientRect();
+      // Disease tray screen positions (from _SUPPLY_META iconX/iconY)
+      const TRAY: [DiseaseColor, number, number][] = [
+        ["yellow", br.left + 3.21/100 * br.width,  br.top + 89.41/100 * br.height],
+        ["red",    br.left + 8.97/100 * br.width,  br.top + 89.41/100 * br.height],
+        ["blue",   br.left + 14.77/100 * br.width, br.top + 89.41/100 * br.height],
+        ["black",  br.left + 20.52/100 * br.width, br.top + 89.41/100 * br.height],
+      ];
+      let applied = false;
+      for (const [col, tx, ty] of TRAY) {
+        if (Math.hypot(ev.clientX - tx, ev.clientY - ty) > 60) continue;
+        const ci = COLOR_TO_CURE_IDX[col];
+        const isErad = ci !== undefined && snapErad[ci];
+        const lvl = snapLevels[col] ?? 0;
+        if (!isErad || lvl + 1 !== tier || mutCountAtLeast(tier) >= MUT_QUOTA[tier]) break;
+        // Valid drop — apply mutation
+        setMutationLevels({ ...snapLevels, [col]: tier });
+        setPickingMutation(false);
+        setUpgradePicksRemaining(n => n - 1);
+        ghost.style.display = "none";
+        setMutDragTier(null);
+        applied = true;
+        break;
+      }
+      if (!applied) {
+        // Snap ghost back to drag origin
+        ghost.style.transition = "left 0.22s ease-out, top 0.22s ease-out";
+        ghost.style.left = `${originX}px`;
+        ghost.style.top = `${originY}px`;
+        setTimeout(() => { ghost.style.display = "none"; ghost.style.transition = "none"; setMutDragTier(null); }, 230);
+      }
+    };
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+  };
+
   const consumeAction = (ts: TurnStateData): TurnStateData => {
     const remaining = ts.actionsRemaining - 1;
     if (remaining <= 0) return { ...ts, actionsRemaining: 0, phase: "draw", drawCount: 0 };
@@ -1580,7 +1641,10 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
       </div>
       <div style={{ display: "flex", gap: 8, marginBottom: 6, alignItems: "center" }}>
         <span style={{ fontSize: 10, color: "#556", fontFamily: "monospace" }}>build 2025-06-11j</span>
-        <button onClick={() => setCalibrating(v => !v)}>
+        <button onClick={() => {
+          if (calibrating) { setCalibrating(false); onDoneCalibrating?.(); }
+          else setCalibrating(true);
+        }}>
           {calibrating ? "Done calibrating" : "Calibrate markers"}
         </button>
         <button onClick={() => {
@@ -1608,10 +1672,6 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
         </button>
         {calibrating && (
           <>
-            <button onClick={() => {
-              const text = `hcmcTray: { x: ${hcmcTray.x.toFixed(2)}, y: ${hcmcTray.y.toFixed(2)} }`;
-              navigator.clipboard.writeText(text).then(() => alert("Copied!")).catch(() => window.prompt("HCMC pos", text));
-            }}>Copy HCMC pos</button>
             <button onClick={() => {
               const text = mutationPositions.map((p, i) => `tier${i + 1}: { x: ${p.x.toFixed(2)}, y: ${p.y.toFixed(2)}, w: ${p.w.toFixed(2)} }`).join("\n");
               navigator.clipboard.writeText(text).then(() => alert("Copied!")).catch(() => window.prompt("Mutation positions", text));
@@ -2297,41 +2357,25 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
           );
         })}
 
-        {/* Panic trays — one per city, visible in calibrate mode; only HCMC is draggable */}
+        {/* Panic trays — one per city, visible in calibrate mode */}
         {calibrating && CITIES.map(city => {
-          const isHcmc = city.id === "ho-chi-minh-city";
-          const t = isHcmc ? hcmcTray : (PANIC_TRAY_POS[city.id] ?? { x: city.pos.x, y: city.pos.y });
-          const onDragDown = isHcmc ? (e: React.PointerEvent<HTMLDivElement>) => {
-            e.stopPropagation(); e.preventDefault();
-            const el = e.currentTarget; el.setPointerCapture(e.pointerId);
-            const r = boardRef.current!.getBoundingClientRect();
-            const sx = e.clientX; const sy = e.clientY; const ox = t.x; const oy = t.y;
-            const onMove = (ev: PointerEvent) => {
-              const nx = +(ox + ((ev.clientX - sx) / r.width) * 100).toFixed(2);
-              const ny = +(oy + ((ev.clientY - sy) / r.height) * 100).toFixed(2);
-              setHcmcTray({ x: nx, y: ny });
-              localStorage.setItem(LS_HCMC_TRAY, JSON.stringify({ x: nx, y: ny }));
-            };
-            const onUp = () => { el.removeEventListener("pointermove", onMove as any); el.removeEventListener("pointerup", onUp); };
-            el.addEventListener("pointermove", onMove as any); el.addEventListener("pointerup", onUp);
-          } : undefined;
+          const t = PANIC_TRAY_POS[city.id] ?? { x: city.pos.x, y: city.pos.y };
           return (
             <div key={`ptray-${city.id}`}
-              onPointerDown={onDragDown}
               style={{
                 position: "absolute",
                 left: `${t.x}%`, top: `${t.y}%`,
                 width: `${PANIC_W}%`, aspectRatio: "1",
                 transform: "translate(-50%, -50%)",
                 zIndex: 7,
-                cursor: isHcmc ? "grab" : "default",
-                border: `1.5px dashed ${isHcmc ? "#f80" : "#f804"}`,
+                cursor: "default",
+                border: "1.5px dashed #f804",
                 boxSizing: "border-box",
               }}>
               <span style={{
                 position: "absolute", bottom: "100%", left: "50%",
                 transform: "translateX(-50%)",
-                color: isHcmc ? "#f80" : "#f806",
+                color: "#f806",
                 fontSize: 5, fontFamily: "monospace", userSelect: "none",
                 pointerEvents: "none", whiteSpace: "nowrap", lineHeight: 1.2,
               }}>
@@ -2393,7 +2437,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
         {scenario !== "month0" && CITIES.map(city => {
           const level = panicLevels[city.id] ?? 0;
           if (level === 0) return null;
-          const t = city.id === "ho-chi-minh-city" ? hcmcTray : (PANIC_TRAY_POS[city.id] ?? { x: city.pos.x, y: city.pos.y });
+          const t = PANIC_TRAY_POS[city.id] ?? { x: city.pos.x, y: city.pos.y };
           return (
             <div key={`panic-${city.id}`} style={{
               position: "absolute",
@@ -2970,6 +3014,32 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                   </span>
                 </div>
               )}
+            </div>
+          );
+        })}
+
+        {/* Mutation drop zone rings — shown on eligible disease trays while picking mutation */}
+        {pickingMutation && DISEASE_COLORS.map(col => {
+          const ci = COLOR_TO_CURE_IDX[col];
+          if (ci === undefined || !eradicated[ci]) return null;
+          const lvl = mutationLevels[col] ?? 0;
+          const nextTier = (lvl + 1) as 1|2|3|4;
+          if (nextTier > 4 || mutCountAtLeast(nextTier) >= MUT_QUOTA[nextTier]) return null;
+          const meta = _SUPPLY_META.find(m => m.color === col);
+          if (!meta) return null;
+          return (
+            <div key={`mut-drop-${col}`} style={{
+              position: "absolute",
+              left: `${meta.iconX}%`, top: `${meta.iconY}%`,
+              width: "7%", aspectRatio: "1",
+              transform: "translate(-50%, -50%)",
+              border: "2px dashed #3ddc6d",
+              borderRadius: "50%",
+              zIndex: 50, pointerEvents: "none",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              animation: "chainPulse 1s ease-in-out infinite alternate",
+            }}>
+              <span style={{ color: "#3ddc6d", fontSize: 9, fontWeight: 700, userSelect: "none" }}>T{nextTier}</span>
             </div>
           );
         })}
@@ -3592,78 +3662,70 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
       )}
 
       {/* Positive Mutation picker */}
+      {/* Drag ghost — fixed to cursor during mutation drag, hidden otherwise */}
+      <div ref={mutGhostRef} style={{
+        position: "fixed", display: "none", zIndex: 3500,
+        pointerEvents: "none", transform: "translate(-50%, -50%)",
+        width: 72,
+        filter: "drop-shadow(0 4px 16px rgba(61,220,109,0.7))",
+      }}>
+        {mutDragTier !== null && (
+          <img src={MUT_STICKER_SRCS[mutDragTier - 1]} alt="" draggable={false}
+            style={{ width: "100%", height: "auto", display: "block" }} />
+        )}
+      </div>
+
       {pickingMutation && (
         <div style={{
-          position: "fixed", inset: 0, zIndex: 2500,
-          background: "rgba(2,6,14,0.92)",
-          display: "flex", alignItems: "center", justifyContent: "center",
+          position: "fixed", right: 20, top: "50%", transform: "translateY(-50%)",
+          zIndex: 2500, width: 210,
+          background: "rgba(8,16,30,0.97)", border: "2px solid #3ddc6d",
+          borderRadius: 14, padding: "18px 16px",
+          fontFamily: "system-ui, sans-serif",
+          boxShadow: "0 8px 60px #000a",
+          display: "flex", flexDirection: "column", gap: 12,
         }}>
-          <div style={{
-            background: "#0a1320", border: "2px solid #3ddc6d", borderRadius: 14,
-            padding: "28px 32px", maxWidth: 520, width: "90vw",
-            fontFamily: "system-ui, sans-serif",
-            display: "flex", flexDirection: "column", gap: 16,
-          }}>
-            <div style={{ fontSize: 18, fontWeight: 700, color: "#3ddc6d", textAlign: "center" }}>
-              Choose a Positive Mutation
-            </div>
-            <div style={{ fontSize: 12, color: "#9ab", textAlign: "center" }}>
-              Select an eradicated disease to gain its next mutation tier.
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {DISEASE_COLORS.map(col => {
-                const ci = COLOR_TO_CURE_IDX[col];
-                const isEradicated = ci !== undefined && eradicated[ci];
-                const lvl = mutationLevels[col] ?? 0;
-                const nextTier = lvl + 1;
-                const quotaFull = nextTier > 4 || mutCountAtLeast(nextTier) >= MUT_QUOTA[nextTier as 1|2|3|4];
-                const disabled = !isEradicated || lvl >= 4 || quotaFull;
-                const cubeColor = COLOR_TO_CUBE[col] ?? "#888";
-                const tierLabel = nextTier <= 4 ? `→ Tier ${nextTier}: ${MUT_NAMES[nextTier]}` : "Max tier reached";
-                const tierDesc = nextTier <= 4 ? MUT_DESCS[nextTier] : "";
-                return (
-                  <button key={col}
-                    disabled={disabled}
-                    onClick={() => {
-                      const next = { ...mutationLevels, [col]: nextTier };
-                      setMutationLevels(next);
-                      setPickingMutation(false);
-                      setUpgradePicksRemaining(n => n - 1);
-                    }}
-                    style={{
-                      display: "flex", alignItems: "center", gap: 12,
-                      padding: "10px 14px", borderRadius: 8,
-                      background: disabled ? "#10141c" : "#0f1e30",
-                      border: `2px solid ${disabled ? "#2a3142" : cubeColor}`,
-                      cursor: disabled ? "not-allowed" : "pointer",
-                      opacity: disabled ? 0.5 : 1, textAlign: "left",
-                      fontFamily: "system-ui, sans-serif",
-                    }}>
-                    <div style={{ width: 18, height: 18, borderRadius: 3, background: cubeColor, flexShrink: 0 }} />
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontWeight: 700, color: "#cfe8ff", fontSize: 13, textTransform: "capitalize" }}>
-                        {col}
-                        {lvl > 0 && <span style={{ color: "#3ddc6d", marginLeft: 6, fontSize: 11 }}>Tier {lvl} ✓</span>}
-                      </div>
-                      <div style={{ fontSize: 11, color: "#6af", marginTop: 2 }}>{tierLabel}</div>
-                      {tierDesc && <div style={{ fontSize: 10, color: "#8ab", marginTop: 1 }}>{tierDesc}</div>}
-                      {!isEradicated && <div style={{ fontSize: 10, color: "#a66" }}>Not eradicated this game</div>}
-                      {isEradicated && quotaFull && <div style={{ fontSize: 10, color: "#a66" }}>Quota full for this tier</div>}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-            <button
-              onClick={() => setPickingMutation(false)}
-              style={{
-                padding: "6px 14px", fontSize: 12, borderRadius: 6, cursor: "pointer",
-                background: "#10141c", border: "1px solid #334", color: "#778",
-                fontFamily: "system-ui, sans-serif",
-              }}>
-              ← Back
-            </button>
+          <div style={{ fontSize: 15, fontWeight: 700, color: "#3ddc6d", textAlign: "center" }}>
+            Positive Mutations
           </div>
+          <div style={{ fontSize: 11, color: "#9ab", textAlign: "center", lineHeight: 1.4 }}>
+            Drag a sticker onto a glowing disease tray
+          </div>
+          {([1, 2, 3, 4] as const).map(tier => {
+            const total = MUT_QUOTA[tier];
+            const used = mutCountAtLeast(tier);
+            const available = total - used;
+            return (
+              <div key={tier}>
+                <div style={{ fontSize: 10, color: "#667", marginBottom: 5, display: "flex", justifyContent: "space-between" }}>
+                  <span>Tier {tier} — {MUT_NAMES[tier]}</span>
+                  <span style={{ color: available > 0 ? "#3ddc6d" : "#444" }}>{available}/{total}</span>
+                </div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {Array.from({ length: available }, (_, i) => (
+                    <div key={i}
+                      onPointerDown={e => startMutDrag(tier, e)}
+                      style={{
+                        width: 52, cursor: "grab", userSelect: "none", touchAction: "none",
+                        border: "1px solid #3ddc6d44", borderRadius: 4, padding: 2,
+                        background: "#0a1a10",
+                      }}>
+                      <img src={MUT_STICKER_SRCS[tier - 1]} alt={MUT_NAMES[tier]} draggable={false}
+                        style={{ width: "100%", height: "auto", display: "block", pointerEvents: "none" }} />
+                    </div>
+                  ))}
+                  {available === 0 && (
+                    <span style={{ fontSize: 10, color: "#445" }}>Quota full</span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+          <button onClick={() => setPickingMutation(false)} style={{
+            marginTop: 4, padding: "6px", fontSize: 11, borderRadius: 6, cursor: "pointer",
+            background: "#10141c", border: "1px solid #334", color: "#778",
+            fontFamily: "system-ui, sans-serif",
+          }}>← Back</button>
         </div>
       )}
 

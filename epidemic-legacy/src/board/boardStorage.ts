@@ -68,7 +68,7 @@ export const DEF_TOKEN_P1: CardState = { x: 51.21, y: 57.25, w: 2.42 };
 export const DEF_TOKEN_P2: CardState = { x: 53.00, y: 57.25, w: 2.42 };
 export const DEF_TOKEN_P3: CardState = { x: 55.00, y: 57.25, w: 2.42 };
 export const DEF_TOKEN_P4: CardState = { x: 57.00, y: 57.25, w: 2.42 };
-export const DEF_HCMC = { x: 85.88, y: 60.93 };
+export const DEF_HCMC = { x: 85.69, y: 60.24 };
 export type StickerPos = { dx: number; dy: number; w: number };
 export const DEF_RESEARCH_STICKER_POS: StickerPos = { dx: 0, dy: -2.85, w: 1.27 };
 // Destroyed research station — same offset as the active sticker, 20% smaller.
