@@ -132,10 +132,10 @@ const INFECTION_RATE_VALUES = [2, 2, 2, 3, 3, 4, 4];
 // Order: black, yellow, red, blue (matches DISEASE_COLORS / placedPerColor indices).
 const _allPiles = defaultCubes(); // 96 positions, 24 per color in back→front order
 const _SUPPLY_META = [
-  { color: "black",  fill: "#1a1a1a", src: blackVirusSrc,  iconX: 20.52, iconY: 92.05, labelX: 22.6, labelY: 89.64, stickerX: 20.72, stickerY: 80.54, stickerW: 5.27 },
-  { color: "yellow", fill: "#FFFA73", src: yellowVirusSrc, iconX: 3.21,  iconY: 92.05, labelX: 5.3,  labelY: 89.64, stickerX: 3.51,  stickerY: 80.44, stickerW: 5.27 },
-  { color: "red",    fill: "#cc1111", src: redVirusSrc,    iconX: 8.97,  iconY: 92.05, labelX: 11.1, labelY: 89.64, stickerX: 9.27,  stickerY: 80.54, stickerW: 5.27 },
-  { color: "blue",   fill: "#0A00A1", src: blueVirusSrc,   iconX: 14.77, iconY: 92.05, labelX: 16.9, labelY: 89.64, stickerX: 15.09, stickerY: 80.54, stickerW: 5.27 },
+  { color: "black",  fill: "#1a1a1a", src: blackVirusSrc,  iconX: 20.52, iconY: 92.05, labelX: 22.6, labelY: 89.64, stickerX: 20.72, stickerY: 80.54, stickerW: 5.27, codaLabelX: 20.88, codaLabelY: 76.73 },
+  { color: "yellow", fill: "#FFFA73", src: yellowVirusSrc, iconX: 3.21,  iconY: 92.05, labelX: 5.3,  labelY: 89.64, stickerX: 3.51,  stickerY: 80.44, stickerW: 5.27, codaLabelX: 3.54,  codaLabelY: 76.63 },
+  { color: "red",    fill: "#cc1111", src: redVirusSrc,    iconX: 8.97,  iconY: 92.05, labelX: 11.1, labelY: 89.64, stickerX: 9.27,  stickerY: 80.54, stickerW: 5.27, codaLabelX: 9.42,  codaLabelY: 76.63 },
+  { color: "blue",   fill: "#0A00A1", src: blueVirusSrc,   iconX: 14.77, iconY: 92.05, labelX: 16.9, labelY: 89.64, stickerX: 15.09, stickerY: 80.54, stickerW: 5.27, codaLabelX: 15.18, codaLabelY: 76.63 },
 ];
 // SUPPLY_PILES is completed after imports are available (src filled at runtime below component def)
 const SUPPLY_PILES = _SUPPLY_META.map((m, ci) => ({
@@ -333,7 +333,6 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   const [virusIconPos, setVirusIconPos] = useState<Record<string, { x: number; y: number }>>(() =>
     Object.fromEntries(_SUPPLY_META.map(m => [m.color, { x: m.iconX, y: m.iconY }]))
   );
-  const [codaLabelCalPos, setCodaLabelCalPos] = useState({ x: 3.30, y: 72.91 });
   const eligibleStickerCities = useRef<Set<string>>(new Set());
   const [stationCapPick, setStationCapPick] = useState<string[] | null>(null); // null = inactive; else cities chosen so far
   const destroyStickerIfAny = (cityId: string) => {
@@ -1693,13 +1692,6 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                   document.body.appendChild(ta); ta.select(); document.execCommand('copy');
                   document.body.removeChild(ta); alert('Copied:\n' + text);
                 }}>Copy virus pos</button>
-<button onClick={() => {
-                  const text = `{ x: ${codaLabelCalPos.x.toFixed(2)}, y: ${codaLabelCalPos.y.toFixed(2)} }`;
-                  const ta = document.createElement('textarea'); ta.value = text;
-                  ta.style.cssText = 'position:fixed;opacity:0';
-                  document.body.appendChild(ta); ta.select(); document.execCommand('copy');
-                  document.body.removeChild(ta); alert('Copied: ' + text);
-                }}>Copy COdA label pos</button>
               </>
             )}
             <span style={{ color: "#9ab", fontSize: 12, alignSelf: "center" }}>Drag to move</span>
@@ -1733,29 +1725,11 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
             In calibrate-jan both are always visible and draggable. */}
         {isJan && codaColor !== null && (() => {
           const meta = codaColor ? _SUPPLY_META.find(m => m.color === codaColor) : null;
-          const ci = codaColor ? COLOR_TO_CURE_IDX[codaColor] : undefined;
-          const cureMarker = ci !== undefined ? MARKERS[CURE_INDICES[ci]] : null;
           const stickerX = meta?.stickerX ?? 3.51;
           const stickerY = meta?.stickerY ?? 80.44;
           const stickerW = meta?.stickerW ?? 5.27;
-          const labelX = calibrating ? codaLabelCalPos.x : (cureMarker?.def.x ?? 3.30);
-          const labelY = calibrating ? codaLabelCalPos.y : (cureMarker?.def.y ?? 72.91);
-          // makeDragHandler: captures start pos, passes absolute (newX, newY) on each move
-          const makeDragHandler = (initX: number, initY: number, onMove: (x: number, y: number) => void) =>
-            !calibrating ? undefined : (e: React.PointerEvent<HTMLElement>) => {
-              e.stopPropagation(); e.preventDefault();
-              const el = e.currentTarget; el.setPointerCapture(e.pointerId);
-              const r = boardRef.current!.getBoundingClientRect();
-              const sx = e.clientX; const sy = e.clientY;
-              let moved = false;
-              const onMv = (ev: PointerEvent) => {
-                if (!moved && Math.hypot(ev.clientX - sx, ev.clientY - sy) < 6) return;
-                moved = true;
-                onMove(initX + (ev.clientX - sx) / r.width * 100, initY + (ev.clientY - sy) / r.height * 100);
-              };
-              const onUp = () => { el.removeEventListener("pointermove", onMv as EventListener); el.removeEventListener("pointerup", onUp); };
-              el.addEventListener("pointermove", onMv as EventListener); el.addEventListener("pointerup", onUp);
-            };
+          const labelX = meta?.codaLabelX ?? 3.54;
+          const labelY = meta?.codaLabelY ?? 76.63;
           return (
             <>
               {/* Disease sticker */}
@@ -1773,9 +1747,6 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
               </div>
               {/* COdA-403a label in the cure vial box */}
               <div
-                onPointerDown={makeDragHandler(codaLabelCalPos.x, codaLabelCalPos.y,
-                  (x, y) => setCodaLabelCalPos({ x, y })
-                )}
                 style={{
                   position: "absolute",
                   left: `${labelX}%`, top: `${labelY}%`,
@@ -1783,11 +1754,8 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                   fontSize: "0.55vw", fontWeight: 700,
                   color: "white",
                   fontFamily: "monospace", whiteSpace: "nowrap",
-                  pointerEvents: calibrating ? "auto" : "none",
+                  pointerEvents: "none",
                   userSelect: "none", zIndex: 6,
-                  cursor: calibrating ? "grab" : "default",
-                  outline: calibrating ? "1px dashed #ff0" : "none",
-                  padding: calibrating ? "2px 4px" : "0",
                 }}>
                 COdA-403a
               </div>
