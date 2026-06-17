@@ -2479,6 +2479,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
           const renderGroup = (
             ids: string[], src: string, alt: string, pos: StickerPos,
             handlers: { onDragDown?: (e: React.PointerEvent<HTMLDivElement>) => void; onResizeDown?: (e: React.PointerEvent<HTMLDivElement>) => void },
+            onRemove?: (id: string) => void,
           ) => ids.map(id => {
             const city = CITIES.find(c => c.id === id);
             if (!city) return null;
@@ -2488,6 +2489,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
             return (
               <div key={`${alt}-${id}`}
                 onPointerDown={cityHandlers.onDragDown}
+                onContextMenu={calibrating && onRemove ? (e) => { e.preventDefault(); e.stopPropagation(); onRemove(id); } : undefined}
                 style={{
                   position: "absolute",
                   left: `${city.pos.x + effPos.dx}%`, top: `${city.pos.y + effPos.dy}%`,
@@ -2508,13 +2510,21 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
               </div>
             );
           });
+          const removeRsSticker = (id: string) => {
+            const next = researchStickers.filter(c => c !== id);
+            setResearchStickers(next); localStorage.setItem(LS_RESEARCH_STICKERS, JSON.stringify(next));
+          };
+          const removeDestroyedSticker = (id: string) => {
+            const next = researchStickersDestroyed.filter(c => c !== id);
+            setResearchStickersDestroyed(next); localStorage.setItem(LS_RESEARCH_STICKERS_DESTROYED, JSON.stringify(next));
+          };
           const destroyedIds = calibrating
             ? [...new Set([...researchStickersDestroyed, "atlanta"])]
             : researchStickersDestroyed;
           return (
             <>
-              {renderGroup(researchStickers, researchStickerSrc, "Research station sticker", stickerPos, activeHandlers)}
-              {renderGroup(destroyedIds, destroyedResearchStationSrc, "Destroyed research station", destroyedStickerPos, destroyedHandlers)}
+              {renderGroup(researchStickers, researchStickerSrc, "Research station sticker", stickerPos, activeHandlers, removeRsSticker)}
+              {renderGroup(destroyedIds, destroyedResearchStationSrc, "Destroyed research station", destroyedStickerPos, destroyedHandlers, removeDestroyedSticker)}
             </>
           );
         })()}
