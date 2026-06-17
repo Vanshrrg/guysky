@@ -74,7 +74,7 @@ import {
 } from "./boardStorage";
 import { MARKERS, CURE_INDICES, COLOR_TO_CURE_IDX, loadMarker, loadCured, loadEradicated } from "./boardMarkers";
 import { GameOverOverlay } from "./GameOverOverlay";
-import { UpgradePopup, type UpgradeType } from "./UpgradePopup";
+import { UpgradePopup, ResearchStickerPanel, type UpgradeType } from "./UpgradePopup";
 import { CodaPopup } from "./CodaPopup";
 import { DiseaseNamePopup } from "./DiseaseNamePopup";
 import { InfectionDiscardPopup } from "./InfectionDiscardPopup";
@@ -326,7 +326,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   // Post-game upgrade flow: how many of the 2 picks are left, and whether we're
   // waiting for the player to click a city to place a Research Station sticker.
   const [upgradePicksRemaining, setUpgradePicksRemaining] = useState(0);
-  const [pickingStickerCity, setPickingStickerCity] = useState(false);
+  const [showRSStickerPanel, setShowRSStickerPanel] = useState(false);
   const [pickingMutation, setPickingMutation] = useState(false); // choosing which eradicated disease to mutate
   const [cityStickerOverrides, setCityStickerOverrides] = useState<Record<string, Partial<StickerPos>>>(() => loadCityStickerOverrides());
   const eligibleStickerCities = useRef<Set<string>>(new Set());
@@ -1051,20 +1051,21 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
     }
   };
 
+  const handleRSStickerDrop = (cityId: string) => {
+    if (!eligibleStickerCities.current.has(cityId)) return;
+    setResearchStickers(prev => {
+      if (prev.includes(cityId)) return prev;
+      const next = [...prev, cityId];
+      localStorage.setItem(LS_RESEARCH_STICKERS, JSON.stringify(next));
+      return next;
+    });
+    setShowRSStickerPanel(false);
+    setHighlightCities([]);
+    setUpgradePicksRemaining(n => n - 1);
+  };
+
   const handleCityClick = (cityId: string) => {
-    if (pickingStickerCity) {
-      if (!eligibleStickerCities.current.has(cityId)) return;
-      setResearchStickers(prev => {
-        if (prev.includes(cityId)) return prev;
-        const next = [...prev, cityId];
-        localStorage.setItem(LS_RESEARCH_STICKERS, JSON.stringify(next));
-        return next;
-      });
-      setPickingStickerCity(false);
-      setHighlightCities([]);
-      setUpgradePicksRemaining(n => n - 1);
-      return;
-    }
+    if (showRSStickerPanel) return; // drag-and-drop mode active, clicks ignored
     if (isDealPhase) return;
     if (outbreakQueue.length > 0) return; // block clicks during chain resolution
     // In any real scenario (month0, january…), block manual cube placement; only board sandbox allows it
@@ -2379,7 +2380,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                 zIndex: 20,
                 cursor: inFlightMode ? "pointer" : "default",
                 touchAction: "none", userSelect: "none",
-                pointerEvents: calibrating || pickingStickerCity ? "none" : "auto",
+                pointerEvents: calibrating || showRSStickerPanel ? "none" : "auto",
                 boxShadow: rsActionMenu?.cityId === city.id ? "0 0 0 2px #ffdd44, 0 0 10px 3px #ffdd4488" : "none",
               }}>
               <img src={researchSrc} alt="Research station" draggable={false}
@@ -2495,6 +2496,29 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
             </>
           );
         })()}
+
+        {/* RS sticker drop zones — shown during drag-and-drop upgrade placement */}
+        {showRSStickerPanel && CITIES
+          .filter(c => eligibleStickerCities.current.has(c.id) && !researchStickers.includes(c.id))
+          .map(city => (
+            <div
+              key={`rs-drop-${city.id}`}
+              onDragOver={e => e.preventDefault()}
+              onDrop={e => { e.preventDefault(); handleRSStickerDrop(city.id); }}
+              style={{
+                position: "absolute",
+                left: `${city.pos.x}%`, top: `${city.pos.y}%`,
+                width: "5%", aspectRatio: "1",
+                transform: "translate(-50%, -50%)",
+                zIndex: 2550,
+                borderRadius: "50%",
+                border: "2px dashed #3a9aff",
+                background: "rgba(58,154,255,0.15)",
+                cursor: "copy",
+                boxSizing: "border-box",
+              }}
+            />
+          ))}
 
         {/* Objective cards — fill slots 1..objectiveCount */}
         {OBJECTIVE_SLOTS.slice(0, objectiveCount).map((slot, i) => (
@@ -2750,7 +2774,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                 <circle cx="50" cy="28" r="24" fill={color} stroke={color === "#f0f0f0" ? "#999" : "none"} strokeWidth={color === "#f0f0f0" ? 1.5 : 0} />
                 <circle cx="40" cy="20" r="7" fill="rgba(255,255,255,0.30)" />
                 {/* Bottom-half drag handle only — top half is click-through */}
-                {isInteractivePawn && !pickingStickerCity && (
+                {isInteractivePawn && !showRSStickerPanel && (
                   <rect x="0" y="75" width="100" height="75" fill="transparent"
                     style={{ pointerEvents: "all", cursor: calibrating ? "default" : "grab" }}
                     onPointerDown={onDragDown as unknown as React.PointerEventHandler<SVGRectElement>} />
@@ -3538,7 +3562,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
       )}
 
       {/* Post-game upgrade selection */}
-      {upgradePicksRemaining > 0 && !pickingStickerCity && !pickingMutation && (
+      {upgradePicksRemaining > 0 && !showRSStickerPanel && !pickingMutation && (
         <UpgradePopup
           picksRemaining={upgradePicksRemaining}
           mutationAvailable={DISEASE_COLORS.some(col => {
@@ -3551,7 +3575,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
           })}
           onPick={(type: UpgradeType) => {
             if (type === "research-station") {
-              setPickingStickerCity(true);
+              setShowRSStickerPanel(true);
               setHighlightCities([...eligibleStickerCities.current]);
             } else if (type === "positive-mutation") {
               setPickingMutation(true);
@@ -3560,17 +3584,11 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
         />
       )}
 
-      {pickingStickerCity && (
-        <div style={{
-          position: "fixed", top: 16, left: "50%", transform: "translateX(-50%)",
-          zIndex: 2500, background: "#0a1320", border: "2px solid #3a9aff",
-          borderRadius: 10, padding: "10px 20px", color: "#cfe8ff",
-          fontFamily: "system-ui, sans-serif", fontSize: 13, textAlign: "center",
-          boxShadow: "0 4px 24px #000c",
-          pointerEvents: "none",
-        }}>
-          Click a city that had a research station this game to place its sticker.
-        </div>
+      {showRSStickerPanel && (
+        <ResearchStickerPanel
+          placedCount={researchStickers.length}
+          onCancel={() => { setShowRSStickerPanel(false); setHighlightCities([]); }}
+        />
       )}
 
       {/* Positive Mutation picker */}

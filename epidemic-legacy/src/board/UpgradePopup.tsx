@@ -3,6 +3,72 @@ import positiveMutationSrc from "../../object/Jan/positivemutation1.png";
 
 export type UpgradeType = "research-station" | "positive-mutation";
 
+const TOTAL_RS_STICKERS = 8;
+
+export function ResearchStickerPanel({
+  placedCount,
+  onCancel,
+}: {
+  placedCount: number;
+  onCancel: () => void;
+}) {
+  const remaining = TOTAL_RS_STICKERS - placedCount;
+
+  return (
+    <>
+      {/* Floating sticker tray — top-center, always on top */}
+      <div style={{
+        position: "fixed", top: 16, left: "50%", transform: "translateX(-50%)",
+        zIndex: 2600,
+        background: "#0a1320", border: "2px solid #3a9aff",
+        borderRadius: 12, padding: "12px 20px",
+        display: "flex", flexDirection: "column", alignItems: "center", gap: 10,
+        fontFamily: "system-ui, sans-serif",
+        boxShadow: "0 6px 32px #000c",
+        userSelect: "none",
+      }}>
+        <div style={{ fontSize: 13, color: "#7bc4ff", fontWeight: 700 }}>
+          Research Station Stickers — drag one to an eligible city
+        </div>
+        <div style={{ fontSize: 11, color: "#9ab" }}>
+          {remaining} of {TOTAL_RS_STICKERS} remaining
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center" }}>
+          {Array.from({ length: remaining }).map((_, i) => (
+            <img
+              key={i}
+              src={researchStickerSrc}
+              alt="Research Station Sticker"
+              draggable
+              onDragStart={e => e.dataTransfer.setData("text/plain", "rs-sticker")}
+              style={{
+                width: 52, height: 52, objectFit: "contain",
+                cursor: "grab", borderRadius: 6,
+                border: "1.5px solid #3a9aff44",
+              }}
+            />
+          ))}
+          {remaining === 0 && (
+            <div style={{ color: "#556", fontSize: 12 }}>All stickers placed</div>
+          )}
+        </div>
+        <button
+          onClick={onCancel}
+          style={{
+            marginTop: 2, padding: "4px 16px", background: "transparent",
+            border: "1px solid #3a6aaa", borderRadius: 6, color: "#9ab",
+            cursor: "pointer", fontSize: 12,
+          }}>
+          Cancel
+        </button>
+      </div>
+
+      {/* Drop zones over eligible cities */}
+      {/* These are rendered by Board.tsx — we just export the handler types */}
+    </>
+  );
+}
+
 const PLACEHOLDER_LABELS = ["Character Upgrade", "Scarring"];
 
 /**
