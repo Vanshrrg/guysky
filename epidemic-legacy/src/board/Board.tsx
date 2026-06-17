@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect, useMemo, useCallback } from "react";
+import { useRef, useState, useEffect, useMemo, useCallback, memo, Fragment } from "react";
 import boardArt from "../../object/newupdatedboard.png";
 import blackVirusSrc  from "../../object/black.png";
 import blueVirusSrc   from "../../object/blue.png";
@@ -13,6 +13,12 @@ import janWinBonusSrc       from "../../object/Jan/winbonus.png";
 import janEndgameSrc        from "../../object/Jan/end game upgrade.png";
 import janDiseaseStickerSrc from "../../object/Jan/disease sticker.png";
 import researchSrc from "../../object/research.png";
+import researchStickerSrc from "../../object/Jan/researchstationsticker.png";
+import destroyedResearchStationSrc from "../../object/Jan/destroyedresearchstation.png";
+import mutation1Src from "../../object/Jan/positivemutation1.png";
+import mutation2Src from "../../object/Jan/positivemutation2.png";
+import mutation3Src from "../../object/Jan/positivemutation3.png";
+import mutation4Src from "../../object/Jan/positivemutation4.png";
 import panicLevel1Src from "../../object/paniclevel1.png";
 import panicLevel2Src from "../../object/paniclevel2.png";
 import panicLevel3Src from "../../object/paniclevel3.png";
@@ -20,7 +26,7 @@ import panicLevel4Src from "../../object/paniclevel4.png";
 import panicLevel5Src from "../../object/paniclevel5.png";
 const PANIC_LEVEL_SRCS = ["", panicLevel1Src, panicLevel2Src, panicLevel3Src, panicLevel4Src, panicLevel5Src];
 import { CityLayer, loadRoadblocks, saveRoadblocks, type RoadblockState } from "./CityLayer";
-import { BoardMarker, CubeSvg, type MarkerState } from "./BoardMarker";
+import { BoardMarker, type MarkerState } from "./BoardMarker";
 import { CITIES } from "./cities";
 import { InfectionCard } from "./InfectionCard";
 import { PlayerCard } from "./PlayerCard";
@@ -48,20 +54,26 @@ import type { PreGameSetup } from "./PreGamePhase";
 import { BOARD_RATIO, CUBE_W, shuffle, defaultCubes, inBox } from "./boardGeometry";
 import { PANIC_TRAY_POS, OBJECTIVE_SLOTS, OUTBREAK_TRACK, INFECTION_TRACK } from "./boardLayout";
 import {
-  type CardState, type HandCards, type TurnStateData,
+  type CardState, type HandCards, type TurnStateData, type TurnPhase,
   LS_CURED, LS_CITY_INFECTION, LS_ERADICATED, LS_OUTBREAK_POS, LS_INFECTION_POS,
   LS_HAND_CARDS, LS_CARD_INFECTION, LS_CARD_PLAYER, LS_CARD_INFECTION_DISCARD,
   LS_CARD_PLAYER_DISCARD, LS_TOKEN_P1, LS_TOKEN_P2, LS_TOKEN_P3, LS_TOKEN_P4,
   LS_RESEARCH_STATIONS, LS_RESEARCH_POS, LS_PANIC_LEVELS, LS_HCMC_TRAY,
   LS_TURN, LS_PLAYER_CITIES, LS_INFECT_DECK, LS_INFECT_DISCARD, LS_PLAYER_DECK, LS_EPIDEMIC_COUNT,
   LS_CODA_COLOR, LS_DISEASE_NAMES,
+  LS_RESEARCH_STICKERS, LS_RESEARCH_STICKERS_DESTROYED, LS_RESEARCH_STICKER_POS, LS_DESTROYED_STICKER_POS,
   DEF_CARD_INFECTION, DEF_CARD_PLAYER, DEF_CARD_INFECTION_DISCARD, DEF_CARD_PLAYER_DISCARD,
   DEF_TOKEN_P1, DEF_TOKEN_P2, DEF_TOKEN_P3, DEF_TOKEN_P4,
   loadCard, loadTrackPos, loadHandCards, loadResearchStations, loadResearchPos,
   loadPanicLevels, loadHcmc, loadTurnState, loadPlayerCities, loadCodaColor, loadDiseaseNames, clearGameState,
+  loadResearchStickers, loadResearchStickersDestroyed, loadResearchStickerPos, loadDestroyedStickerPos,
+  LS_MUTATIONS, LS_MUTATION_STICKER_POS, LS_MUTATION_MARKER_POS,
+  loadMutations, loadMutationStickerPos, loadMutationMarkerPos,
+  type StickerPos,
 } from "./boardStorage";
 import { MARKERS, CURE_INDICES, COLOR_TO_CURE_IDX, loadMarker, loadCured, loadEradicated } from "./boardMarkers";
 import { GameOverOverlay } from "./GameOverOverlay";
+import { UpgradePopup, type UpgradeType } from "./UpgradePopup";
 import { CodaPopup } from "./CodaPopup";
 import { DiseaseNamePopup } from "./DiseaseNamePopup";
 import { InfectionDiscardPopup } from "./InfectionDiscardPopup";
@@ -80,6 +92,23 @@ const DISEASE_COLORS = ["black", "yellow", "red", "blue"] as const;
 type DiseaseColor = typeof DISEASE_COLORS[number];
 type CityColorCounts = Partial<Record<DiseaseColor, number>>;
 type CityInfectionMap = Record<string, CityColorCounts>;
+
+// Positive-mutation tiers (1-indexed). Each tier can be applied to at most
+// MUT_QUOTA[tier] diseases; a disease must already hold every lower tier
+// (per-disease nested prerequisite). Tier N's effect is granted to any
+// disease whose level >= N. Index 0 is unused.
+const MUT_QUOTA = [0, 3, 3, 2, 1] as const;
+const MUT_NAMES = ["", "Common Structure", "Efficient to Sequence", "Easier Agent", "Suppressed"] as const;
+const MUT_DESCS = [
+  "",
+  "Discover a cure anywhere — no research station needed.",
+  "Discovering this cure costs no action.",
+  "Discover this cure with 1 fewer card.",
+  "Treating removes all cubes of this color.",
+] as const;
+const MUT_STICKER_SRCS = [mutation1Src, mutation2Src, mutation3Src, mutation4Src];
+// Reverse of COLOR_TO_CURE_IDX: cure-index → disease color
+const CURE_IDX_TO_COLOR: Record<number, DiseaseColor> = { 0: "red", 1: "yellow", 2: "blue", 3: "black" };
 
 // 2×2 layout: P1 top-left, P3 bottom-left, P2 top-right, P4 bottom-right
 const HAND_P1 = { x: -4.56,  y: 27, w: 9.37, h: 50 };
@@ -113,6 +142,102 @@ const SUPPLY_PILES = _SUPPLY_META.map((m, ci) => ({
   ...m,
   positions: _allPiles.slice(ci * 24, (ci + 1) * 24),
 }));
+
+// Memoized so the 96-cube supply layer only re-renders when the placed
+// counts actually change, not on every Board re-render (drag/hover/etc).
+const SupplyPiles = memo(function SupplyPiles({ placedPerColor }: { placedPerColor: number[] }) {
+  return (
+    <>
+      {SUPPLY_PILES.flatMap(({ color, src }, ci) => {
+        const remaining = 24 - Math.min(24, placedPerColor[ci]);
+        const pile = SUPPLY_PILES[ci].positions;
+        return [
+          <img key={`supply-icon-${color}`} src={src} alt={color} draggable={false} style={{
+            position: "absolute",
+            left: `${SUPPLY_PILES[ci].iconX}%`, top: `${SUPPLY_PILES[ci].iconY}%`,
+            transform: "translate(-50%, -50%)",
+            width: "5%", height: "5%",
+            objectFit: "contain",
+            pointerEvents: "none",
+            zIndex: 4,
+          }} />,
+          ...pile.slice(0, remaining).map((pos, i) => (
+            <div key={`supply-cube-${color}-${i}`} style={{
+              position: "absolute",
+              left: `${pos.x}%`, top: `${pos.y}%`,
+              width: `${CUBE_W}%`, aspectRatio: "1",
+              transform: "translate(-50%, -50%)",
+              pointerEvents: "none",
+              zIndex: 4 + i,
+            }}>
+              <img src={COLOR_TO_CUBE_IMG[color]} alt={`${color} cube`} draggable={false}
+                style={{ width: "100%", height: "100%", display: "block", pointerEvents: "none" }} />
+            </div>
+          )),
+        ];
+      })}
+    </>
+  );
+});
+
+// Memoized so the per-city infection cube layer only re-renders when
+// infection counts/layout actually change, not on every Board re-render
+// (card drags, hovers, etc).
+const CityCubes = memo(function CityCubes({
+  cityInfection, stackLayout, onChooseRoles, onClick, onRightClick,
+}: {
+  cityInfection: CityInfectionMap;
+  stackLayout: [number, number][][];
+  onChooseRoles?: (playerCount: number) => void;
+  onClick: (cityId: string) => void;
+  onRightClick: (cityId: string, col: DiseaseColor) => void;
+}) {
+  return (
+    <>
+      {CITIES.flatMap(c => {
+        const cityColors = DISEASE_COLORS.filter(col => (cityInfection[c.id]?.[col] ?? 0) > 0);
+        if (cityColors.length === 0) return [];
+        // Offset each color group along x so they don't overlap
+        const groupSpacing = CUBE_W * 1.15;
+        const totalW = (cityColors.length - 1) * groupSpacing;
+        return cityColors.flatMap((col, gi) => {
+          const count = cityInfection[c.id]![col]!;
+          const gx = -totalW / 2 + gi * groupSpacing;
+          return stackLayout[count - 1].map(([dx, dy], i) => (
+            <div key={`${c.id}-${col}-${i}`}
+              onClick={e => { e.stopPropagation(); if (!onChooseRoles) onClick(c.id); }}
+              onContextMenu={e => {
+                e.preventDefault(); e.stopPropagation();
+                if (!onChooseRoles) onRightClick(c.id, col as DiseaseColor);
+              }}
+              style={{
+                position: "absolute",
+                left: `${c.pos.x + dx + gx}%`,
+                top: `calc(${c.pos.y + dy}% - 15px)`,
+                width: `${CUBE_W}%`, aspectRatio: "1",
+                transform: "translate(-50%, -50%)",
+                pointerEvents: "auto",
+                cursor: "context-menu",
+                zIndex: 12 + i,
+                touchAction: "none",
+              }}>
+              <img src={COLOR_TO_CUBE_IMG[col]} alt={`${col} cube`} draggable={false}
+                style={{ width: "100%", height: "100%", display: "block", pointerEvents: "none" }} />
+            </div>
+          ));
+        });
+      })}
+    </>
+  );
+});
+
+// Fixed cube-stack offsets per count (1-3 cubes). Hoisted to module scope so
+// its identity is stable across renders, letting React.memo(CityCubes) work.
+const STACK_LAYOUT: [number, number][][] = [
+  [[0.00, 0.00]],
+  [[-0.57, 0.00], [0.57, 0.00]],
+  [[0.73, 0.04], [-0.69, 0.41], [-0.05, -1.42]],
+];
 
 const SCENARIO_LABELS: Record<string, string> = {
   board: "Board",
@@ -150,9 +275,9 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   const [outbreakAlready, setOutbreakAlready] = useState<Set<string>>(new Set());
   const [epidemicState, setEpidemicState] = useState<{ phase: 'infect' | 'intensify'; infectedCityId: string | null; infectedColor: DiseaseColor | null } | null>(null);
   // 9 → 0: first 3 draws place 3 cubes (red), next 3 place 2 (orange), last 3 place 1 (yellow)
-  // Only month0 runs the initial infection phase; other scenarios skip it.
+  // Every campaign month runs the initial infection phase; only the raw "board" sandbox skips it.
   const [setupRemaining, setSetupRemaining] = useState<number>(() =>
-    (scenario === "month0" && !setup) ? 9 : 0
+    (scenario !== "board" && !setup) ? 9 : 0
   );
   // Card pile positions persist (calibration data)
   const [cardInfection, setCardInfection] = useState<CardState>(() => loadCard(LS_CARD_INFECTION, DEF_CARD_INFECTION));
@@ -190,6 +315,35 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   const [researchStations, setResearchStations] = useState<Set<string>>(() => loadResearchStations());
   const [researchPos, setResearchPos] = useState<Record<string, { x: number; y: number }>>(() => loadResearchPos());
   const [panicLevels, setPanicLevels] = useState<Record<string, number>>(() => loadPanicLevels());
+  const [researchStickers, setResearchStickers] = useState<string[]>(() => loadResearchStickers());
+  const [researchStickersDestroyed, setResearchStickersDestroyed] = useState<string[]>(() => loadResearchStickersDestroyed());
+  const [stickerPos, setStickerPos] = useState<StickerPos>(() => loadResearchStickerPos());
+  const [destroyedStickerPos, setDestroyedStickerPos] = useState<StickerPos>(() => loadDestroyedStickerPos());
+  // Positive mutations: per-disease-color tier level (0–4), persistent across games.
+  const [mutationLevels, setMutationLevels] = useState<Record<string, number>>(() => loadMutations());
+  const [mutationStickerPos, setMutationStickerPos] = useState<CardState>(() => loadMutationStickerPos());
+  const [mutationMarkerPos, setMutationMarkerPos] = useState<StickerPos>(() => loadMutationMarkerPos());
+  // Post-game upgrade flow: how many of the 2 picks are left, and whether we're
+  // waiting for the player to click a city to place a Research Station sticker.
+  const [upgradePicksRemaining, setUpgradePicksRemaining] = useState(0);
+  const [pickingStickerCity, setPickingStickerCity] = useState(false);
+  const [pickingMutation, setPickingMutation] = useState(false); // choosing which eradicated disease to mutate
+  const eligibleStickerCities = useRef<Set<string>>(new Set());
+  const [stationCapPick, setStationCapPick] = useState<string[] | null>(null); // null = inactive; else cities chosen so far
+  const destroyStickerIfAny = (cityId: string) => {
+    setResearchStickers(prev => {
+      if (!prev.includes(cityId)) return prev;
+      const next = prev.filter(c => c !== cityId);
+      localStorage.setItem(LS_RESEARCH_STICKERS, JSON.stringify(next));
+      return next;
+    });
+    setResearchStickersDestroyed(prev => {
+      if (prev.includes(cityId)) return prev;
+      const next = [...prev, cityId];
+      localStorage.setItem(LS_RESEARCH_STICKERS_DESTROYED, JSON.stringify(next));
+      return next;
+    });
+  };
   const [cityMenu, setCityMenu] = useState<{ cityId: string; x: number; y: number } | null>(null);
   const [cityMenuHover, setCityMenuHover] = useState<string | null>(null);
   const cityMenuHoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -226,6 +380,26 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   const [showPlayerDiscardPopup, setShowPlayerDiscardPopup] = useState(false);
   const [showDebugDeck, setShowDebugDeck] = useState(false);
   const [actionLog, setActionLog] = useState<string[]>([]);
+  const log = (msg: string) => setActionLog(prev => [...prev.slice(-49), msg]);
+  const FUND_CARD_NAMES: Record<string, string> = {
+    fund1: 'One Quiet Night', fund2: 'Remote Treatment',
+    fund3: 'Government Grant', fund4: 'Resilient Population',
+    fund5: 'Forecast', fund6: 'Airlift',
+    fund7: 'Borrowed Time', fund8: 'Flexible Aid',
+  };
+  const cardLabel = (cardId: string): string => {
+    if (cardId === "epidemic") return "EPIDEMIC";
+    if (FUND_CARD_NAMES[cardId]) return FUND_CARD_NAMES[cardId];
+    return CITIES.find(c => c.id === cardId)?.name ?? cardId;
+  };
+  const PLAYER_LABELS: Record<string, string> = { p1: 'P1', p2: 'P2', p3: 'P3', p4: 'P4' };
+  const playerLabel = (key: string): string => {
+    if (!setup) return PLAYER_LABELS[key] ?? key;
+    const idx = (['p1', 'p2', 'p3', 'p4'] as const).indexOf(key as 'p1' | 'p2' | 'p3' | 'p4');
+    const roleId = setup.playerOrder[idx]?.roleId;
+    const ROLE_LABELS: Record<string, string> = { medic: 'Medic', scientist: 'Scientist', researcher: 'Researcher', generalist: 'Generalist', dispatcher: 'Dispatcher' };
+    return roleId ? (ROLE_LABELS[roleId] ?? roleId) : (PLAYER_LABELS[key] ?? key);
+  };
   const [discardCardMenu, setDiscardCardMenu] = useState<{ cityId: string; x: number; y: number } | null>(null);
   const [playerDeckMenu, setPlayerDeckMenu] = useState<{ x: number; y: number } | null>(null);
   const [discardMenu, setDiscardMenu] = useState<{ x: number; y: number } | null>(null);
@@ -255,6 +429,42 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   const [codaCandidates, setCodaCandidates] = useState<DiseaseColor[]>([]);
   const [namePopupColor, setNamePopupColor] = useState<DiseaseColor | null>(null);
 
+  // Objective tear-card popup — shown once, right after the COdA popup closes,
+  // so the objective1 → objective1update swap reads as a deliberate reveal
+  // instead of a silent image swap. `objectiveRevealed` starts true if codaColor
+  // was already persisted from a previous session, so reloads don't replay it.
+  const [objectiveRevealed, setObjectiveRevealed] = useState(() => isJan && codaColor !== null);
+  const [objectiveTearOpen, setObjectiveTearOpen] = useState(false);
+  const [objectiveTorn, setObjectiveTorn] = useState(false);
+  const [objectiveClosing, setObjectiveClosing] = useState(false);
+  const [objectiveFlyTo, setObjectiveFlyTo] = useState<{ dx: number; dy: number; scale: number } | null>(null);
+  const objectiveCardRef = useRef<HTMLDivElement>(null);
+  const objectivePopupRef = useRef<HTMLDivElement>(null);
+
+  const tearObjectiveCard = () => {
+    if (objectiveTorn) return;
+    setObjectiveTorn(true);
+    setTimeout(() => {
+      setObjectiveRevealed(true);
+      const cardEl = objectiveCardRef.current;
+      const popupEl = objectivePopupRef.current;
+      if (cardEl && popupEl) {
+        const c = cardEl.getBoundingClientRect();
+        const p = popupEl.getBoundingClientRect();
+        const dx = (c.left + c.width / 2) - (p.left + p.width / 2);
+        const dy = (c.top + c.height / 2) - (p.top + p.height / 2);
+        setObjectiveFlyTo({ dx, dy, scale: c.width / p.width });
+      }
+      setObjectiveClosing(true);
+      setTimeout(() => {
+        setObjectiveTearOpen(false);
+        setObjectiveTorn(false);
+        setObjectiveClosing(false);
+        setObjectiveFlyTo(null);
+      }, 480);
+    }, 600);
+  };
+
   // Turn system — only active during game phase (setup present)
   const [turnState, setTurnState_] = useState<TurnStateData>(() => loadTurnState());
 
@@ -270,15 +480,21 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [setup]);
   const saveTurnState = (next: TurnStateData) => {
+    const currentLabel = setup ? playerLabel((['p1','p2','p3','p4'] as const)[turnState.currentPlayerIndex] ?? 'p1') : '?';
     if (setup && next.actionsRemaining < turnState.actionsRemaining && next.phase === "actions") {
-      const role = setup.playerOrder[turnState.currentPlayerIndex]?.roleId ?? '?';
-      const ROLE_LABELS: Record<string, string> = { medic: 'Medic', scientist: 'Scientist', researcher: 'Researcher', generalist: 'Generalist', dispatcher: 'Dispatcher' };
-      setActionLog(prev => [...prev.slice(-49), `${ROLE_LABELS[role] ?? role}: action used (${next.actionsRemaining} left)`]);
+      log(`${currentLabel}: action used (${next.actionsRemaining} left)`);
     }
     if (setup && next.phase === "draw" && turnState.phase === "actions") {
-      const role = setup.playerOrder[turnState.currentPlayerIndex]?.roleId ?? '?';
-      const ROLE_LABELS: Record<string, string> = { medic: 'Medic', scientist: 'Scientist', researcher: 'Researcher', generalist: 'Generalist', dispatcher: 'Dispatcher' };
-      setActionLog(prev => [...prev.slice(-49), `${ROLE_LABELS[role] ?? role}: drawing cards`]);
+      log(`${currentLabel}: actions done — entering draw phase (needs 2 cards)`);
+    }
+    if (setup && next.phase === "infect" && turnState.phase === "draw") {
+      log(`${currentLabel}: draw phase complete (${next.drawCount}/2 cards) — entering infect phase`);
+    }
+    if (setup && next.phase === "discard" && turnState.phase === "draw") {
+      log(`${currentLabel}: over hand limit after drawing — must discard`);
+    }
+    if (setup && next.phase !== turnState.phase && (next.phase === "actions" && turnState.phase !== "actions")) {
+      log(`— Turn passes to ${playerLabel((['p1','p2','p3','p4'] as const)[next.currentPlayerIndex] ?? 'p1')} —`);
     }
     // Auto-snapshot before any action is consumed (React batches updates so closure values are still pre-action)
     if (setup && turnState.phase === "actions" && next.actionsRemaining < turnState.actionsRemaining) {
@@ -311,12 +527,22 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   const [pendingEventCard, setPendingEventCard] = useState<{ player: string; idx: number; cardId: string } | null>(null);
   const [pendingDiscardMenu, setPendingDiscardMenu] = useState<{ cityId: string; player: string; idx: number; x: number; y: number } | null>(null);
   const [rsActionMenu, setRsActionMenu] = useState<{ cityId: string; x: number; y: number } | null>(null);
+  // Collapsing/Fallen (panic 4-5): Drive/Ferry into the city requires discarding
+  // matching-color cards first. Only shown when the player has a real choice
+  // (more matching cards than required); otherwise the move auto-discards.
+  const [pendingDriveDiscard, setPendingDriveDiscard] = useState<{
+    pawnKey: string; pi: number; targetId: string; color: string; required: number; discarded: number;
+  } | null>(null);
 
   // Turn helpers (must come after all useState declarations)
   const currentPlayerKey: string = setup ? ((['p1','p2','p3','p4'] as const).slice(0, setup.playerOrder.length)[turnState.currentPlayerIndex] ?? 'p1') : 'p1';
   const currentPlayerCityId: string = playerCities[turnState.currentPlayerIndex] ?? "atlanta";
   const roleId = setup?.playerOrder[turnState.currentPlayerIndex]?.roleId ?? null;
   const cureThreshold = roleId === 'scientist' ? 4 : 5;
+  // Mutation helpers: how many cards a given color needs (tier 3 "Easier Agent"
+  // shaves one), and how many diseases currently hold at least a given tier.
+  const cureThresholdFor = (col: DiseaseColor) => cureThreshold - ((mutationLevels[col] ?? 0) >= 3 ? 1 : 0);
+  const mutCountAtLeast = (tier: number) => DISEASE_COLORS.filter(c => (mutationLevels[c] ?? 0) >= tier).length;
   const consumeAction = (ts: TurnStateData): TurnStateData => {
     const remaining = ts.actionsRemaining - 1;
     if (remaining <= 0) return { ...ts, actionsRemaining: 0, phase: "draw", drawCount: 0 };
@@ -404,7 +630,18 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   };
 
 
-  // Month 0 + campaign months: place research station (and for Month 0 player tokens) at Atlanta — runs once
+  // Place a research station token at each given city — used at game start.
+  const placeStationsForCities = (cityIds: string[]) => {
+    setResearchStations(prev => {
+      const next = new Set(prev);
+      cityIds.forEach(id => next.add(id));
+      localStorage.setItem(LS_RESEARCH_STATIONS, JSON.stringify([...next]));
+      return next;
+    });
+  };
+
+  // Month 0 + campaign months: place research stations at every city with an
+  // active sticker (and for Month 0 player tokens) — runs once
   const setupInitialized = useRef(false);
   useEffect(() => {
     if (!setup || setupInitialized.current) return;
@@ -414,17 +651,17 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
     const atlanta = CITIES.find(c => c.id === "atlanta");
     if (!atlanta) return;
 
-    // Research station at Atlanta (Month 0 and all campaign months)
-    setResearchStations(prev => {
-      if (prev.has("atlanta")) return prev;
-      const next = new Set(prev); next.add("atlanta");
-      localStorage.setItem(LS_RESEARCH_STATIONS, JSON.stringify([...next]));
-      return next;
-    });
+    // Research stations at every active sticker city (Month 0 and all campaign months).
+    // If more stickers exist than the board's 6-station cap, defer to a picker popup.
+    if (researchStickers.length > 6) {
+      setStationCapPick([]);
+    } else {
+      placeStationsForCities(researchStickers);
+    }
 
-    if (scenario !== "month0") return; // campaign months: RS only, no forced token placement
+    if (scenario !== "month0" && scenario !== "jan") return; // other campaign months: RS only, no forced token placement
 
-    // Month 0 only: place player tokens at Atlanta
+    // Month 0 and January: place player tokens at Atlanta
     const offsets = [[-1, 0], [1, 0], [-1, 1.5], [1, 1.5]];
     const tokenSetters = [
       { set: setTokenP1, lsKey: LS_TOKEN_P1 },
@@ -445,10 +682,13 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [setup]);
 
-  // Panic levels are permanent legacy state — save whenever they change
+  // Panic levels and mutation levels are permanent legacy state — save whenever they change
   useEffect(() => {
     localStorage.setItem(LS_PANIC_LEVELS, JSON.stringify(panicLevels));
   }, [panicLevels]);
+  useEffect(() => {
+    localStorage.setItem(LS_MUTATIONS, JSON.stringify(mutationLevels));
+  }, [mutationLevels]);
 
   // Persist cure / eradication / outbreak-rate / infection-rate progress so a
   // reload restores the game. Skipped in Month 0 (always a fresh setup).
@@ -565,16 +805,18 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
           setPlayerDeck(deckNow.slice(0, -1));
           setPlayerDiscard(prev => [...prev, "epidemic"]);
         }
-        // Count the epidemic as a draw — it goes to discard here, not via the hand-interaction path
-        if (setup && wasEpidemic.phase !== null) {
-          setTurnState_(prev => {
-            if (prev.phase !== "draw") return prev;
-            const newCount = prev.drawCount + 1;
-            if (newCount >= 2) {
-              return { ...prev, drawCount: newCount, phase: "infect", infectCount: 0 };
-            }
-            return { ...prev, drawCount: newCount };
-          });
+        // Epidemic is flipped (and triggerEpidemic fires) straight from onFlip, before it's ever
+        // dragged to the discard pile — handInteractions.ts's completeOneDraw() never runs for it.
+        // Count this draw here, once Increase/Infect/Intensify have fully resolved.
+        if (setup && turnState.phase === "draw") {
+          const newCount = turnState.drawCount + 1;
+          const hand = (handCards as Record<string, string[]>)[currentPlayerKey] ?? [];
+          const phase: TurnPhase = hand.length > 7 ? "discard" : newCount >= 2 ? "infect" : "draw";
+          const who = playerLabel(currentPlayerKey);
+          log(`${who}: epidemic resolved — drawCount ${turnState.drawCount} → ${newCount}/2 (${hand.length} in hand) → phase "${phase}"`);
+          saveTurnState({ ...turnState, drawCount: newCount, phase, infectCount: 0 });
+        } else if (setup) {
+          log(`epidemic resolved outside draw phase (turn phase was "${turnState.phase}", drawCount ${turnState.drawCount}) — draw NOT counted`);
         }
         // January: after 2nd epidemic resolves (3 remain in deck), trigger COdA naming
         if (isJan && codaColor === null) {
@@ -766,6 +1008,17 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
         localStorage.setItem(LS_PANIC_LEVELS, JSON.stringify(next));
         return next;
       });
+      // Rioting (panic 2-3): destroy any existing research station here // bypass hook
+      const newPanic = (panicLevels[cityId] ?? 0) + 1;
+      if (newPanic === 2 && researchStations.has(cityId)) {
+        const nextRS = new Set(researchStations); nextRS.delete(cityId);
+        setResearchStations(nextRS);
+        localStorage.setItem(LS_RESEARCH_STATIONS, JSON.stringify([...nextRS]));
+        log(`Research station in ${city.name} destroyed by rioting`);
+      }
+      if (newPanic === 2 && researchStickers.includes(cityId)) {
+        destroyStickerIfAny(cityId);
+      }
     }
     const newAlready = new Set([...baseAlready, cityId]);
     setOutbreakAlready(newAlready);
@@ -798,6 +1051,19 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   };
 
   const handleCityClick = (cityId: string) => {
+    if (pickingStickerCity) {
+      if (!eligibleStickerCities.current.has(cityId)) return;
+      setResearchStickers(prev => {
+        if (prev.includes(cityId)) return prev;
+        const next = [...prev, cityId];
+        localStorage.setItem(LS_RESEARCH_STICKERS, JSON.stringify(next));
+        return next;
+      });
+      setPickingStickerCity(false);
+      setHighlightCities([]);
+      setUpgradePicksRemaining(n => n - 1);
+      return;
+    }
     if (isDealPhase) return;
     if (outbreakQueue.length > 0) return; // block clicks during chain resolution
     // In any real scenario (month0, january…), block manual cube placement; only board sandbox allows it
@@ -814,10 +1080,16 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
 
     if (setup && turnState.phase === "actions") {
       if (turnState.pendingCharter) {
+        // Rioting (panic 2-3): can't Charter Flight into this city // bypass hook
+        if ((panicLevels[cityId] ?? 0) >= 2) {
+          log(`Charter Flight blocked — ${cardLabel(cityId)} is rioting`);
+          return;
+        }
         // Charter flight: fly to any city
         const nextCities = [...playerCities]; nextCities[turnState.currentPlayerIndex] = cityId;
         savePlayerCities(nextCities); snapPawnToCity(currentPlayerKey, cityId);
         setHighlightCities([]);
+        log(`${playerLabel(currentPlayerKey)}: Charter Flight to ${cardLabel(cityId)}`);
         saveTurnState(consumeAction({ ...turnState, pendingCharter: false }));
         return;
       }
@@ -892,8 +1164,8 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
           if (isJan && !diseaseNames[color]) setNamePopupColor(color as DiseaseColor);
         }
       } else {
-        // Medic removes ALL cubes of a color in one Treat action, even uncured
-        const newCount = roleId === 'medic' ? 0 : cur - 1;
+        // Medic and "Suppressed" mutation (tier 4) remove ALL cubes of a color in one action
+        const newCount = roleId === 'medic' || (mutationLevels[color] ?? 0) >= 4 ? 0 : cur - 1;
         const next = { ...cityInfection, [cityId]: { ...cityInfection[cityId], [color]: newCount } };
         saveCityInfection(next);
         if (ci !== undefined && cured[ci] && !eradicated[ci] && totalOfColor(next, color) === 0) {
@@ -902,6 +1174,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
         }
       }
       const nextTs = isCoda ? consumeAction(consumeAction(turnState)) : consumeAction(turnState);
+      log(`${playerLabel(currentPlayerKey)}: treated ${color} in ${city.name} (${nextTs.actionsRemaining} actions left)`);
       saveTurnState(nextTs);
       return;
     }
@@ -975,8 +1248,34 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   const activeDealCount = (() => { let n = 0; for (const c of dealCounts) { if (c > 0) n++; else break; } return n; })();
   const dealRequiredCards = activeDealCount >= 4 ? 2 : activeDealCount === 3 ? 3 : 4;
   const dealComplete = activeDealCount >= 2 && dealCounts.slice(0, activeDealCount).every(c => c >= dealRequiredCards);
-  // maxDealTargetIdx: highest player index that can receive a card (cannot skip a player)
-  const maxDealTargetIdx = Math.min(activeDealCount, 3);
+  // allowedDealIndices: player slot(s) eligible for the next card.
+  // With n active players, cards must rotate P1>P2>...>Pn>P1>... in lockstep —
+  // the next slot is (totalDealt mod n). The table size is only decided during
+  // round 1: once every active player has exactly 1 card (totalDealt === n),
+  // the dealer may either start a brand-new player (growing the table) or
+  // begin round 2 with P1 — after that, the player count is locked and no
+  // later round boundary may add a new player.
+  const totalDealt = dealCounts.reduce((a, b) => a + b, 0);
+  const allowedDealIndices: number[] = dealComplete ? [] : activeDealCount === 0
+    ? [0]
+    : (() => {
+        const posInRound = totalDealt % activeDealCount;
+        const canExpand = totalDealt === activeDealCount && activeDealCount < 4;
+        if (posInRound === 0 && canExpand) return [0, activeDealCount];
+        return [posInRound];
+      })();
+
+  // Once dealing finishes, auto-advance into role selection — no manual "Choose Roles" click needed.
+  const dealCompleteHandledRef = useRef(false);
+  useEffect(() => {
+    if (!onChooseRoles) return;
+    if (dealComplete && !dealCompleteHandledRef.current) {
+      dealCompleteHandledRef.current = true;
+      onChooseRoles(activeDealCount);
+    } else if (!dealComplete) {
+      dealCompleteHandledRef.current = false;
+    }
+  }, [dealComplete, activeDealCount, onChooseRoles]);
 
   // Auto-shuffle epidemic cards into the deck when game starts (setup prop arrives after roles chosen).
   // epidemicCount persists as 0 after embedding, so this only fires on a fresh game (not reload).
@@ -1005,6 +1304,15 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   _cityRightClickImpl.current = cityLayerRightClick;
   const stableOnCityClick = useCallback((cityId: string) => _cityClickImpl.current(cityId), []);
   const stableOnCityRightClick = useCallback((cityId: string, e: React.MouseEvent) => _cityRightClickImpl.current(cityId, e), []);
+
+  // Same stable-ref trick for the infection-cube layer's handlers, so
+  // React.memo(CityCubes) below isn't defeated by new function objects each render.
+  const _cubeClickImpl = useRef(handleCityClick);
+  _cubeClickImpl.current = handleCityClick;
+  const _cubeRightClickImpl = useRef(handleCityRightClick);
+  _cubeRightClickImpl.current = handleCityRightClick;
+  const stableOnCubeClick = useCallback((cityId: string) => _cubeClickImpl.current(cityId), []);
+  const stableOnCubeRightClick = useCallback((cityId: string, col: DiseaseColor) => _cubeRightClickImpl.current(cityId, col), []);
 
   return (
     <div style={{ maxWidth: 1100, margin: "0 auto" }}>
@@ -1065,8 +1373,8 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
           <span style={{ color: "#8ab", fontWeight: 600 }}>Deal cards:</span>
           {DEAL_KEYS.map((p, i) => {
             const count = dealCounts[i];
-            const isNext = i === maxDealTargetIdx && !dealComplete;
-            const isActive = i < activeDealCount || i === maxDealTargetIdx;
+            const isNext = allowedDealIndices.includes(i);
+            const isActive = i < activeDealCount || isNext;
             const req = activeDealCount >= 4 ? 2 : activeDealCount === 3 ? 3 : 4;
             const met = count >= req && activeDealCount >= 2;
             return (
@@ -1172,6 +1480,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
           eventMode={eventMode}
           handCards={handCards}
           cureThreshold={cureThreshold}
+          mutationLevels={mutationLevels}
           cubeSnapshotRef={cubeSnapshotRef}
           currentPlayerHand={currentPlayerHand}
           saveHandCards={saveHandCards}
@@ -1181,6 +1490,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
           setSelectedHandCards={setSelectedHandCards}
           saveTurnState={saveTurnState}
           consumeAction={consumeAction}
+          log={log}
           advanceTurn={advanceTurn}
           setQuietNight={setQuietNight}
           saveCityInfection={saveCityInfection}
@@ -1251,6 +1561,12 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
             : null}
         </div>
       )}
+
+      {pendingDriveDiscard && (
+        <div style={{ textAlign: "center", fontSize: 11, fontFamily: "monospace", marginBottom: 4, color: "#aac" }}>
+          {`Drive/Ferry into ${cardLabel(pendingDriveDiscard.targetId)} — drag ${pendingDriveDiscard.required - pendingDriveDiscard.discarded} more ${pendingDriveDiscard.color} card(s) to discard, or use the ✕ to cancel (panic ${panicLevels[pendingDriveDiscard.targetId] ?? 0})`}
+        </div>
+      )}
       <div style={{ marginBottom: 10, textAlign: "center" }}>
         <span style={{
           fontSize: 22, fontWeight: 700, letterSpacing: 3,
@@ -1277,15 +1593,28 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
         }} style={{ background: "#2a1a1a", border: "1px solid #664444", color: "#cc8888" }}>
           Reset
         </button>
+        <button onClick={() => {
+          // Dev shortcut: open the post-game upgrade flow directly, without
+          // needing to actually win/lose a game first. Eligibility mirrors the
+          // real GameOverOverlay→Continue path: current RS tokens minus any
+          // already-destroyed-this-game stickers.
+          eligibleStickerCities.current = new Set(researchStations);
+          researchStickersDestroyed.forEach(id => eligibleStickerCities.current.delete(id));
+          setUpgradePicksRemaining(2);
+        }} style={{ background: "#102030", border: "1px solid #3a6aaa", color: "#7bc4ff" }}>
+          Test Upgrades
+        </button>
         {calibrating && (
           <>
             <button onClick={() => {
-              const text = [
-                `token p1: { x: ${tokenP1.x.toFixed(2)}, y: ${tokenP1.y.toFixed(2)}, w: ${tokenP1.w.toFixed(2)} }`,
-                `token p2: { x: ${tokenP2.x.toFixed(2)}, y: ${tokenP2.y.toFixed(2)}, w: ${tokenP2.w.toFixed(2)} }`,
-              ].join("\n");
-              navigator.clipboard.writeText(text).then(() => alert("Copied!")).catch(() => window.prompt("Tokens", text));
-            }}>Copy tokens</button>
+              const text = `research sticker: { dx: ${stickerPos.dx.toFixed(2)}, dy: ${stickerPos.dy.toFixed(2)}, w: ${stickerPos.w.toFixed(2)} }`;
+              navigator.clipboard.writeText(text).then(() => alert("Copied!")).catch(() => window.prompt("Sticker pos", text));
+            }}>Copy sticker coords</button>
+            <button onClick={() => {
+              const copy = { ...stickerPos };
+              setDestroyedStickerPos(copy);
+              localStorage.setItem(LS_DESTROYED_STICKER_POS, JSON.stringify(copy));
+            }}>Copy sticker size/pos → destroyed</button>
             <button onClick={() => {
               MARKERS.forEach((m, i) => {
                 setStates(prev => { const next = [...prev]; next[i] = m.def; return next; });
@@ -1336,7 +1665,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                 style={{
                   position: "absolute",
                   left: `${meta.iconX}%`,
-                  top: `${meta.iconY - 5.5}%`,
+                  top: `calc(${meta.iconY - 5.5}% - 23px)`,
                   width: "4%",
                   transform: "translate(-50%, -50%)",
                   pointerEvents: "none",
@@ -1365,35 +1694,128 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
           );
         })()}
 
+        {/* Positive-mutation tier stickers — stacked above the disease tray.
+            Tier 1 anchored at mutationStickerPos; each subsequent tier offsets downward
+            by sticker height (w * 1.1 since stickers are ~square). Calibratable. */}
+        {(() => {
+          const tierGap = mutationStickerPos.w * 1.15;
+          const saveMutStickerPos = (p: typeof mutationStickerPos) => {
+            setMutationStickerPos(p);
+            localStorage.setItem(LS_MUTATION_STICKER_POS, JSON.stringify(p));
+          };
+          const saveMutMarkerPos = (p: StickerPos) => {
+            setMutationMarkerPos(p);
+            localStorage.setItem(LS_MUTATION_MARKER_POS, JSON.stringify(p));
+          };
+          // In calibrate mode always show tier 1 + one marker so they can be positioned
+          const previewTiers = calibrating ? [1] : [];
+          const activeTiers = ([1, 2, 3, 4] as const).filter(t => mutCountAtLeast(t) >= 1);
+          const renderedTiers = [...new Set([...activeTiers, ...previewTiers])].sort();
+          if (renderedTiers.length === 0) return null;
+          return (
+            <>
+              {renderedTiers.map(tier => {
+                const tierIdx = tier - 1; // 0-based
+                const x = mutationStickerPos.x;
+                const y = mutationStickerPos.y + tierIdx * tierGap;
+                const w = mutationStickerPos.w;
+                const colorsAtTier = DISEASE_COLORS.filter(c => (mutationLevels[c] ?? 0) >= tier);
+                const previewColors = calibrating && colorsAtTier.length === 0 ? ["red" as DiseaseColor] : colorsAtTier;
+                return (
+                  <Fragment key={`mut-tier-${tier}`}>
+                    {/* Tier sticker image */}
+                    <div
+                      onPointerDown={calibrating && tier === 1 ? (e: React.PointerEvent<HTMLDivElement>) => {
+                        e.stopPropagation(); e.preventDefault();
+                        const el = e.currentTarget; el.setPointerCapture(e.pointerId);
+                        const r = boardRef.current!.getBoundingClientRect();
+                        const sx = e.clientX; const sy = e.clientY;
+                        const ox = mutationStickerPos.x; const oy = mutationStickerPos.y;
+                        const onMove = (ev: PointerEvent) => saveMutStickerPos({ ...mutationStickerPos, x: ox + ((ev.clientX - sx) / r.width) * 100, y: oy + ((ev.clientY - sy) / r.height) * 100 });
+                        const onUp = () => { el.removeEventListener("pointermove", onMove as EventListener); el.removeEventListener("pointerup", onUp); };
+                        el.addEventListener("pointermove", onMove as EventListener); el.addEventListener("pointerup", onUp);
+                      } : undefined}
+                      style={{
+                        position: "absolute",
+                        left: `${x}%`, top: `${y}%`,
+                        width: `${w}%`, aspectRatio: "1",
+                        transform: "translate(-50%, -50%)",
+                        zIndex: 5, pointerEvents: calibrating && tier === 1 ? "auto" : "none",
+                        cursor: calibrating && tier === 1 ? "grab" : "default",
+                        outline: calibrating && tier === 1 ? "1px dashed #3ddc6d" : "none",
+                      }}>
+                      <img src={MUT_STICKER_SRCS[tierIdx]} alt={MUT_NAMES[tier]} draggable={false}
+                        style={{ width: "100%", height: "100%", objectFit: "fill", display: "block", userSelect: "none", pointerEvents: "none" }} />
+                      {calibrating && tier === 1 && (
+                        <div
+                          onPointerDown={(e: React.PointerEvent<HTMLDivElement>) => {
+                            e.stopPropagation(); e.preventDefault();
+                            const el = e.currentTarget; el.setPointerCapture(e.pointerId);
+                            const r = boardRef.current!.getBoundingClientRect();
+                            const sx = e.clientX; const ow = mutationStickerPos.w;
+                            const onMove = (ev: PointerEvent) => saveMutStickerPos({ ...mutationStickerPos, w: Math.max(0.5, ow + ((ev.clientX - sx) / r.width) * 100) });
+                            const onUp = () => { el.removeEventListener("pointermove", onMove as EventListener); el.removeEventListener("pointerup", onUp); };
+                            el.addEventListener("pointermove", onMove as EventListener); el.addEventListener("pointerup", onUp);
+                          }}
+                          style={{ position: "absolute", bottom: 0, right: 0, width: 10, height: 10, background: "#3ddc6d", cursor: "se-resize", pointerEvents: "auto" }}
+                        />
+                      )}
+                    </div>
+
+                    {/* Per-color disease cube markers beside this tier sticker */}
+                    {previewColors.map((col, mi) => {
+                      const mx = x + mutationMarkerPos.dx + mi * (mutationMarkerPos.w * 1.3);
+                      const my = y + mutationMarkerPos.dy;
+                      const mw = mutationMarkerPos.w;
+                      return (
+                        <div key={`mut-marker-${tier}-${col}`}
+                          onPointerDown={calibrating && mi === 0 && tier === 1 ? (e: React.PointerEvent<HTMLDivElement>) => {
+                            e.stopPropagation(); e.preventDefault();
+                            const el = e.currentTarget; el.setPointerCapture(e.pointerId);
+                            const r = boardRef.current!.getBoundingClientRect();
+                            const sx = e.clientX; const sy = e.clientY;
+                            const odx = mutationMarkerPos.dx; const ody = mutationMarkerPos.dy;
+                            const onMove = (ev: PointerEvent) => saveMutMarkerPos({ ...mutationMarkerPos, dx: odx + ((ev.clientX - sx) / r.width) * 100, dy: ody + ((ev.clientY - sy) / r.height) * 100 });
+                            const onUp = () => { el.removeEventListener("pointermove", onMove as EventListener); el.removeEventListener("pointerup", onUp); };
+                            el.addEventListener("pointermove", onMove as EventListener); el.addEventListener("pointerup", onUp);
+                          } : undefined}
+                          style={{
+                            position: "absolute",
+                            left: `${mx}%`, top: `${my}%`,
+                            width: `${mw}%`, aspectRatio: "1",
+                            transform: "translate(-50%, -50%)",
+                            zIndex: 6, pointerEvents: calibrating && mi === 0 && tier === 1 ? "auto" : "none",
+                            cursor: calibrating && mi === 0 && tier === 1 ? "grab" : "default",
+                            outline: calibrating && mi === 0 && tier === 1 ? "1px dashed #3ddc6d" : "none",
+                          }}>
+                          <img src={COLOR_TO_CUBE_IMG[col]} alt={col} draggable={false}
+                            style={{ width: "100%", height: "100%", display: "block", pointerEvents: "none" }} />
+                          {calibrating && mi === 0 && tier === 1 && (
+                            <div
+                              onPointerDown={(e: React.PointerEvent<HTMLDivElement>) => {
+                                e.stopPropagation(); e.preventDefault();
+                                const el = e.currentTarget; el.setPointerCapture(e.pointerId);
+                                const r = boardRef.current!.getBoundingClientRect();
+                                const sx = e.clientX; const ow = mutationMarkerPos.w;
+                                const onMove = (ev: PointerEvent) => saveMutMarkerPos({ ...mutationMarkerPos, w: Math.max(0.3, ow + ((ev.clientX - sx) / r.width) * 100) });
+                                const onUp = () => { el.removeEventListener("pointermove", onMove as EventListener); el.removeEventListener("pointerup", onUp); };
+                                el.addEventListener("pointermove", onMove as EventListener); el.addEventListener("pointerup", onUp);
+                              }}
+                              style={{ position: "absolute", bottom: 0, right: 0, width: 8, height: 8, background: "#3ddc6d", cursor: "se-resize", pointerEvents: "auto" }}
+                            />
+                          )}
+                        </div>
+                      );
+                    })}
+                  </Fragment>
+                );
+              })}
+            </>
+          );
+        })()}
+
         {/* Disease supply piles — static scattered positions, front cubes hidden as placed */}
-        {SUPPLY_PILES.flatMap(({ color, src }, ci) => {
-          const remaining = 24 - Math.min(24, placedPerColor[ci]);
-          const pile = SUPPLY_PILES[ci].positions;
-          return [
-            <img key={`supply-icon-${color}`} src={src} alt={color} draggable={false} style={{
-              position: "absolute",
-              left: `${SUPPLY_PILES[ci].iconX}%`, top: `${SUPPLY_PILES[ci].iconY}%`,
-              transform: "translate(-50%, -50%)",
-              width: "5%", height: "5%",
-              objectFit: "contain",
-              pointerEvents: "none",
-              zIndex: 4,
-            }} />,
-            ...pile.slice(0, remaining).map((pos, i) => (
-              <div key={`supply-cube-${color}-${i}`} style={{
-                position: "absolute",
-                left: `${pos.x}%`, top: `${pos.y}%`,
-                width: `${CUBE_W}%`, aspectRatio: "1",
-                transform: "translate(-50%, -50%)",
-                pointerEvents: "none",
-                zIndex: 4 + i,
-              }}>
-                <img src={COLOR_TO_CUBE_IMG[color]} alt={`${color} cube`} draggable={false}
-                  style={{ width: "100%", height: "100%", display: "block", pointerEvents: "none" }} />
-              </div>
-            )),
-          ];
-        })}
+        <SupplyPiles placedPerColor={placedPerColor} />
 
         <CityLayer
           roadblocks={roadblocks}
@@ -1404,47 +1826,13 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
         />
 
         {/* City infection cubes — multi-color, up to 3 per color */}
-        {(() => {
-          const hx = CUBE_W * 0.34;
-          const sy = CUBE_W * BOARD_RATIO * 0.36;
-          const LAYOUTS: [number, number][][] = [
-            [[0, 0]],
-            [[-hx, 0], [hx, 0]],
-            [[-hx, 0], [hx, 0], [0, -sy]],
-          ];
-          return CITIES.flatMap(c => {
-            const cityColors = DISEASE_COLORS.filter(col => (cityInfection[c.id]?.[col] ?? 0) > 0);
-            if (cityColors.length === 0) return [];
-            // Offset each color group along x so they don't overlap
-            const groupSpacing = CUBE_W * 1.15;
-            const totalW = (cityColors.length - 1) * groupSpacing;
-            return cityColors.flatMap((col, gi) => {
-              const count = cityInfection[c.id]![col]!;
-              const cubeColor = COLOR_TO_CUBE[col];
-              const gx = -totalW / 2 + gi * groupSpacing;
-              return LAYOUTS[count - 1].map(([dx, dy], i) => (
-                <div key={`${c.id}-${col}-${i}`}
-                  onClick={e => { e.stopPropagation(); if (!onChooseRoles) handleCityClick(c.id); }}
-                  onContextMenu={e => {
-                    e.preventDefault(); e.stopPropagation();
-                    if (!onChooseRoles) handleCityRightClick(c.id, col as DiseaseColor);
-                  }}
-                  style={{
-                    position: "absolute",
-                    left: `${c.pos.x + dx + gx}%`,
-                    top: `calc(${c.pos.y + dy}% - 15px)`,
-                    width: `${CUBE_W}%`, aspectRatio: "1",
-                    transform: "translate(-50%, -50%)",
-                    pointerEvents: "auto",
-                    cursor: "context-menu",
-                    zIndex: 12 + i,
-                  }}>
-                  <CubeSvg color={cubeColor} />
-                </div>
-              ));
-            });
-          });
-        })()}
+        <CityCubes
+          cityInfection={cityInfection}
+          stackLayout={STACK_LAYOUT}
+          onChooseRoles={onChooseRoles}
+          onClick={stableOnCubeClick}
+          onRightClick={stableOnCubeRightClick}
+        />
 
         {/* Infection deck ghost — always-present right-click target even when deck is empty */}
         {/* During gameplay only allow right-click when epidemic infect step is pending */}
@@ -1644,24 +2032,27 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
 
             const canDrawPlayer = isTop && !calibrating && !epidemicState && (
               (!!setup && turnState.phase === "draw") ||          // in-game draw phase
-              !!onChooseRoles ||                                   // deal phase
+              (!!onChooseRoles && !dealComplete) ||                // deal phase, until dealing is done
               (!setup && !onChooseRoles && setupRemaining === 0)  // post-infection sandbox
             );
             const onTopDown = canDrawPlayer
               ? makePlayerDeckDraw({
                   boardRef, playerDeck, playerDiscard, cardPlayerDiscard, setup, turnState,
-                  handCards, currentPlayerKey, onChooseRoles, maxDealTargetIdx, dealRequiredCards, dealCounts,
+                  handCards, currentPlayerKey, onChooseRoles, allowedDealIndices, dealComplete,
                   setPlayerDrag, setPlayerDeck, setPlayerDiscard, setPlayerFlipped,
                   saveTurnState, saveHandCards,
+                  log, cardLabel, playerLabel,
                   onFlip: (id) => {
                     const PL_STEP = 0.10;
                     const plLayers = Math.max(0, Math.min(playerDeck.length, 10));
                     const plOffset = (plLayers - 1) * PL_STEP;
                     setFlippingPlayerCard({ cityId: id, x: cardPlayer.x + plOffset, y: cardPlayer.y - plOffset * BOARD_RATIO });
                     setTimeout(() => setFlippingPlayerCard(null), 550);
-                    if (id === "epidemic") triggerEpidemic();
+                    if (id === "epidemic") {
+                      log(`${playerLabel(currentPlayerKey)}: flipped EPIDEMIC — Increase infection rate, resolving Infect/Intensify`);
+                      triggerEpidemic();
+                    }
                   },
-                  onEpidemic: triggerEpidemic,
                   onUnflip: (id) => {
                     const PL_STEP = 0.10;
                     const plLayers = Math.max(0, Math.min(playerDeck.length, 10));
@@ -1760,7 +2151,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
               width: `${cardPlayer.w}%`,
               transform: "translate(-50%, -50%)",
               zIndex: 200, pointerEvents: "none",
-              filter: "drop-shadow(0 6px 20px #000e)",
+              boxShadow: "0 6px 20px 0 #000e",
             }}>
               {!isDragFaceUp
                 ? <img src={playerCardBackSrc} alt="" draggable={false} style={{ width: "100%", height: "auto", display: "block", pointerEvents: "none" }} />
@@ -1979,36 +2370,20 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
           );
         })}
 
-        {/* Research station tokens — draggable */}
+        {/* Research station tokens */}
         {CITIES.filter(c => researchStations.has(c.id)).map(city => {
           const pos = researchPos[city.id] ?? { x: city.pos.x, y: city.pos.y };
-          const onDragDown = (e: React.PointerEvent<HTMLDivElement>) => {
-            if (calibrating) return;
-            e.stopPropagation(); e.preventDefault();
-            const el = e.currentTarget; el.setPointerCapture(e.pointerId);
-            const r = boardRef.current!.getBoundingClientRect();
-            const sx = e.clientX; const sy = e.clientY; const ox = pos.x; const oy = pos.y;
-            const onMove = (ev: PointerEvent) => {
-              const nx = +(ox + ((ev.clientX - sx) / r.width) * 100).toFixed(2);
-              const ny = +(oy + ((ev.clientY - sy) / r.height) * 100).toFixed(2);
-              const next = { ...researchPos, [city.id]: { x: nx, y: ny } };
-              setResearchPos(next);
-              localStorage.setItem(LS_RESEARCH_POS, JSON.stringify(next));
-            };
-            const onUp = () => { el.removeEventListener("pointermove", onMove as any); el.removeEventListener("pointerup", onUp); };
-            el.addEventListener("pointermove", onMove as any); el.addEventListener("pointerup", onUp);
-          };
           const isPlayerRS = setup && city.id === currentPlayerCityId && turnState.phase === "actions";
           const rsHand = isPlayerRS ? currentPlayerHand : [];
           const canShuttle = isPlayerRS && researchStations.size > 1;
           const canCure = isPlayerRS && DISEASE_COLORS.some(col => {
             const ci = COLOR_TO_CURE_IDX[col]; if (ci === undefined || cured[ci]) return false;
-            return rsHand.filter(id => CITIES.find(c2 => c2.id === id)?.color === col).length >= cureThreshold;
+            return rsHand.filter(id => CITIES.find(c2 => c2.id === id)?.color === col).length >= cureThresholdFor(col);
           });
           const rsHasAction = canShuttle || canCure;
           const inFlightMode = turnState.pendingCharter || turnState.pendingShuttle || !!eventMode;
           return (
-            <div key={`rs-${city.id}`} onPointerDown={inFlightMode ? undefined : onDragDown}
+            <div key={`rs-${city.id}`}
               onClick={e => {
                 // During charter/shuttle/airlift modes, left-click RS counts as clicking its city
                 if (inFlightMode) { e.stopPropagation(); handleCityClick(city.id); return; }
@@ -2032,7 +2407,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                 width: `${RESEARCH_W}%`, aspectRatio: "1",
                 transform: "translate(-50%, -50%)",
                 zIndex: 20,
-                cursor: inFlightMode ? "pointer" : calibrating ? "default" : "grab",
+                cursor: inFlightMode ? "pointer" : "default",
                 touchAction: "none", userSelect: "none",
                 boxShadow: rsActionMenu?.cityId === city.id ? "0 0 0 2px #ffdd44, 0 0 10px 3px #ffdd4488" : "none",
               }}>
@@ -2062,9 +2437,80 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
           );
         })}
 
+        {/* Research station stickers — active (researchstationsticker.png) and destroyed
+            (destroyedresearchstation.png) each have their own calibratable offset/size,
+            both relative to the host city's circle position. In calibrate mode the
+            destroyed sticker is always previewed at Atlanta so it can be positioned
+            even before any station has actually been destroyed in-game. */}
+        {(() => {
+          const makeHandlers = (pos: StickerPos, save: (p: StickerPos) => void) => ({
+            onDragDown: calibrating ? (e: React.PointerEvent<HTMLDivElement>) => {
+              e.stopPropagation(); e.preventDefault();
+              const el = e.currentTarget; el.setPointerCapture(e.pointerId);
+              const r = boardRef.current!.getBoundingClientRect();
+              const sx = e.clientX; const sy = e.clientY; const odx = pos.dx; const ody = pos.dy;
+              const onMove = (ev: PointerEvent) => save({ ...pos, dx: odx + ((ev.clientX - sx) / r.width) * 100, dy: ody + ((ev.clientY - sy) / r.height) * 100 });
+              const onUp = () => { el.removeEventListener("pointermove", onMove as any); el.removeEventListener("pointerup", onUp); };
+              el.addEventListener("pointermove", onMove as any); el.addEventListener("pointerup", onUp);
+            } : undefined,
+            onResizeDown: calibrating ? (e: React.PointerEvent<HTMLDivElement>) => {
+              e.stopPropagation(); e.preventDefault();
+              const el = e.currentTarget; el.setPointerCapture(e.pointerId);
+              const r = boardRef.current!.getBoundingClientRect();
+              const sx = e.clientX; const ow = pos.w;
+              const onMove = (ev: PointerEvent) => save({ ...pos, w: Math.max(0.5, ow + ((ev.clientX - sx) / r.width) * 100) });
+              const onUp = () => { el.removeEventListener("pointermove", onMove as any); el.removeEventListener("pointerup", onUp); };
+              el.addEventListener("pointermove", onMove as any); el.addEventListener("pointerup", onUp);
+            } : undefined,
+          });
+          const saveStickerPos = (p: StickerPos) => { setStickerPos(p); localStorage.setItem(LS_RESEARCH_STICKER_POS, JSON.stringify(p)); };
+          const saveDestroyedStickerPos = (p: StickerPos) => { setDestroyedStickerPos(p); localStorage.setItem(LS_DESTROYED_STICKER_POS, JSON.stringify(p)); };
+          const activeHandlers = makeHandlers(stickerPos, saveStickerPos);
+          const destroyedHandlers = makeHandlers(destroyedStickerPos, saveDestroyedStickerPos);
+          const renderGroup = (
+            ids: string[], src: string, alt: string, pos: StickerPos,
+            handlers: { onDragDown?: (e: React.PointerEvent<HTMLDivElement>) => void; onResizeDown?: (e: React.PointerEvent<HTMLDivElement>) => void },
+          ) => ids.map(id => {
+            const city = CITIES.find(c => c.id === id);
+            if (!city) return null;
+            return (
+              <div key={`${alt}-${id}`}
+                onPointerDown={handlers.onDragDown}
+                style={{
+                  position: "absolute",
+                  left: `${city.pos.x + pos.dx}%`, top: `${city.pos.y + pos.dy}%`,
+                  width: `${pos.w}%`, aspectRatio: "1",
+                  transform: "translate(-50%, -50%)",
+                  zIndex: 10,
+                  cursor: calibrating ? "grab" : "default",
+                  pointerEvents: calibrating ? "auto" : "none",
+                  outline: calibrating ? "1px dashed #fff" : "none",
+                  boxSizing: "border-box",
+                }}>
+                <img src={src} alt={alt} draggable={false}
+                  style={{ width: "100%", height: "100%", objectFit: "fill", display: "block", userSelect: "none", pointerEvents: "none" }} />
+                {calibrating && (
+                  <div onPointerDown={handlers.onResizeDown}
+                    style={{ position: "absolute", bottom: 0, right: 0, width: 10, height: 10, background: "#fff", cursor: "se-resize", pointerEvents: "auto" }} />
+                )}
+              </div>
+            );
+          });
+          const destroyedIds = calibrating
+            ? [...new Set([...researchStickersDestroyed, "atlanta"])]
+            : researchStickersDestroyed;
+          return (
+            <>
+              {renderGroup(researchStickers, researchStickerSrc, "Research station sticker", stickerPos, activeHandlers)}
+              {renderGroup(destroyedIds, destroyedResearchStationSrc, "Destroyed research station", destroyedStickerPos, destroyedHandlers)}
+            </>
+          );
+        })()}
+
         {/* Objective cards — fill slots 1..objectiveCount */}
         {OBJECTIVE_SLOTS.slice(0, objectiveCount).map((slot, i) => (
           <div key={`objective-${i}`}
+            ref={i === 0 ? objectiveCardRef : undefined}
             onContextMenu={!setup ? (e => { e.preventDefault(); e.stopPropagation(); setObjMenu({ x: e.clientX, y: e.clientY, idx: i }); }) : undefined}
             style={{
               position: "absolute",
@@ -2074,7 +2520,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
               zIndex: 8,
               cursor: setup ? "default" : "context-menu",
             }}>
-            <img src={(isJan && codaColor !== null) ? objectiveUpdatedSrc : objectiveSrc} alt="Objective" draggable={false}
+            <img src={(isJan && objectiveRevealed) ? objectiveUpdatedSrc : objectiveSrc} alt="Objective" draggable={false}
               style={{ width: "100%", height: "auto", display: "block", userSelect: "none", pointerEvents: "none" }} />
             {objectiveCompleted[i] && (
               <div style={{
@@ -2088,8 +2534,58 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
           </div>
         ))}
 
-        {/* Player hand cards — stacked, draggable — always render all 4 slots */}
-        {boardPxW > 0 && (['p1','p2','p3','p4'] as const).map(player => {
+        {/* Player hand cards — stacked, draggable — always render all 4 slots.
+            handCardCtx is identical for every card in every player's hand, so
+            it's built once per render instead of once per card. */}
+        {(() => {
+          const handCardCtx = {
+            calibrating, setup, currentPlayerKey, currentPlayerCityId, turnState, boardRef,
+            handCards, cardPlayerDiscard,
+            handAreas: { p1: HAND_P1, p2: HAND_P2, p3: HAND_P3, p4: HAND_P4 },
+            activePlayers, cureSelecting, eventMode, pendingEventCard, playerCities, panicLevels,
+            pendingDriveDiscard, setPendingDriveDiscard,
+            handStackOffset, snapPawnToCity, savePlayerCities, saveHandCards,
+            saveTurnState, consumeAction, setHandDrag, setHandHover, flexibleAidSelected, setFlexibleAidSelected,
+            setSelectedHandCards, setPlayerDiscard, setPendingDiscardMenu,
+            log, cardLabel, playerLabel,
+            canPlayFund: (cardId: string) => {
+              if (cardId === 'fund4') return infectDiscard.length > 0;
+              if (cardId === 'fund8') return turnState.phase === 'actions' || (turnState.phase === 'draw' && turnState.drawCount === 0) || turnState.phase === 'discard' || turnState.phase === 'discard-action';
+              return true;
+            },
+            onFlexibleAidComplete: () => {
+              // Auto-triggered when 3rd card is dragged to graveyard
+              setTurnState_(prev => {
+                const count = flexibleAidSelected.length + 1; // +1 because state hasn't updated yet
+                const base = { ...prev, actionsRemaining: prev.actionsRemaining + count };
+                const next = (prev.phase === 'draw' && prev.drawCount === 0) ? { ...base, phase: 'actions' as const } : base;
+                localStorage.setItem(LS_TURN, JSON.stringify(next)); return next;
+              });
+              setEventMode(null); setFlexibleAidSelected([]);
+            },
+            onFundCardDiscard: (cardId: string, _fundPlayer: string, _fundIdx: number) => {
+              if (!setup) return;
+              if (cardId === 'fund1') { setQuietNight(true); return; }
+              if (cardId === 'fund5') { openForecast(); return; }
+              if (cardId === 'fund7') {
+                if (turnState.phase === 'actions') {
+                  setTurnState_(prev => { const next = { ...prev, actionsRemaining: prev.actionsRemaining + 2 }; localStorage.setItem(LS_TURN, JSON.stringify(next)); return next; });
+                } else if (turnState.phase === 'draw' && turnState.drawCount === 0) {
+                  setTurnState_(prev => { const next = { ...prev, phase: 'actions' as const, actionsRemaining: prev.actionsRemaining + 2 }; localStorage.setItem(LS_TURN, JSON.stringify(next)); return next; });
+                } else {
+                  setBonusActionsNextTurn(b => b + 2);
+                }
+                return;
+              }
+              if (cardId === 'fund2') { if (DISEASE_COLORS.reduce((s, col) => s + totalOfColor(cityInfection, col), 0) === 0) return; cubeSnapshotRef.current = cityInfection; setEventMode('remote-treatment'); setEventModeRemaining(2); }
+              else if (cardId === 'fund3') { setEventMode('govt-grant'); setHighlightCities(CITIES.map(c => c.id)); }
+              else if (cardId === 'fund4') { setEventMode('resilient-pop'); setShowDiscardPopup(true); }
+              else if (cardId === 'fund6') { setEventMode('airlift'); }
+              else if (cardId === 'fund8') { setEventMode('flexible-aid'); setFlexibleAidSelected([]); }
+            },
+          };
+          if (boardPxW <= 0) return null;
+          return (['p1','p2','p3','p4'] as const).map(player => {
           const area = player === 'p1' ? HAND_P1 : player === 'p2' ? HAND_P2 : player === 'p3' ? HAND_P3 : HAND_P4;
           const cards = (handCards as Record<string,string[]>)[player] ?? [];
           if (cards.length === 0) return null;
@@ -2102,50 +2598,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
             if (!city && cityId !== "epidemic" && !isFundingHand) return null;
             const isDragging = handDrag?.player === player && handDrag.idx === i;
             const isSelected = cureSelecting && selectedHandCards.includes(cityId);
-            const onCardDown = makeHandCardPointerDown({
-              calibrating, setup, currentPlayerKey, currentPlayerCityId, turnState, boardRef,
-              handCards, cardPlayerDiscard,
-              handAreas: { p1: HAND_P1, p2: HAND_P2, p3: HAND_P3, p4: HAND_P4 },
-              activePlayers, cureSelecting, eventMode, pendingEventCard, playerCities,
-              handStackOffset, snapPawnToCity, savePlayerCities, saveHandCards,
-              saveTurnState, consumeAction, setHandDrag, setHandHover, flexibleAidSelected, setFlexibleAidSelected,
-              setSelectedHandCards, setPlayerDiscard, setPendingDiscardMenu,
-              canPlayFund: (cardId: string) => {
-                if (cardId === 'fund4') return infectDiscard.length > 0;
-                if (cardId === 'fund8') return turnState.phase === 'actions' || (turnState.phase === 'draw' && turnState.drawCount === 0) || turnState.phase === 'discard' || turnState.phase === 'discard-action';
-                return true;
-              },
-              onFlexibleAidComplete: () => {
-                // Auto-triggered when 3rd card is dragged to graveyard
-                setTurnState_(prev => {
-                  const count = flexibleAidSelected.length + 1; // +1 because state hasn't updated yet
-                  const base = { ...prev, actionsRemaining: prev.actionsRemaining + count };
-                  const next = (prev.phase === 'draw' && prev.drawCount === 0) ? { ...base, phase: 'actions' as const } : base;
-                  localStorage.setItem(LS_TURN, JSON.stringify(next)); return next;
-                });
-                setEventMode(null); setFlexibleAidSelected([]);
-              },
-              onFundCardDiscard: (cardId: string, _fundPlayer: string, _fundIdx: number) => {
-                if (!setup) return;
-                if (cardId === 'fund1') { setQuietNight(true); return; }
-                if (cardId === 'fund5') { openForecast(); return; }
-                if (cardId === 'fund7') {
-                  if (turnState.phase === 'actions') {
-                    setTurnState_(prev => { const next = { ...prev, actionsRemaining: prev.actionsRemaining + 2 }; localStorage.setItem(LS_TURN, JSON.stringify(next)); return next; });
-                  } else if (turnState.phase === 'draw' && turnState.drawCount === 0) {
-                    setTurnState_(prev => { const next = { ...prev, phase: 'actions' as const, actionsRemaining: prev.actionsRemaining + 2 }; localStorage.setItem(LS_TURN, JSON.stringify(next)); return next; });
-                  } else {
-                    setBonusActionsNextTurn(b => b + 2);
-                  }
-                  return;
-                }
-                if (cardId === 'fund2') { if (DISEASE_COLORS.reduce((s, col) => s + totalOfColor(cityInfection, col), 0) === 0) return; cubeSnapshotRef.current = cityInfection; setEventMode('remote-treatment'); setEventModeRemaining(2); }
-                else if (cardId === 'fund3') { setEventMode('govt-grant'); setHighlightCities(CITIES.map(c => c.id)); }
-                else if (cardId === 'fund4') { setEventMode('resilient-pop'); setShowDiscardPopup(true); }
-                else if (cardId === 'fund6') { setEventMode('airlift'); }
-                else if (cardId === 'fund8') { setEventMode('flexible-aid'); setFlexibleAidSelected([]); }
-              },
-            }, { player, idx: i, cityId, isFundingHand });
+            const onCardDown = makeHandCardPointerDown(handCardCtx, { player, idx: i, cityId, isFundingHand });
             return (
               <div key={`hand-${player}-${cityId}-${i}`}
                 onPointerDown={onCardDown}
@@ -2176,7 +2629,8 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
               </div>
             );
           });
-        })}
+          });
+        })()}
 
         {/* Player tokens — P1 pink, P2 blue */}
         {([
@@ -2244,7 +2698,32 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                 );
               const isShuttle = targetId && targetId !== movedPawnCityId &&
                 researchStations.has(movedPawnCityId) && researchStations.has(targetId);
-              if (targetId && (isNeighbor || isDispatcherOccupied || isShuttle)) {
+              if (targetId && isNeighbor) {
+                // Collapsing/Fallen (panic 4-5): Drive/Ferry into this city requires
+                // discarding 1 (or 2) cards of its color first // bypass hook
+                const panic = panicLevels[targetId] ?? 0;
+                const required = panic >= 5 ? 2 : panic === 4 ? 1 : 0;
+                if (required > 0) {
+                  const targetCity = CITIES.find(c2 => c2.id === targetId);
+                  const color = targetCity!.color as DiseaseColor;
+                  const hand = (handCards as Record<string, string[]>)[key] ?? [];
+                  const matching = hand.filter(id => CITIES.find(c2 => c2.id === id)?.color === color);
+                  if (matching.length < required) {
+                    log(`${playerLabel(key)}: not enough ${color} cards to Drive/Ferry into ${targetCity!.name} (panic ${panic})`);
+                    save({ ...t, x: ox, y: oy }); // snap back — invalid move
+                    return;
+                  }
+                  // Don't move yet — player must drag the required cards to discard themselves
+                  save({ ...t, x: ox, y: oy }); // snap pawn back until discards are done
+                  setPendingDriveDiscard({ pawnKey: key, pi, targetId, color, required, discarded: 0 });
+                  log(`${playerLabel(key)}: drag ${required} ${color} card${required > 1 ? "s" : ""} to discard to Drive/Ferry into ${targetCity!.name} (panic ${panic})`);
+                  return;
+                }
+                const nextCities = [...playerCities]; nextCities[pi] = targetId;
+                savePlayerCities(nextCities);
+                snapPawnToCity(key, targetId);
+                saveTurnState(consumeAction(turnState));
+              } else if (targetId && (isDispatcherOccupied || isShuttle)) {
                 const nextCities = [...playerCities]; nextCities[pi] = targetId;
                 savePlayerCities(nextCities);
                 snapPawnToCity(key, targetId);
@@ -2304,6 +2783,41 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
           );
         })}
 
+        {/* Collapsing/Fallen Drive/Ferry pending — faint ghost token at the destination + red ✕ to cancel */}
+        {pendingDriveDiscard && (() => {
+          const city = CITIES.find(c => c.id === pendingDriveDiscard.targetId);
+          if (!city) return null;
+          const offsets: [number, number][] = [[-1, 0], [1, 0], [-1, 1.5], [1, 1.5]];
+          const [dx, dy] = offsets[pendingDriveDiscard.pi] ?? [0, 0];
+          const gx = city.pos.x + dx, gy = city.pos.y + dy;
+          const ghostColor = playerColors[(['p1','p2','p3','p4'] as const)[pendingDriveDiscard.pi]] ?? "#fff";
+          return (
+            <>
+              <div style={{
+                position: "absolute", left: `${gx}%`, top: `${gy}%`,
+                width: "2.42%", transform: "translate(-50%, -50%)",
+                zIndex: 24, opacity: 0.4, pointerEvents: "none",
+              }}>
+                <svg viewBox="0 0 100 150" style={{ width: "100%", display: "block" }}>
+                  <path d="M 36,50 C 18,68 10,105 12,132 Q 12,148 50,148 Q 88,148 88,132 C 90,105 82,68 64,50 Z" fill={ghostColor} stroke={ghostColor === "#f0f0f0" ? "#999" : "none"} strokeWidth={ghostColor === "#f0f0f0" ? 1.5 : 0} />
+                  <ellipse cx="50" cy="50" rx="15" ry="8" fill={ghostColor} />
+                  <circle cx="50" cy="28" r="24" fill={ghostColor} stroke={ghostColor === "#f0f0f0" ? "#999" : "none"} strokeWidth={ghostColor === "#f0f0f0" ? 1.5 : 0} />
+                </svg>
+              </div>
+              <button onClick={() => setPendingDriveDiscard(null)} title="Cancel Drive/Ferry"
+                style={{
+                  position: "absolute", left: `${gx + 1.6}%`, top: `${gy - 2}%`,
+                  transform: "translate(-50%, -50%)", zIndex: 26,
+                  width: 22, height: 22, borderRadius: "50%", padding: 0,
+                  background: "#aa2222", border: "1.5px solid #ff6666", color: "#fff",
+                  fontSize: 13, fontWeight: 700, lineHeight: "20px", cursor: "pointer",
+                }}>
+                ✕
+              </button>
+            </>
+          );
+        })()}
+
         {/* Hovered hand card — overlay above all */}
         {handHover && boardPxW > 0 && (() => {
           const area = handHover.player === 'p1' ? HAND_P1 : handHover.player === 'p2' ? HAND_P2 : handHover.player === 'p3' ? HAND_P3 : HAND_P4;
@@ -2350,7 +2864,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
               width: `${area.w}%`,
               transform: "translate(-50%, -50%)",
               zIndex: 500, pointerEvents: "none",
-              filter: "drop-shadow(0 6px 20px #000e)",
+              boxShadow: "0 6px 20px 0 #000e",
             }}>
               {city
                 ? <PlayerCard city={city} width={pxW} />
@@ -2371,10 +2885,15 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
           if (!roleSrc) return null;
           const color = playerColors[pid];
           const isLeft = pid === 'p1' || pid === 'p3';
-          // P1/P2 (top): icon floats above their hand area
-          // P3/P4 (bottom): icon sits at the top of their hand area to avoid overlapping P1/P2 cards
+          // P1/P2 (top): icon floats above their hand area.
+          // P3/P4 (bottom): icon floats directly below the lowest stacked card — depends on
+          // card count, since the stack offset (and thus the lowest card's bottom edge) shrinks
+          // as more cards are added.
+          const handCount = Math.max(1, ((handCards as Record<string, string[]>)[pid] ?? []).length);
+          const cardH = area.w * BOARD_RATIO;
+          const lowestCardBottom = (area.y - area.h / 2) + (handCount - 1) * handStackOffset(area, handCount) + cardH;
           const iconY = (pid === 'p3' || pid === 'p4')
-            ? area.y - area.h / 2 + 3
+            ? lowestCardBottom + 3
             : area.y - area.h / 2 - 10;
           return (
             <div
@@ -2384,7 +2903,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                 left: `${area.x}%`,
                 top: `${iconY}%`,
                 transform: "translateX(-50%)",
-                zIndex: 35,
+                zIndex: 60,
                 cursor: "default",
               }}
               onMouseEnter={() => setRoleHover(pid)}
@@ -2500,6 +3019,20 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                   return next;
                 });
               } : undefined}
+              onRightClick={(() => {
+                // Tier 1 "Common Structure": right-click cure token to start off-RS cure
+                if (!setup || calibrating || !isCured || turnState.phase !== "actions" || cureSelecting) return undefined;
+                const col = ci >= 0 ? CURE_IDX_TO_COLOR[ci] : undefined;
+                if (!col || (mutationLevels[col] ?? 0) < 1) return undefined;
+                const hand = currentPlayerHand;
+                const hasCards = hand.filter(id => CITIES.find(c => c.id === id)?.color === col).length >= cureThresholdFor(col);
+                if (!hasCards) return undefined;
+                return () => {
+                  setCureSelecting(true);
+                  setSelectedHandCards([]);
+                  setHighlightCities([]);
+                };
+              })()}
             />
           );
         })}
@@ -2520,6 +3053,9 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
           const next = { ...panicLevels, [cityMenu.cityId]: clamped };
           setPanicLevels(next);
           localStorage.setItem(LS_PANIC_LEVELS, JSON.stringify(next));
+          if (clamped >= 2 && researchStickers.includes(cityMenu.cityId)) {
+            destroyStickerIfAny(cityMenu.cityId);
+          }
         };
         const hasStation = researchStations.has(cityMenu.cityId);
         const canAdd = !hasStation && researchStations.size < 6;
@@ -2782,12 +3318,13 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
             setPlayerDiscard(prev => [...prev, cityId]);
             setHighlightCities(CITIES.map(c => c.id));
             saveTurnState({ ...turnState, pendingCharter: true });
+            log(`${playerLabel(player)}: discarded ${cardLabel(cityId)} for Charter Flight — choose destination`);
             setPendingDiscardMenu(null);
           }}>
             Charter Flight
           </MenuItem>
           <MenuItem padding="9px 14px"
-            disabled={researchStations.has(pendingDiscardMenu.cityId) || researchStations.size >= 6}
+            disabled={researchStations.has(pendingDiscardMenu.cityId) || researchStations.size >= 6 || (panicLevels[pendingDiscardMenu.cityId] ?? 0) >= 2}
             onClick={() => {
               const { player, idx, cityId } = pendingDiscardMenu;
               const current = (handCards as Record<string,string[]>)[player] ?? [];
@@ -2796,10 +3333,12 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
               const next = new Set(researchStations); next.add(cityId);
               setResearchStations(next);
               localStorage.setItem(LS_RESEARCH_STATIONS, JSON.stringify([...next]));
-              saveTurnState(consumeAction(turnState));
+              const nextTs = consumeAction(turnState);
+              log(`${playerLabel(player)}: built research station in ${cardLabel(cityId)} (${nextTs.actionsRemaining} actions left)`);
+              saveTurnState(nextTs);
               setPendingDiscardMenu(null);
             }}>
-            {`Build Research Station${researchStations.has(pendingDiscardMenu.cityId) ? " (already here)" : researchStations.size >= 6 ? " (pool empty)" : ""}`}
+            {`Build Research Station${researchStations.has(pendingDiscardMenu.cityId) ? " (already here)" : researchStations.size >= 6 ? " (pool empty)" : (panicLevels[pendingDiscardMenu.cityId] ?? 0) >= 2 ? " (rioting)" : ""}`}
           </MenuItem>
         </ContextMenu>
       )}
@@ -2812,7 +3351,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
             const hand = currentPlayerHand;
             const cureColor = DISEASE_COLORS.find(col => {
               const ci = COLOR_TO_CURE_IDX[col]; if (ci === undefined || cured[ci]) return false;
-              return hand.filter(id => CITIES.find(c => c.id === id)?.color === col).length >= cureThreshold;
+              return hand.filter(id => CITIES.find(c => c.id === id)?.color === col).length >= cureThresholdFor(col);
             });
             if (!cureColor) return null;
             return (
@@ -2837,9 +3376,79 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
             localStorage.setItem(LS_CODA_COLOR, color);
             setCodaCandidates([]);
             setCodaPopupOpen(false);
+            setObjectiveTearOpen(true);
           }}
-          onClickOverlay={() => { if (codaColor !== null) setCodaPopupOpen(false); }}
+          onClickOverlay={() => {
+            if (codaColor !== null) {
+              setCodaPopupOpen(false);
+              setObjectiveTearOpen(true);
+            }
+          }}
         />
+      )}
+
+      {/* January: objective tear-card reveal — shown right after the COdA popup closes */}
+      {isJan && objectiveTearOpen && (
+        <div
+          style={{
+            position: "fixed", inset: 0, zIndex: 3000,
+            background: "rgba(2,6,14,0.8)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}
+          onClick={!objectiveTorn ? tearObjectiveCard : undefined}
+        >
+          <div
+            ref={objectivePopupRef}
+            style={{
+              position: "relative",
+              width: "min(28%, 260px)",
+              transition: objectiveClosing
+                ? "transform .48s cubic-bezier(.4,0,.2,1), opacity .48s ease"
+                : "transform .25s ease, opacity .25s ease",
+              transform: objectiveClosing && objectiveFlyTo
+                ? `translate(${objectiveFlyTo.dx}px, ${objectiveFlyTo.dy}px) scale(${objectiveFlyTo.scale})`
+                : "scale(1)",
+              opacity: objectiveClosing ? 0 : 1,
+              cursor: objectiveTorn ? "default" : "pointer",
+            }}
+          >
+            <img src={objectiveUpdatedSrc} alt="" draggable={false}
+              style={{ width: "100%", display: "block", userSelect: "none", pointerEvents: "none" }} />
+
+            {!objectiveTorn && (
+              <img src={objectiveSrc} alt="Objective enlarged" draggable={false}
+                style={{ position: "absolute", inset: 0, width: "100%", display: "block", userSelect: "none", pointerEvents: "none" }} />
+            )}
+
+            <img src={objectiveSrc} alt="" draggable={false}
+              style={{
+                position: "absolute", inset: 0, width: "100%", display: "block", userSelect: "none", pointerEvents: "none",
+                clipPath: "polygon(0 0, 55% 0, 40% 100%, 0 100%)",
+                transform: objectiveTorn ? "translate(-34px, 16px) rotate(-18deg)" : "translate(0,0) rotate(0deg)",
+                opacity: objectiveTorn ? 0 : 1,
+                transition: objectiveTorn ? "transform .55s cubic-bezier(.2,.7,.3,1), opacity .4s ease .25s" : "none",
+              }} />
+            <img src={objectiveSrc} alt="" draggable={false}
+              style={{
+                position: "absolute", inset: 0, width: "100%", display: "block", userSelect: "none", pointerEvents: "none",
+                clipPath: "polygon(55% 0, 100% 0, 100% 100%, 40% 100%)",
+                transform: objectiveTorn ? "translate(34px, 16px) rotate(18deg)" : "translate(0,0) rotate(0deg)",
+                opacity: objectiveTorn ? 0 : 1,
+                transition: objectiveTorn ? "transform .55s cubic-bezier(.2,.7,.3,1), opacity .4s ease .25s" : "none",
+              }} />
+          </div>
+
+          {!objectiveTorn && (
+            <div style={{
+              position: "absolute", bottom: 40, left: "50%", transform: "translateX(-50%)",
+              color: "#9bd", fontSize: 13, fontFamily: "system-ui, sans-serif",
+              background: "rgba(10,20,40,0.8)", padding: "6px 14px", borderRadius: 6,
+              pointerEvents: "none",
+            }}>
+              Click the card to reveal the updated objective
+            </div>
+          )}
+        </div>
       )}
 
       {/* January: disease naming on eradication */}
@@ -2861,13 +3470,191 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
         <GameOverOverlay
           result={gameResult}
           loseReason={loseReason}
-          onContinue={() => setDismissedResult(gameResult)}
+          onContinue={() => {
+            setDismissedResult(gameResult);
+            eligibleStickerCities.current = new Set(researchStations);
+            researchStickersDestroyed.forEach(id => eligibleStickerCities.current.delete(id));
+            setUpgradePicksRemaining(2);
+          }}
           onRestart={onRestart}
           onMainMenu={onMainMenu}
           janWinBonusSrc={isJan ? janWinBonusSrc : undefined}
           janEndgameSrc={isJan ? janEndgameSrc : undefined}
         />
       )}
+
+      {/* Post-game upgrade selection */}
+      {upgradePicksRemaining > 0 && !pickingStickerCity && !pickingMutation && (
+        <UpgradePopup
+          picksRemaining={upgradePicksRemaining}
+          mutationAvailable={DISEASE_COLORS.some(col => {
+            const ci = COLOR_TO_CURE_IDX[col];
+            if (ci === undefined || !eradicated[ci]) return false;
+            const lvl = mutationLevels[col] ?? 0;
+            if (lvl >= 4) return false;
+            const nextTier = lvl + 1;
+            return mutCountAtLeast(nextTier) < MUT_QUOTA[nextTier];
+          })}
+          onPick={(type: UpgradeType) => {
+            if (type === "research-station") {
+              setPickingStickerCity(true);
+              setHighlightCities([...eligibleStickerCities.current]);
+            } else if (type === "positive-mutation") {
+              setPickingMutation(true);
+            }
+          }}
+        />
+      )}
+
+      {pickingStickerCity && (
+        <div style={{
+          position: "fixed", top: 16, left: "50%", transform: "translateX(-50%)",
+          zIndex: 2500, background: "#0a1320", border: "2px solid #3a9aff",
+          borderRadius: 10, padding: "10px 20px", color: "#cfe8ff",
+          fontFamily: "system-ui, sans-serif", fontSize: 13, textAlign: "center",
+          boxShadow: "0 4px 24px #000c",
+        }}>
+          Click a city that had a research station this game to place its sticker.
+        </div>
+      )}
+
+      {/* Positive Mutation picker */}
+      {pickingMutation && (
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 2500,
+          background: "rgba(2,6,14,0.92)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>
+          <div style={{
+            background: "#0a1320", border: "2px solid #3ddc6d", borderRadius: 14,
+            padding: "28px 32px", maxWidth: 520, width: "90vw",
+            fontFamily: "system-ui, sans-serif",
+            display: "flex", flexDirection: "column", gap: 16,
+          }}>
+            <div style={{ fontSize: 18, fontWeight: 700, color: "#3ddc6d", textAlign: "center" }}>
+              Choose a Positive Mutation
+            </div>
+            <div style={{ fontSize: 12, color: "#9ab", textAlign: "center" }}>
+              Select an eradicated disease to gain its next mutation tier.
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {DISEASE_COLORS.map(col => {
+                const ci = COLOR_TO_CURE_IDX[col];
+                const isEradicated = ci !== undefined && eradicated[ci];
+                const lvl = mutationLevels[col] ?? 0;
+                const nextTier = lvl + 1;
+                const quotaFull = nextTier > 4 || mutCountAtLeast(nextTier) >= MUT_QUOTA[nextTier as 1|2|3|4];
+                const disabled = !isEradicated || lvl >= 4 || quotaFull;
+                const cubeColor = COLOR_TO_CUBE[col] ?? "#888";
+                const tierLabel = nextTier <= 4 ? `→ Tier ${nextTier}: ${MUT_NAMES[nextTier]}` : "Max tier reached";
+                const tierDesc = nextTier <= 4 ? MUT_DESCS[nextTier] : "";
+                return (
+                  <button key={col}
+                    disabled={disabled}
+                    onClick={() => {
+                      const next = { ...mutationLevels, [col]: nextTier };
+                      setMutationLevels(next);
+                      setPickingMutation(false);
+                      setUpgradePicksRemaining(n => n - 1);
+                    }}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 12,
+                      padding: "10px 14px", borderRadius: 8,
+                      background: disabled ? "#10141c" : "#0f1e30",
+                      border: `2px solid ${disabled ? "#2a3142" : cubeColor}`,
+                      cursor: disabled ? "not-allowed" : "pointer",
+                      opacity: disabled ? 0.5 : 1, textAlign: "left",
+                      fontFamily: "system-ui, sans-serif",
+                    }}>
+                    <div style={{ width: 18, height: 18, borderRadius: 3, background: cubeColor, flexShrink: 0 }} />
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 700, color: "#cfe8ff", fontSize: 13, textTransform: "capitalize" }}>
+                        {col}
+                        {lvl > 0 && <span style={{ color: "#3ddc6d", marginLeft: 6, fontSize: 11 }}>Tier {lvl} ✓</span>}
+                      </div>
+                      <div style={{ fontSize: 11, color: "#6af", marginTop: 2 }}>{tierLabel}</div>
+                      {tierDesc && <div style={{ fontSize: 10, color: "#8ab", marginTop: 1 }}>{tierDesc}</div>}
+                      {!isEradicated && <div style={{ fontSize: 10, color: "#a66" }}>Not eradicated this game</div>}
+                      {isEradicated && quotaFull && <div style={{ fontSize: 10, color: "#a66" }}>Quota full for this tier</div>}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+            <button
+              onClick={() => setPickingMutation(false)}
+              style={{
+                padding: "6px 14px", fontSize: 12, borderRadius: 6, cursor: "pointer",
+                background: "#10141c", border: "1px solid #334", color: "#778",
+                fontFamily: "system-ui, sans-serif",
+              }}>
+              ← Back
+            </button>
+          </div>
+        </div>
+      )}
+
+      {stationCapPick !== null && (() => {
+        const remaining = researchStickers.filter(id => !stationCapPick.includes(id));
+        const done = stationCapPick.length >= 6;
+        return (
+          <div style={{
+            position: "fixed", inset: 0, zIndex: 2600,
+            background: "rgba(2,6,14,0.92)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}>
+            <div style={{
+              background: "#0a1320", border: "2px solid #3a6aaa", borderRadius: 14,
+              padding: "24px 28px", maxWidth: 460, width: "90vw",
+              fontFamily: "system-ui, sans-serif", color: "#cfe8ff",
+              display: "flex", flexDirection: "column", gap: 12,
+            }}>
+              <div style={{ fontSize: 16, fontWeight: 700, color: "#7bc4ff" }}>
+                Choose {6} research station cities ({stationCapPick.length}/6)
+              </div>
+              <div style={{ fontSize: 12, color: "#9ab" }}>
+                You have more research station stickers than the board allows. Pick which 6 start with a station this game.
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {researchStickers.map(id => {
+                  const city = CITIES.find(c => c.id === id);
+                  const picked = stationCapPick.includes(id);
+                  return (
+                    <button key={id}
+                      disabled={!picked && done}
+                      onClick={() => setStationCapPick(prev => prev!.includes(id) ? prev!.filter(c => c !== id) : [...prev!, id])}
+                      style={{
+                        padding: "6px 12px", fontSize: 12, borderRadius: 6, cursor: !picked && done ? "not-allowed" : "pointer",
+                        background: picked ? "#1a3a6a" : "#10141c",
+                        border: `1px solid ${picked ? "#3a6aaa" : "#2a3142"}`,
+                        color: picked ? "#7bc4ff" : !picked && done ? "#445" : "#cfe8ff",
+                      }}>
+                      {city?.name ?? id}
+                    </button>
+                  );
+                })}
+              </div>
+              <button
+                disabled={stationCapPick.length !== 6}
+                onClick={() => {
+                  placeStationsForCities(stationCapPick);
+                  setStationCapPick(null);
+                }}
+                style={{
+                  marginTop: 8, padding: "8px 16px", fontSize: 13, fontWeight: 700,
+                  borderRadius: 6, cursor: stationCapPick.length === 6 ? "pointer" : "not-allowed",
+                  background: stationCapPick.length === 6 ? "#1a3a6a" : "#10141c",
+                  border: "1px solid #3a6aaa", color: stationCapPick.length === 6 ? "#7bc4ff" : "#556",
+                }}>
+                Confirm
+              </button>
+              {remaining.length === 0 && stationCapPick.length < 6 && (
+                <div style={{ fontSize: 11, color: "#a55" }}>Select exactly 6 cities to continue.</div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       {showDiscardPopup && (
         <InfectionDiscardPopup

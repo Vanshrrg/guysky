@@ -35,6 +35,10 @@ export const LS_TOKEN_P3 = "epidemic.token-p3.v1";
 export const LS_TOKEN_P4 = "epidemic.token-p4.v1";
 export const LS_RESEARCH_STATIONS = "epidemic.research-stations.v1";
 export const LS_RESEARCH_POS = "epidemic.research-pos.v1";
+export const LS_RESEARCH_STICKERS = "epidemic.research-stickers.v1";
+export const LS_RESEARCH_STICKERS_DESTROYED = "epidemic.research-stickers-destroyed.v1";
+export const LS_RESEARCH_STICKER_POS = "epidemic.research-sticker-pos.v1";
+export const LS_DESTROYED_STICKER_POS = "epidemic.destroyed-sticker-pos.v1";
 export const LS_PANIC_LEVELS = "epidemic.panic-levels.v1";
 export const LS_HCMC_TRAY = "epidemic.panic-tray.hcmc.v1";
 export const LS_TURN = "epidemic.turn.v1";
@@ -50,6 +54,10 @@ export const LS_CARD_SCHEMA = "epidemic.cardSchema";
 export const LS_CHARACTER_NAMES = "epidemic.character-names.v1";
 export const LS_CODA_COLOR      = "epidemic.coda-color.v1";
 export const LS_DISEASE_NAMES   = "epidemic.disease-names.v1";
+// Positive mutations: per-disease-color tier level (0–4). Persistent like other upgrades.
+export const LS_MUTATIONS            = "epidemic.mutations.v1";
+export const LS_MUTATION_STICKER_POS = "epidemic.mutation-sticker-pos.v1";
+export const LS_MUTATION_MARKER_POS  = "epidemic.mutation-marker-pos.v1";
 
 // ─── Default positions ────────────────────────────────────────────────────
 export const DEF_CARD_INFECTION: CardState = { x: 75.98, y: 9.04, w: 11.59 };
@@ -61,6 +69,15 @@ export const DEF_TOKEN_P2: CardState = { x: 53.00, y: 57.25, w: 2.42 };
 export const DEF_TOKEN_P3: CardState = { x: 55.00, y: 57.25, w: 2.42 };
 export const DEF_TOKEN_P4: CardState = { x: 57.00, y: 57.25, w: 2.42 };
 export const DEF_HCMC = { x: 85.88, y: 60.93 };
+export type StickerPos = { dx: number; dy: number; w: number };
+export const DEF_RESEARCH_STICKER_POS: StickerPos = { dx: 0, dy: -2.85, w: 1.27 };
+// Destroyed research station — same offset as the active sticker, 20% smaller.
+export const DEF_DESTROYED_STICKER_POS: StickerPos = { dx: 0, dy: -2.85, w: 1.016 };
+// Positive-mutation tier-sticker stack: {x,y} = tier-1 anchor (board %), w = sticker width %.
+// Tiers stack downward (1 on top → 4 at bottom) just above the disease cube tray.
+export const DEF_MUTATION_STICKER_POS: CardState = { x: 11.9, y: 71, w: 3.6 };
+// Per-disease colour markers: offset from each tier sticker centre; w = marker width %.
+export const DEF_MUTATION_MARKER_POS: StickerPos = { dx: 2.5, dy: 0, w: 1.3 };
 
 // ─── Card-pile-position schema reset (runs on import) ─────────────────────
 // Bump this whenever any DEF_CARD_* default position changes.
@@ -97,6 +114,28 @@ export function loadPanicLevels(): Record<string, number> {
   try { const r = localStorage.getItem(LS_PANIC_LEVELS); if (r) return JSON.parse(r); } catch { /* ignore */ }
   return {};
 }
+export function loadResearchStickers(): string[] {
+  try {
+    const r = localStorage.getItem(LS_RESEARCH_STICKERS);
+    if (r) return JSON.parse(r);
+  } catch { /* ignore */ }
+  // First run: seed the default baseline sticker at Atlanta.
+  const def = ["atlanta"];
+  localStorage.setItem(LS_RESEARCH_STICKERS, JSON.stringify(def));
+  return def;
+}
+export function loadResearchStickersDestroyed(): string[] {
+  try { const r = localStorage.getItem(LS_RESEARCH_STICKERS_DESTROYED); if (r) return JSON.parse(r); } catch { /* ignore */ }
+  return [];
+}
+export function loadResearchStickerPos(): StickerPos {
+  try { const r = localStorage.getItem(LS_RESEARCH_STICKER_POS); if (r) return { ...DEF_RESEARCH_STICKER_POS, ...JSON.parse(r) }; } catch { /* ignore */ }
+  return DEF_RESEARCH_STICKER_POS;
+}
+export function loadDestroyedStickerPos(): StickerPos {
+  try { const r = localStorage.getItem(LS_DESTROYED_STICKER_POS); if (r) return { ...DEF_DESTROYED_STICKER_POS, ...JSON.parse(r) }; } catch { /* ignore */ }
+  return DEF_DESTROYED_STICKER_POS;
+}
 export function loadHcmc(): { x: number; y: number } {
   try { const r = localStorage.getItem(LS_HCMC_TRAY); if (r) return JSON.parse(r); } catch { /* ignore */ }
   return DEF_HCMC;
@@ -120,6 +159,18 @@ export function loadCodaColor(): string | null {
 export function loadDiseaseNames(): Record<string, string> {
   try { const r = localStorage.getItem(LS_DISEASE_NAMES); if (r) return JSON.parse(r); } catch { /* ignore */ }
   return {};
+}
+export function loadMutations(): Record<string, number> {
+  try { const r = localStorage.getItem(LS_MUTATIONS); if (r) return JSON.parse(r); } catch { /* ignore */ }
+  return {};
+}
+export function loadMutationStickerPos(): CardState {
+  try { const r = localStorage.getItem(LS_MUTATION_STICKER_POS); if (r) return { ...DEF_MUTATION_STICKER_POS, ...JSON.parse(r) }; } catch { /* ignore */ }
+  return DEF_MUTATION_STICKER_POS;
+}
+export function loadMutationMarkerPos(): StickerPos {
+  try { const r = localStorage.getItem(LS_MUTATION_MARKER_POS); if (r) return { ...DEF_MUTATION_MARKER_POS, ...JSON.parse(r) }; } catch { /* ignore */ }
+  return DEF_MUTATION_MARKER_POS;
 }
 
 // ─── Per-game reset ───────────────────────────────────────────────────────

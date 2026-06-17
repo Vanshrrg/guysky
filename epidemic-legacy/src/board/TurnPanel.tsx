@@ -28,11 +28,12 @@ const ROLE_NAMES: Record<string, string> = {
 export const TurnPanel = memo(function TurnPanel({
   setup, turnState, playerColors, currentPlayerKey, infectionPos,
   cureSelecting, selectedHandCards, cured, roleId, quietNight,
-  eventMode, handCards, cureThreshold, cubeSnapshotRef,
+  eventMode, handCards, cureThreshold, mutationLevels, cubeSnapshotRef,
   currentPlayerHand, saveHandCards, setPlayerDiscard, setCured, setCureSelecting,
   setSelectedHandCards, saveTurnState, consumeAction, advanceTurn, setQuietNight,
   saveCityInfection, setEventMode, setHighlightCities, setAirliftPawn,
   setFlexibleAidSelected, setEventModeRemaining, setPendingEventCard, setShowDiscardPopup,
+  log,
 }: {
   setup: PreGameSetup;
   turnState: TurnStateData;
@@ -47,6 +48,7 @@ export const TurnPanel = memo(function TurnPanel({
   eventMode: EventMode;
   handCards: HandCards;
   cureThreshold: number;
+  mutationLevels: Record<string, number>;
   cubeSnapshotRef: React.MutableRefObject<CityInfectionMap | null>;
   currentPlayerHand: string[];
   saveHandCards: (next: HandCards) => void;
@@ -66,7 +68,9 @@ export const TurnPanel = memo(function TurnPanel({
   setEventModeRemaining: React.Dispatch<React.SetStateAction<number>>;
   setPendingEventCard: React.Dispatch<React.SetStateAction<{ player: string; idx: number; cardId: string } | null>>;
   setShowDiscardPopup: React.Dispatch<React.SetStateAction<boolean>>;
+  log?: (msg: string) => void;
 }) {
+  const thresholdFor = (col: DiseaseColor) => cureThreshold - ((mutationLevels[col] ?? 0) >= 3 ? 1 : 0);
   const player = setup.playerOrder[turnState.currentPlayerIndex];
   const playerName = (player?.roleId ? ROLE_NAMES[player.roleId] : null) ?? `Player ${turnState.currentPlayerIndex + 1}`;
   const pColor = playerColors[currentPlayerKey] ?? "#fff";
@@ -83,13 +87,13 @@ export const TurnPanel = memo(function TurnPanel({
           const ci = COLOR_TO_CURE_IDX[col];
           if (ci === undefined || cured[ci]) continue;
           const sel = selectedHandCards.filter(id => CITIES.find(c => c.id === id)?.color === col);
-          if (sel.length >= cureThreshold) return col;
+          if (sel.length >= thresholdFor(col)) return col;
         }
         return null;
       })();
       instruction = canConfirm
-        ? `Select ${cureThreshold} ${canConfirm} cards then confirm (${selectedHandCards.length} selected)`
-        : `Select ${cureThreshold} cards of the same color (${selectedHandCards.length} selected)`;
+        ? `Select ${thresholdFor(canConfirm)} ${canConfirm} cards then confirm (${selectedHandCards.length} selected)`
+        : `Select cards of the same color (${selectedHandCards.length} selected)`;
     }
     else if (roleId === 'dispatcher') instruction = "Drag any pawn to a neighbor, or drag to a teammate's city to transport";
     else instruction = "Drag your pawn or use a card action";
@@ -110,7 +114,7 @@ export const TurnPanel = memo(function TurnPanel({
       const ci = COLOR_TO_CURE_IDX[col];
       if (ci === undefined || cured[ci]) continue;
       const sel = selectedHandCards.filter(id => CITIES.find(c => c.id === id)?.color === col);
-      if (sel.length >= cureThreshold) return col as DiseaseColor;
+      if (sel.length >= thresholdFor(col)) return col as DiseaseColor;
     }
     return null;
   })();
@@ -118,7 +122,8 @@ export const TurnPanel = memo(function TurnPanel({
   // Auto-complete cure when enough cards are selected
   useEffect(() => {
     if (!canConfirmCure) return;
-    const sel = selectedHandCards.filter(id => CITIES.find(c => c.id === id)?.color === canConfirmCure).slice(0, cureThreshold);
+    const thresh = thresholdFor(canConfirmCure);
+    const sel = selectedHandCards.filter(id => CITIES.find(c => c.id === id)?.color === canConfirmCure).slice(0, thresh);
     const hand = currentPlayerHand;
     const newHand = hand.filter(id => !sel.includes(id));
     saveHandCards({ ...handCards, [currentPlayerKey]: newHand });
@@ -127,7 +132,11 @@ export const TurnPanel = memo(function TurnPanel({
     setCured(prev => { const n = [...prev]; n[ci] = true; return n; });
     setCureSelecting(false);
     setSelectedHandCards([]);
-    saveTurnState(consumeAction(turnState));
+    // Tier 2 "Efficient to Sequence": discovering this cure costs no action
+    const freeAction = (mutationLevels[canConfirmCure] ?? 0) >= 2;
+    const nextTs = freeAction ? turnState : consumeAction(turnState);
+    log?.(`${playerName}: discovered the cure for ${canConfirmCure} (discarded ${sel.length} cards${freeAction ? ", free action" : `, ${nextTs.actionsRemaining} actions left`})`);
+    saveTurnState(nextTs);
   }, [canConfirmCure]);
 
   return (
@@ -153,6 +162,15 @@ export const TurnPanel = memo(function TurnPanel({
         </div>
       )}
       <span style={{ color: "#8ab", flex: 1 }}>{instruction}</span>
+      {quietNight && (
+        <span style={{
+          padding: "2px 8px", fontSize: 11, borderRadius: 4,
+          background: "#1a2a3a", border: "1px solid #4a7aaa", color: "#88aadd",
+          whiteSpace: "nowrap",
+        }}>
+          🌙 One Quiet Night active
+        </span>
+      )}
       {cureSelecting && (
         <button onClick={() => { setCureSelecting(false); setSelectedHandCards([]); }}
           style={{ padding: "3px 8px", fontSize: 11, borderRadius: 4, cursor: "pointer", background: "#2a1a1a", border: "1px solid #884444", color: "#cc8888" }}>

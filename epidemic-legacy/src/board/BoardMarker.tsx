@@ -28,6 +28,8 @@ interface Props {
   eradicatedColor?: string;
   /** Called on click when not calibrating — used to toggle eradication. */
   onActivate?: () => void;
+  /** Called on right-click when not calibrating. */
+  onRightClick?: () => void;
 }
 
 // Blend hex color toward white (amount 0–1) for the top face highlight.
@@ -74,7 +76,7 @@ export function CubeSvg({ color }: { color: string }) {
   );
 }
 
-export const BoardMarker = memo(function BoardMarker({ src, alt, aspectRatio, state, calibrating, onChange, tintColor, cssFilter, cubeColor, eradicated, eradicatedColor = "white", onActivate }: Props) {
+export const BoardMarker = memo(function BoardMarker({ src, alt, aspectRatio, state, calibrating, onChange, tintColor, cssFilter, cubeColor, eradicated, eradicatedColor = "white", onActivate, onRightClick }: Props) {
   const frameRef = useRef<HTMLDivElement>(null);
   const dragging = useRef(false);
   const dragMoved = useRef(false);
@@ -111,7 +113,7 @@ export const BoardMarker = memo(function BoardMarker({ src, alt, aspectRatio, st
     onActivate?.();
   };
 
-  const interactive = calibrating || !!onActivate;
+  const interactive = calibrating || !!onActivate || !!onRightClick;
 
   return (
     <div
@@ -120,6 +122,7 @@ export const BoardMarker = memo(function BoardMarker({ src, alt, aspectRatio, st
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onClick={onClick}
+      onContextMenu={onRightClick ? (e) => { e.preventDefault(); e.stopPropagation(); if (!calibrating) onRightClick(); } : undefined}
       style={{
         position: "absolute",
         left: `${state.x}%`,
