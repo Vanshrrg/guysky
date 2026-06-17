@@ -100,13 +100,6 @@ type CityInfectionMap = Record<string, CityColorCounts>;
 // disease whose level >= N. Index 0 is unused.
 const MUT_QUOTA = [0, 3, 3, 2, 1] as const;
 const MUT_NAMES = ["", "Common Structure", "Efficient to Sequence", "Easier Agent", "Suppressed"] as const;
-const MUT_DESCS = [
-  "",
-  "Discover a cure anywhere — no research station needed.",
-  "Discovering this cure costs no action.",
-  "Discover this cure with 1 fewer card.",
-  "Treating removes all cubes of this color.",
-] as const;
 const MUT_STICKER_SRCS = [mutation1Src, mutation2Src, mutation3Src, mutation4Src];
 // Reverse of COLOR_TO_CURE_IDX: cure-index → disease color
 const CURE_IDX_TO_COLOR: Record<number, DiseaseColor> = { 0: "red", 1: "yellow", 2: "blue", 3: "black" };
