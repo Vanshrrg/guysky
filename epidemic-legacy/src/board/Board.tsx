@@ -3589,14 +3589,6 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
       {upgradePicksRemaining > 0 && !showRSStickerPanel && !pickingMutation && (
         <UpgradePopup
           picksRemaining={upgradePicksRemaining}
-          mutationAvailable={DISEASE_COLORS.some(col => {
-            const ci = COLOR_TO_CURE_IDX[col];
-            if (ci === undefined || !eradicated[ci]) return false;
-            const lvl = mutationLevels[col] ?? 0;
-            if (lvl >= 4) return false;
-            const nextTier = lvl + 1;
-            return mutCountAtLeast(nextTier) < MUT_QUOTA[nextTier];
-          })}
           onPick={(type: UpgradeType) => {
             if (type === "research-station") {
               setShowRSStickerPanel(true);

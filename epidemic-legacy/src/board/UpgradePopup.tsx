@@ -76,11 +76,9 @@ const PLACEHOLDER_LABELS = ["Character Upgrade", "Scarring"];
  * total (picksRemaining counts down); only Research Station is implemented
  * so far — the other 3 types render as disabled placeholders.
  */
-export function UpgradePopup({ picksRemaining, onPick, mutationAvailable = false, onClose }: {
+export function UpgradePopup({ picksRemaining, onPick, onClose }: {
   picksRemaining: number;
   onPick: (type: UpgradeType) => void;
-  /** True when at least one disease eradicated this game can still gain a mutation tier. */
-  mutationAvailable?: boolean;
   /** When provided, shows a close (✕) button to dismiss the popup without picking. */
   onClose?: () => void;
 }) {
@@ -129,20 +127,16 @@ export function UpgradePopup({ picksRemaining, onPick, mutationAvailable = false
           </button>
 
           <button
-            onClick={() => mutationAvailable && onPick("positive-mutation")}
-            disabled={!mutationAvailable}
-            title={mutationAvailable ? undefined : "Eradicate a disease this game (with tiers still available) to unlock"}
+            onClick={() => onPick("positive-mutation")}
             style={{
               display: "flex", flexDirection: "column", alignItems: "center", gap: 8,
               padding: "14px 18px", width: 130,
-              background: mutationAvailable ? "#0f1e30" : "#10141c",
-              border: `2px solid ${mutationAvailable ? "#3ddc6d" : "#2a3142"}`,
-              borderRadius: 10, cursor: mutationAvailable ? "pointer" : "not-allowed",
-              color: mutationAvailable ? "#cfe8ff" : "#556", opacity: mutationAvailable ? 1 : 0.6,
+              background: "#0f1e30", border: "2px solid #3ddc6d",
+              borderRadius: 10, cursor: "pointer", color: "#cfe8ff",
               fontFamily: "system-ui, sans-serif", fontSize: 12, fontWeight: 600,
             }}>
             <img src={positiveMutationSrc} alt="Positive Mutation" draggable={false}
-              style={{ width: 48, height: 48, objectFit: "contain", filter: mutationAvailable ? "none" : "grayscale(1)" }} />
+              style={{ width: 48, height: 48, objectFit: "contain" }} />
             Positive Mutation
           </button>
 
