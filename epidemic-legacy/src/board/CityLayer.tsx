@@ -1,4 +1,5 @@
 import { useState, useMemo, memo } from "react";
+import { getStorage } from "./boardStorage";
 import { CITIES, WRAP_ROUTES, WRAP_PAIR_KEYS, cityById, COLOR_HEX } from "./cities";
 import blackVirusSrc  from "../../object/black.png";
 import blueVirusSrc   from "../../object/blue.png";
@@ -14,7 +15,7 @@ export type RoadblockState = "temp" | "permanent";
 
 export function loadRoadblocks(): Record<string, RoadblockState> {
   try {
-    const raw = localStorage.getItem(LS_ROADBLOCKS);
+    const raw = getStorage().get(LS_ROADBLOCKS);
     if (raw) return JSON.parse(raw);
   } catch { /* ignore */ }
   return {};
@@ -23,7 +24,7 @@ export function loadRoadblocks(): Record<string, RoadblockState> {
 export function saveRoadblocks(rb: Record<string, RoadblockState>) {
   const perm: Record<string, RoadblockState> = {};
   for (const [k, v] of Object.entries(rb)) if (v === "permanent") perm[k] = v;
-  localStorage.setItem(LS_ROADBLOCKS, JSON.stringify(perm));
+  getStorage().set(LS_ROADBLOCKS, JSON.stringify(perm));
 }
 
 /** Edge key for two city IDs: alphabetically smaller first, joined by "-" */
@@ -53,8 +54,8 @@ export const CityLayer = memo(function CityLayer({ onCityClick, onCityRightClick
       onRoadblockChange(next);
     } else {
       setLocalRb(next);
+      saveRoadblocks(next);
     }
-    saveRoadblocks(next);
   };
 
   const handleClick = (key: string) => {

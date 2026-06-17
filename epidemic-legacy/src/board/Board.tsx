@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect, useMemo, useCallback, memo } from "react";
+﻿import { useRef, useState, useEffect, useMemo, useCallback, memo } from "react";
 import boardArt from "../../object/newupdatedboard.png";
 import blackVirusSrc  from "../../object/black.png";
 import blueVirusSrc   from "../../object/blue.png";
@@ -71,6 +71,7 @@ import {
   loadMutations,
   LS_CITY_STICKER_OVERRIDES, loadCityStickerOverrides,
   type StickerPos,
+  setActiveStorage, getStorage, makeStorage,
 } from "./boardStorage";
 import { MARKERS, CURE_INDICES, COLOR_TO_CURE_IDX, loadMarker, loadCured, loadEradicated } from "./boardMarkers";
 import { GameOverOverlay } from "./GameOverOverlay";
@@ -258,18 +259,23 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   onMainMenu?: () => void;
   onDoneCalibrating?: () => void;
 }) {
+  // Set the active storage namespace before any useState initializers run.
+  // month0 → "m0" slot; calibrate-jan → "dev" slot (isolated sandbox); campaign months → "campaign" slot.
+  setActiveStorage(
+    scenario === "month0" ? makeStorage("m0") :
+    scenario === "calibrate-jan" ? makeStorage("dev") :
+    makeStorage("campaign")
+  );
+
   const boardRef = useRef<HTMLDivElement>(null);
   const [calibrating, setCalibrating] = useState(() => scenario === "calibrate-jan");
   const [states, setStates] = useState<MarkerState[]>(() => MARKERS.map(m => loadMarker(m.key, m.def)));
-  // Month 0 is a fresh setup scenario — it never restores saved progress.
-  // All other scenarios (campaign months + board sandbox) persist these.
-  const _persistGame = scenario !== "month0"; void _persistGame;
   const [cured, setCured] = useState<boolean[]>(() => loadCured());
   const [eradicated, setEradicated] = useState<boolean[]>(() => loadEradicated());
   const [outbreakPos, setOutbreakPos] = useState(() => loadTrackPos(LS_OUTBREAK_POS, OUTBREAK_TRACK.length - 1));
   const [infectionPos, setInfectionPos] = useState(() => loadTrackPos(LS_INFECTION_POS, INFECTION_TRACK.length - 1));
   const [cityInfection, setCityInfection] = useState<CityInfectionMap>(() => {
-    try { const r = localStorage.getItem(LS_CITY_INFECTION); if (r) return JSON.parse(r); } catch { /* ignore */ }
+    try { const r = getStorage().get(LS_CITY_INFECTION); if (r) return JSON.parse(r); } catch { /* ignore */ }
     return {};
   });
   const [outbreakQueue, setOutbreakQueue] = useState<{ cityId: string; color: DiseaseColor }[]>([]);
@@ -287,7 +293,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   const [cardPlayerDiscard] = useState<CardState>(() => loadCard(LS_CARD_PLAYER_DISCARD, DEF_CARD_PLAYER_DISCARD));
   // 0 when epidemics are embedded in the deck (deal/game phases); 5 for raw board view
   const [epidemicCount, setEpidemicCount] = useState(() => {
-    try { const r = localStorage.getItem(LS_EPIDEMIC_COUNT); if (r !== null) return Number(r); } catch { /* ignore */ }
+    try { const r = getStorage().get(LS_EPIDEMIC_COUNT); if (r !== null) return Number(r); } catch { /* ignore */ }
     return 5;
   }); // standalone pile, rendered below player deck
   const [tokenP1, setTokenP1] = useState<CardState>(() => loadCard(LS_TOKEN_P1, DEF_TOKEN_P1));
@@ -308,7 +314,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   const [handCards, setHandCards] = useState<HandCards>(loadHandCards);
   const [handHover, setHandHover] = useState<{ player: string; idx: number; x: number; y: number } | null>(null);
   const [handDrag, setHandDrag] = useState<{ player: string; idx: number; x: number; y: number } | null>(null);
-  const saveHandCards = (next: HandCards) => { setHandCards(next); localStorage.setItem(LS_HAND_CARDS, JSON.stringify(next)); };
+  const saveHandCards = (next: HandCards) => { setHandCards(next); getStorage().set(LS_HAND_CARDS, JSON.stringify(next)); };
   const handStackOffset = (area: typeof HAND_P1, count: number) =>
     count <= 1 ? 0 : Math.min(4, (area.h - area.w * BOARD_RATIO) / (count - 1));
   const [roadblocks, setRoadblocks] = useState<Record<string, RoadblockState>>(loadRoadblocks);
@@ -339,13 +345,13 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
     setResearchStickers(prev => {
       if (!prev.includes(cityId)) return prev;
       const next = prev.filter(c => c !== cityId);
-      localStorage.setItem(LS_RESEARCH_STICKERS, JSON.stringify(next));
+      getStorage().set(LS_RESEARCH_STICKERS, JSON.stringify(next));
       return next;
     });
     setResearchStickersDestroyed(prev => {
       if (prev.includes(cityId)) return prev;
       const next = [...prev, cityId];
-      localStorage.setItem(LS_RESEARCH_STICKERS_DESTROYED, JSON.stringify(next));
+      getStorage().set(LS_RESEARCH_STICKERS_DESTROYED, JSON.stringify(next));
       return next;
     });
   };
@@ -361,11 +367,11 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   const [objectiveCompleted, setObjectiveCompleted] = useState<boolean[]>([false]);
   const [objMenu, setObjMenu] = useState<{ x: number; y: number; idx: number } | null>(null);
   const [infectDeck, setInfectDeck] = useState<string[]>(() => {
-    try { const r = localStorage.getItem(LS_INFECT_DECK); if (r) return JSON.parse(r); } catch { /* ignore */ }
+    try { const r = getStorage().get(LS_INFECT_DECK); if (r) return JSON.parse(r); } catch { /* ignore */ }
     return shuffle(CITIES.map(c => c.id));
   });
   const [infectDiscard, setInfectDiscard] = useState<string[]>(() => {
-    try { const r = localStorage.getItem(LS_INFECT_DISCARD); if (r) return JSON.parse(r); } catch { /* ignore */ }
+    try { const r = getStorage().get(LS_INFECT_DISCARD); if (r) return JSON.parse(r); } catch { /* ignore */ }
     return [];
   });
   const [flippingInfCard, setFlippingInfCard] = useState<{ cityId: string; fromX: number; fromY: number; toX: number; toY: number } | null>(null);
@@ -373,7 +379,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   const [flippingPlayerCard, setFlippingPlayerCard] = useState<{ cityId: string; x: number; y: number; reverse?: boolean } | null>(null);
   const [isShufflingPlayer, setIsShufflingPlayer] = useState(false);
   const [playerDeck, setPlayerDeck] = useState<string[]>(() => {
-    try { const r = localStorage.getItem(LS_PLAYER_DECK); if (r) return JSON.parse(r); } catch { /* ignore */ }
+    try { const r = getStorage().get(LS_PLAYER_DECK); if (r) return JSON.parse(r); } catch { /* ignore */ }
     const fc = setup?.fundingCards ?? [];
     return shuffle([...CITIES.map(c => c.id), ...fc]);
   });
@@ -477,7 +483,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   // correct actionsRemaining for the generalist (who starts with 5, not 4).
   useEffect(() => {
     if (!setup) return;
-    if (localStorage.getItem(LS_TURN)) return; // persisted state already has the right value
+    if (getStorage().get(LS_TURN)) return; // persisted state already has the right value
     const firstRole = setup.playerOrder[0]?.roleId;
     if (firstRole === 'generalist') {
       setTurnState_(prev => ({ ...prev, actionsRemaining: 5 }));
@@ -512,10 +518,10 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
         tokenP1: { ...tokenP1 }, tokenP2: { ...tokenP2 }, tokenP3: { ...tokenP3 }, tokenP4: { ...tokenP4 },
       });
     }
-    setTurnState_(next); localStorage.setItem(LS_TURN, JSON.stringify(next));
+    setTurnState_(next); getStorage().set(LS_TURN, JSON.stringify(next));
   };
   const [playerCities, setPlayerCities_] = useState<string[]>(() => setup ? loadPlayerCities(setup.playerOrder.length) : []);
-  const savePlayerCities = (next: string[]) => { setPlayerCities_(next); localStorage.setItem(LS_PLAYER_CITIES, JSON.stringify(next)); };
+  const savePlayerCities = (next: string[]) => { setPlayerCities_(next); getStorage().set(LS_PLAYER_CITIES, JSON.stringify(next)); };
   const [highlightCities, setHighlightCities] = useState<string[]>([]);
   const [selectedHandCards, setSelectedHandCards] = useState<string[]>([]);
   const [cureSelecting, setCureSelecting] = useState(false);
@@ -622,7 +628,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
     const pos = { x: city.pos.x + dx, y: city.pos.y + dy, w: 2.42 };
     const setters = [setTokenP1, setTokenP2, setTokenP3, setTokenP4];
     const lsKeys = [LS_TOKEN_P1, LS_TOKEN_P2, LS_TOKEN_P3, LS_TOKEN_P4];
-    setters[pi](pos); localStorage.setItem(lsKeys[pi], JSON.stringify(pos));
+    setters[pi](pos); getStorage().set(lsKeys[pi], JSON.stringify(pos));
     // Medic: auto-remove cured disease cubes on arrival (no action cost)
     if (setup?.playerOrder[pi]?.roleId === 'medic') {
       let inf = cityInfection;
@@ -662,19 +668,19 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   };
   const restoreUndoSnapshot = () => {
     const s = undoSnapshot; if (!s) return;
-    setTurnState_(s.turnState); localStorage.setItem(LS_TURN, JSON.stringify(s.turnState));
-    setPlayerCities_(s.playerCities); localStorage.setItem(LS_PLAYER_CITIES, JSON.stringify(s.playerCities));
-    setCityInfection(s.cityInfection); localStorage.setItem(LS_CITY_INFECTION, JSON.stringify(s.cityInfection));
+    setTurnState_(s.turnState); getStorage().set(LS_TURN, JSON.stringify(s.turnState));
+    setPlayerCities_(s.playerCities); getStorage().set(LS_PLAYER_CITIES, JSON.stringify(s.playerCities));
+    setCityInfection(s.cityInfection); getStorage().set(LS_CITY_INFECTION, JSON.stringify(s.cityInfection));
     setCured(s.cured); setEradicated(s.eradicated);
-    setHandCards(s.handCards); localStorage.setItem(LS_HAND_CARDS, JSON.stringify(s.handCards));
+    setHandCards(s.handCards); getStorage().set(LS_HAND_CARDS, JSON.stringify(s.handCards));
     setPlayerDiscard(s.playerDiscard);
-    setResearchStations(s.researchStations); localStorage.setItem(LS_RESEARCH_STATIONS, JSON.stringify([...s.researchStations]));
-    setResearchPos(s.researchPos); localStorage.setItem(LS_RESEARCH_POS, JSON.stringify(s.researchPos));
+    setResearchStations(s.researchStations); getStorage().set(LS_RESEARCH_STATIONS, JSON.stringify([...s.researchStations]));
+    setResearchPos(s.researchPos); getStorage().set(LS_RESEARCH_POS, JSON.stringify(s.researchPos));
     setOutbreakPos(s.outbreakPos);
-    setTokenP1(s.tokenP1); localStorage.setItem(LS_TOKEN_P1, JSON.stringify(s.tokenP1));
-    setTokenP2(s.tokenP2); localStorage.setItem(LS_TOKEN_P2, JSON.stringify(s.tokenP2));
-    setTokenP3(s.tokenP3); localStorage.setItem(LS_TOKEN_P3, JSON.stringify(s.tokenP3));
-    setTokenP4(s.tokenP4); localStorage.setItem(LS_TOKEN_P4, JSON.stringify(s.tokenP4));
+    setTokenP1(s.tokenP1); getStorage().set(LS_TOKEN_P1, JSON.stringify(s.tokenP1));
+    setTokenP2(s.tokenP2); getStorage().set(LS_TOKEN_P2, JSON.stringify(s.tokenP2));
+    setTokenP3(s.tokenP3); getStorage().set(LS_TOKEN_P3, JSON.stringify(s.tokenP3));
+    setTokenP4(s.tokenP4); getStorage().set(LS_TOKEN_P4, JSON.stringify(s.tokenP4));
     setHighlightCities([]); setSelectedHandCards([]); setCureSelecting(false);
     setEventMode(null); setAirliftPawn(null);
     setUndoSnapshot(null);
@@ -699,7 +705,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
     setResearchStations(prev => {
       const next = new Set(prev);
       cityIds.forEach(id => next.add(id));
-      localStorage.setItem(LS_RESEARCH_STATIONS, JSON.stringify([...next]));
+      getStorage().set(LS_RESEARCH_STATIONS, JSON.stringify([...next]));
       return next;
     });
   };
@@ -741,30 +747,30 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
       const [dx, dy] = offsets[pi] ?? [0, 0];
       const pos = { x: city.pos.x + dx, y: city.pos.y + dy, w: 2.42 };
       tokenSetters[pi].set(pos);
-      if (!hasMovedAway) localStorage.setItem(tokenSetters[pi].lsKey, JSON.stringify(pos));
+      if (!hasMovedAway) getStorage().set(tokenSetters[pi].lsKey, JSON.stringify(pos));
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [setup]);
 
   // Panic levels and mutation levels are permanent legacy state — save whenever they change
   useEffect(() => {
-    localStorage.setItem(LS_PANIC_LEVELS, JSON.stringify(panicLevels));
+    getStorage().set(LS_PANIC_LEVELS, JSON.stringify(panicLevels));
   }, [panicLevels]);
   useEffect(() => {
-    localStorage.setItem(LS_MUTATIONS, JSON.stringify(mutationLevels));
+    getStorage().set(LS_MUTATIONS, JSON.stringify(mutationLevels));
   }, [mutationLevels]);
 
   // Persist cure / eradication / outbreak-rate / infection-rate progress so a
   // reload restores the game. Skipped in Month 0 (always a fresh setup).
   const playerDeckRef = useRef<string[]>(playerDeck);
-  useEffect(() => { playerDeckRef.current = playerDeck; localStorage.setItem(LS_PLAYER_DECK, JSON.stringify(playerDeck)); }, [playerDeck]);
-  useEffect(() => { localStorage.setItem(LS_EPIDEMIC_COUNT, String(epidemicCount)); }, [epidemicCount]);
-  useEffect(() => { localStorage.setItem(LS_INFECT_DECK, JSON.stringify(infectDeck)); }, [infectDeck]);
-  useEffect(() => { localStorage.setItem(LS_INFECT_DISCARD, JSON.stringify(infectDiscard)); }, [infectDiscard]);
-  useEffect(() => { localStorage.setItem(LS_CURED, JSON.stringify(cured)); }, [cured]);
-  useEffect(() => { localStorage.setItem(LS_ERADICATED, JSON.stringify(eradicated)); }, [eradicated]);
-  useEffect(() => { localStorage.setItem(LS_OUTBREAK_POS, String(outbreakPos)); }, [outbreakPos]);
-  useEffect(() => { localStorage.setItem(LS_INFECTION_POS, String(infectionPos)); }, [infectionPos]);
+  useEffect(() => { playerDeckRef.current = playerDeck; getStorage().set(LS_PLAYER_DECK, JSON.stringify(playerDeck)); }, [playerDeck]);
+  useEffect(() => { getStorage().set(LS_EPIDEMIC_COUNT, String(epidemicCount)); }, [epidemicCount]);
+  useEffect(() => { getStorage().set(LS_INFECT_DECK, JSON.stringify(infectDeck)); }, [infectDeck]);
+  useEffect(() => { getStorage().set(LS_INFECT_DISCARD, JSON.stringify(infectDiscard)); }, [infectDiscard]);
+  useEffect(() => { getStorage().set(LS_CURED, JSON.stringify(cured)); }, [cured]);
+  useEffect(() => { getStorage().set(LS_ERADICATED, JSON.stringify(eradicated)); }, [eradicated]);
+  useEffect(() => { getStorage().set(LS_OUTBREAK_POS, String(outbreakPos)); }, [outbreakPos]);
+  useEffect(() => { getStorage().set(LS_INFECTION_POS, String(infectionPos)); }, [infectionPos]);
 
   // Auto-advance discard once the current player's hand is ≤ 7
   // Mid-draw discard (drawCount < 2): return to draw phase to pick up 2nd card
@@ -895,7 +901,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
             if (candidates.length === 1) {
               const named = candidates[0];
               setCodaColor(named);
-              localStorage.setItem(LS_CODA_COLOR, named);
+              getStorage().set(LS_CODA_COLOR, named);
               setCodaCandidates([]);
             } else {
               setCodaCandidates(candidates as DiseaseColor[]);
@@ -989,7 +995,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
 
   const update = (i: number) => (s: MarkerState) => {
     setStates(prev => { const next = [...prev]; next[i] = s; return next; });
-    localStorage.setItem(MARKERS[i].key, JSON.stringify(s));
+    getStorage().set(MARKERS[i].key, JSON.stringify(s));
   };
 
   const effectiveState = (i: number): MarkerState => {
@@ -1049,7 +1055,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
 
   const saveCityInfection = (next: CityInfectionMap) => {
     setCityInfection(next);
-    localStorage.setItem(LS_CITY_INFECTION, JSON.stringify(next));
+    getStorage().set(LS_CITY_INFECTION, JSON.stringify(next));
   };
 
   // Total cubes of a color across all cities
@@ -1069,7 +1075,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
         const cur = prev[cityId] ?? 0;
         if (cur >= 5) return prev;
         const next = { ...prev, [cityId]: cur + 1 };
-        localStorage.setItem(LS_PANIC_LEVELS, JSON.stringify(next));
+        getStorage().set(LS_PANIC_LEVELS, JSON.stringify(next));
         return next;
       });
       // Rioting (panic 2-3): destroy any existing research station here // bypass hook
@@ -1077,7 +1083,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
       if (newPanic === 2 && researchStations.has(cityId)) {
         const nextRS = new Set(researchStations); nextRS.delete(cityId);
         setResearchStations(nextRS);
-        localStorage.setItem(LS_RESEARCH_STATIONS, JSON.stringify([...nextRS]));
+        getStorage().set(LS_RESEARCH_STATIONS, JSON.stringify([...nextRS]));
         log(`Research station in ${city.name} destroyed by rioting`);
       }
       if (newPanic === 2 && researchStickers.includes(cityId)) {
@@ -1119,7 +1125,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
     setResearchStickers(prev => {
       if (prev.includes(cityId)) return prev;
       const next = [...prev, cityId];
-      localStorage.setItem(LS_RESEARCH_STICKERS, JSON.stringify(next));
+      getStorage().set(LS_RESEARCH_STICKERS, JSON.stringify(next));
       return next;
     });
     setShowRSStickerPanel(false);
@@ -1137,7 +1143,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
     // Event card modes — work in any phase
     if (eventMode === 'govt-grant') {
       const next = new Set(researchStations); next.add(cityId);
-      setResearchStations(next); localStorage.setItem(LS_RESEARCH_STATIONS, JSON.stringify([...next]));
+      setResearchStations(next); getStorage().set(LS_RESEARCH_STATIONS, JSON.stringify([...next]));
       setEventMode(null); setHighlightCities([]);
       if (pendingEventCard) resolveEventCard(pendingEventCard);
       return;
@@ -1614,7 +1620,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                     setTurnState_(prev => {
                       const base = { ...prev, actionsRemaining: prev.actionsRemaining + count };
                       const next = (prev.phase === 'draw' && prev.drawCount === 0) ? { ...base, phase: 'actions' as const } : base;
-                      localStorage.setItem(LS_TURN, JSON.stringify(next)); return next;
+                      getStorage().set(LS_TURN, JSON.stringify(next)); return next;
                     });
                     setEventMode(null); setFlexibleAidSelected([]);
                   }} style={{ padding: "2px 8px", fontSize: 11, borderRadius: 4, cursor: "pointer", background: "#1a3a1a", border: "1px solid #4a9a4a", color: "#88dd88" }}>
@@ -1654,9 +1660,9 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
             <button onClick={() => {
               if (window.confirm("Reset all game state?")) {
                 clearGameState();
-                localStorage.removeItem(LS_CODA_COLOR);
-                localStorage.removeItem(LS_PANIC_LEVELS);
-                localStorage.removeItem(LS_DISEASE_NAMES);
+                getStorage().remove(LS_CODA_COLOR);
+                getStorage().remove(LS_PANIC_LEVELS);
+                getStorage().remove(LS_DISEASE_NAMES);
                 onMainMenu?.();
                 window.location.reload();
               }
@@ -1858,7 +1864,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
         {/* Infection draw pile — stacked visual */}
         {(() => {
           const card = cardInfection;
-          const save = (c: CardState) => { setCardInfection(c); localStorage.setItem(LS_CARD_INFECTION, JSON.stringify(c)); };
+          const save = (c: CardState) => { setCardInfection(c); getStorage().set(LS_CARD_INFECTION, JSON.stringify(c)); };
           const layers = Math.max(0, Math.min(infectDeck.length, 10));
           const step = 0.10;
           const onDragDown = calibrating ? (e: React.PointerEvent<HTMLDivElement>) => {
@@ -2002,7 +2008,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
         {/* Player draw pile — stacked face-down */}
         {(() => {
           const card = cardPlayer;
-          const save = (c: CardState) => { setCardPlayer(c); localStorage.setItem(LS_CARD_PLAYER, JSON.stringify(c)); };
+          const save = (c: CardState) => { setCardPlayer(c); getStorage().set(LS_CARD_PLAYER, JSON.stringify(c)); };
           const layers = Math.max(0, Math.min(playerDeck.length, 10));
           const step = 0.10;
           const onDragDown = calibrating ? (e: React.PointerEvent<HTMLDivElement>) => {
@@ -2199,7 +2205,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
               const el = e.currentTarget; el.setPointerCapture(e.pointerId);
               const r = boardRef.current!.getBoundingClientRect();
               const sx = e.clientX; const sy = e.clientY; const ox = card.x; const oy = card.y;
-              const save = (c: CardState) => { setCardInfectionDiscard(c); localStorage.setItem(LS_CARD_INFECTION_DISCARD, JSON.stringify(c)); };
+              const save = (c: CardState) => { setCardInfectionDiscard(c); getStorage().set(LS_CARD_INFECTION_DISCARD, JSON.stringify(c)); };
               const onMove = (ev: PointerEvent) => save({ ...card, x: ox + ((ev.clientX - sx) / r.width) * 100, y: oy + ((ev.clientY - sy) / r.height) * 100 });
               const onUp = () => { el.removeEventListener("pointermove", onMove as any); el.removeEventListener("pointerup", onUp); };
               el.addEventListener("pointermove", onMove as any); el.addEventListener("pointerup", onUp);
@@ -2386,7 +2392,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                 // Pre-game: right-click removes RS
                 const next = new Set(researchStations); next.delete(city.id);
                 setResearchStations(next);
-                localStorage.setItem(LS_RESEARCH_STATIONS, JSON.stringify([...next]));
+                getStorage().set(LS_RESEARCH_STATIONS, JSON.stringify([...next]));
               }}
               style={{
                 position: "absolute",
@@ -2451,13 +2457,13 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
               el.addEventListener("pointermove", onMove as any); el.addEventListener("pointerup", onUp);
             } : undefined,
           });
-          const saveStickerPos = (p: StickerPos) => { setStickerPos(p); localStorage.setItem(LS_RESEARCH_STICKER_POS, JSON.stringify(p)); };
-          const saveDestroyedStickerPos = (p: StickerPos) => { setDestroyedStickerPos(p); localStorage.setItem(LS_DESTROYED_STICKER_POS, JSON.stringify(p)); };
+          const saveStickerPos = (p: StickerPos) => { setStickerPos(p); getStorage().set(LS_RESEARCH_STICKER_POS, JSON.stringify(p)); };
+          const saveDestroyedStickerPos = (p: StickerPos) => { setDestroyedStickerPos(p); getStorage().set(LS_DESTROYED_STICKER_POS, JSON.stringify(p)); };
           const saveCityStickerOverride = (cityId: string, p: StickerPos) => {
             // Store only the delta from the current global stickerPos so the override is portable.
             const next = { ...cityStickerOverrides, [cityId]: { dx: p.dx, dy: p.dy, w: p.w } };
             setCityStickerOverrides(next);
-            localStorage.setItem(LS_CITY_STICKER_OVERRIDES, JSON.stringify(next));
+            getStorage().set(LS_CITY_STICKER_OVERRIDES, JSON.stringify(next));
           };
           const activeHandlers = makeHandlers(stickerPos, saveStickerPos);
           const destroyedHandlers = makeHandlers(destroyedStickerPos, saveDestroyedStickerPos);
@@ -2497,11 +2503,11 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
           });
           const removeRsSticker = (id: string) => {
             const next = researchStickers.filter(c => c !== id);
-            setResearchStickers(next); localStorage.setItem(LS_RESEARCH_STICKERS, JSON.stringify(next));
+            setResearchStickers(next); getStorage().set(LS_RESEARCH_STICKERS, JSON.stringify(next));
           };
           const removeDestroyedSticker = (id: string) => {
             const next = researchStickersDestroyed.filter(c => c !== id);
-            setResearchStickersDestroyed(next); localStorage.setItem(LS_RESEARCH_STICKERS_DESTROYED, JSON.stringify(next));
+            setResearchStickersDestroyed(next); getStorage().set(LS_RESEARCH_STICKERS_DESTROYED, JSON.stringify(next));
           };
           // Always show one atlanta preview for each type so positions are visible outside calibrate mode
           const destroyedIds = [...new Set([...researchStickersDestroyed, "atlanta"])];
@@ -2588,7 +2594,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                 const count = flexibleAidSelected.length + 1; // +1 because state hasn't updated yet
                 const base = { ...prev, actionsRemaining: prev.actionsRemaining + count };
                 const next = (prev.phase === 'draw' && prev.drawCount === 0) ? { ...base, phase: 'actions' as const } : base;
-                localStorage.setItem(LS_TURN, JSON.stringify(next)); return next;
+                getStorage().set(LS_TURN, JSON.stringify(next)); return next;
               });
               setEventMode(null); setFlexibleAidSelected([]);
             },
@@ -2598,9 +2604,9 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
               if (cardId === 'fund5') { openForecast(); return; }
               if (cardId === 'fund7') {
                 if (turnState.phase === 'actions') {
-                  setTurnState_(prev => { const next = { ...prev, actionsRemaining: prev.actionsRemaining + 2 }; localStorage.setItem(LS_TURN, JSON.stringify(next)); return next; });
+                  setTurnState_(prev => { const next = { ...prev, actionsRemaining: prev.actionsRemaining + 2 }; getStorage().set(LS_TURN, JSON.stringify(next)); return next; });
                 } else if (turnState.phase === 'draw' && turnState.drawCount === 0) {
-                  setTurnState_(prev => { const next = { ...prev, phase: 'actions' as const, actionsRemaining: prev.actionsRemaining + 2 }; localStorage.setItem(LS_TURN, JSON.stringify(next)); return next; });
+                  setTurnState_(prev => { const next = { ...prev, phase: 'actions' as const, actionsRemaining: prev.actionsRemaining + 2 }; getStorage().set(LS_TURN, JSON.stringify(next)); return next; });
                 } else {
                   setBonusActionsNextTurn(b => b + 2);
                 }
@@ -2671,7 +2677,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
         .filter(({ key }) => (activePlayers as readonly string[]).includes(key))
         .map(({ key, token: t, setToken, lsKey }) => {
           const color = playerColors[key];
-          const save = (c: CardState) => { setToken(c); localStorage.setItem(lsKey, JSON.stringify(c)); };
+          const save = (c: CardState) => { setToken(c); getStorage().set(lsKey, JSON.stringify(c)); };
           const aspectH = t.w * BOARD_RATIO * 1.5;
           const isCurrentPlayerToken = setup && key === currentPlayerKey && turnState.phase === "actions";
           const onDragDown = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -3111,7 +3117,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
           const clamped = Math.max(0, Math.min(5, n));
           const next = { ...panicLevels, [cityMenu.cityId]: clamped };
           setPanicLevels(next);
-          localStorage.setItem(LS_PANIC_LEVELS, JSON.stringify(next));
+          getStorage().set(LS_PANIC_LEVELS, JSON.stringify(next));
           if (clamped >= 2 && researchStickers.includes(cityMenu.cityId)) {
             destroyStickerIfAny(cityMenu.cityId);
           }
@@ -3153,9 +3159,9 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                     <div style={{ padding: 3 }}>
                       <div
                         onClick={hasStation
-                          ? () => { const n = new Set(researchStations); n.delete(cityMenu.cityId); setResearchStations(n); localStorage.setItem(LS_RESEARCH_STATIONS, JSON.stringify([...n])); setCityMenu(null); setCityMenuHover(null); }
+                          ? () => { const n = new Set(researchStations); n.delete(cityMenu.cityId); setResearchStations(n); getStorage().set(LS_RESEARCH_STATIONS, JSON.stringify([...n])); setCityMenu(null); setCityMenuHover(null); }
                           : canAdd
-                          ? () => { const n = new Set(researchStations); n.add(cityMenu.cityId); setResearchStations(n); localStorage.setItem(LS_RESEARCH_STATIONS, JSON.stringify([...n])); setCityMenu(null); setCityMenuHover(null); }
+                          ? () => { const n = new Set(researchStations); n.add(cityMenu.cityId); setResearchStations(n); getStorage().set(LS_RESEARCH_STATIONS, JSON.stringify([...n])); setCityMenu(null); setCityMenuHover(null); }
                           : undefined}
                         style={{ ...itemStyle(hasStation || canAdd), color: hasStation ? "#6ddc6d" : canAdd ? "#e8e8e8" : "#444", cursor: hasStation || canAdd ? "pointer" : "default" }}
                         onMouseEnter={e => { if (hasStation || canAdd) e.currentTarget.style.background = "#23282f"; }}
@@ -3200,20 +3206,20 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                 const toggleRsSticker = () => {
                   if (hasRsSticker) {
                     const next = researchStickers.filter(c => c !== cityMenu.cityId);
-                    setResearchStickers(next); localStorage.setItem(LS_RESEARCH_STICKERS, JSON.stringify(next));
+                    setResearchStickers(next); getStorage().set(LS_RESEARCH_STICKERS, JSON.stringify(next));
                   } else {
                     const next = [...researchStickers, cityMenu.cityId];
-                    setResearchStickers(next); localStorage.setItem(LS_RESEARCH_STICKERS, JSON.stringify(next));
+                    setResearchStickers(next); getStorage().set(LS_RESEARCH_STICKERS, JSON.stringify(next));
                   }
                   setCityMenu(null); setCityMenuHover(null);
                 };
                 const toggleDestroyedSticker = () => {
                   if (hasDestroyedSticker) {
                     const next = researchStickersDestroyed.filter(c => c !== cityMenu.cityId);
-                    setResearchStickersDestroyed(next); localStorage.setItem(LS_RESEARCH_STICKERS_DESTROYED, JSON.stringify(next));
+                    setResearchStickersDestroyed(next); getStorage().set(LS_RESEARCH_STICKERS_DESTROYED, JSON.stringify(next));
                   } else {
                     const next = [...researchStickersDestroyed, cityMenu.cityId];
-                    setResearchStickersDestroyed(next); localStorage.setItem(LS_RESEARCH_STICKERS_DESTROYED, JSON.stringify(next));
+                    setResearchStickersDestroyed(next); getStorage().set(LS_RESEARCH_STICKERS_DESTROYED, JSON.stringify(next));
                   }
                   setCityMenu(null); setCityMenuHover(null);
                 };
@@ -3464,7 +3470,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
               setPlayerDiscard(prev => [...prev, cityId]);
               const next = new Set(researchStations); next.add(cityId);
               setResearchStations(next);
-              localStorage.setItem(LS_RESEARCH_STATIONS, JSON.stringify([...next]));
+              getStorage().set(LS_RESEARCH_STATIONS, JSON.stringify([...next]));
               const nextTs = consumeAction(turnState);
               log(`${playerLabel(player)}: built research station in ${cardLabel(cityId)} (${nextTs.actionsRemaining} actions left)`);
               saveTurnState(nextTs);
@@ -3505,7 +3511,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
           candidates={codaCandidates}
           onChoose={(color) => {
             setCodaColor(color as DiseaseColor);
-            localStorage.setItem(LS_CODA_COLOR, color);
+            getStorage().set(LS_CODA_COLOR, color);
             setCodaCandidates([]);
             setCodaPopupOpen(false);
             setObjectiveTearOpen(true);
@@ -3591,7 +3597,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
           onConfirm={(name) => {
             const next = { ...diseaseNames, [namePopupColor]: name };
             setDiseaseNames(next);
-            localStorage.setItem(LS_DISEASE_NAMES, JSON.stringify(next));
+            getStorage().set(LS_DISEASE_NAMES, JSON.stringify(next));
             setNamePopupColor(null);
           }}
         />

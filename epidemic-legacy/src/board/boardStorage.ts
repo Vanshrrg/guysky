@@ -1,7 +1,5 @@
 // localStorage layer for the board: key constants, default positions, typed
 // loaders, and the per-game reset. Factored out of Board.tsx.
-// (MARKERS/CURE_INDICES-dependent loaders — loadCured/loadEradicated/loadMarker —
-// stay in Board.tsx since they need those tables.)
 
 export type CardState = { x: number; y: number; w: number };
 export type HandCards = { p1: string[]; p2: string[]; p3: string[]; p4: string[] };
@@ -18,9 +16,47 @@ export interface TurnStateData {
   discardPlayer?: string;
 }
 
+// ─── Storage adapter ─────────────────────────────────────────────────────────
+// Abstracts localStorage so each scenario group has its own namespace and dev/
+// calibrate mode can run without any persistence.
+export interface StorageAdapter {
+  get(key: string): string | null;
+  set(key: string, val: string): void;
+  remove(key: string): void;
+  /** Remove all keys belonging to this adapter's namespace. */
+  clear(): void;
+}
+
+export const NULL_STORAGE: StorageAdapter = {
+  get: () => null,
+  set: () => {},
+  remove: () => {},
+  clear: () => {},
+};
+
+export function makeStorage(ns: string): StorageAdapter {
+  const p = ns + ".";
+  return {
+    get:    (k) => localStorage.getItem(p + k),
+    set:    (k, v) => localStorage.setItem(p + k, v),
+    remove: (k) => localStorage.removeItem(p + k),
+    clear:  () => {
+      for (const k of Object.keys(localStorage)) {
+        if (k.startsWith(p)) localStorage.removeItem(k);
+      }
+    },
+  };
+}
+
+// Module-level singleton — Board.tsx calls setActiveStorage() at the top of
+// each render so all loaders automatically use the right namespace.
+let _sa: StorageAdapter = makeStorage("campaign");
+export function setActiveStorage(sa: StorageAdapter) { _sa = sa; }
+export function getStorage(): StorageAdapter { return _sa; }
+
 // ─── Key constants ────────────────────────────────────────────────────────
 export const LS_CURED = "epidemic.cured.v2";
-export const LS_CITY_INFECTION = "epidemic.cityInfection.v2"; // v2: per-color map
+export const LS_CITY_INFECTION = "epidemic.cityInfection.v2";
 export const LS_ERADICATED = "epidemic.eradicated.v2";
 export const LS_OUTBREAK_POS = "epidemic.outbreak-pos.v1";
 export const LS_INFECTION_POS = "epidemic.infection-pos.v1";
@@ -47,14 +83,11 @@ export const LS_INFECT_DECK = "epidemic.infect-deck.v1";
 export const LS_INFECT_DISCARD = "epidemic.infect-discard.v1";
 export const LS_PLAYER_DECK = "epidemic.player-deck.v1";
 export const LS_EPIDEMIC_COUNT = "epidemic.epidemic-count.v1";
-export const LS_CARD_SCHEMA = "epidemic.cardSchema";
 
-// ─── Campaign-persistent keys (NOT in GAME_LS_KEYS) ─────────────────────────
-// These survive Restart / Main Menu — like panic levels.
+// ─── Campaign-persistent keys ─────────────────────────────────────────────────
 export const LS_CHARACTER_NAMES = "epidemic.character-names.v1";
 export const LS_CODA_COLOR      = "epidemic.coda-color.v1";
 export const LS_DISEASE_NAMES   = "epidemic.disease-names.v1";
-// Positive mutations: per-disease-color tier level (0–4). Persistent like other upgrades.
 export const LS_MUTATIONS            = "epidemic.mutations.v1";
 export const LS_MUTATION_STICKER_POS = "epidemic.mutation-sticker-pos.v1";
 export const LS_MUTATION_MARKER_POS  = "epidemic.mutation-marker-pos.v1";
@@ -71,105 +104,88 @@ export const DEF_TOKEN_P4: CardState = { x: 57.00, y: 57.25, w: 2.42 };
 export const DEF_HCMC = { x: 85.69, y: 60.24 };
 export type StickerPos = { dx: number; dy: number; w: number };
 export const DEF_RESEARCH_STICKER_POS: StickerPos = { dx: 0, dy: -2.85, w: 1.27 };
-// Destroyed research station — same offset as the active sticker, 20% smaller.
 export const DEF_DESTROYED_STICKER_POS: StickerPos = { dx: 0, dy: -2.85, w: 1.016 };
-// Positive-mutation tier-sticker stack: {x,y} = tier-1 anchor (board %), w = sticker width %.
-// Tiers stack downward (1 on top → 4 at bottom) just above the disease cube tray.
 export const DEF_MUTATION_STICKER_POS: CardState = { x: 11.9, y: 71, w: 3.6 };
-// Per-disease colour markers: offset from each tier sticker centre; w = marker width %.
 export const DEF_MUTATION_MARKER_POS: StickerPos = { dx: 2.5, dy: 0, w: 1.3 };
 
-// ─── Card-pile-position schema reset (runs on import) ─────────────────────
-// Bump this whenever any DEF_CARD_* default position changes.
-const CARD_SCHEMA_V = "4";
-const CARD_LS_KEYS = [LS_CARD_INFECTION, LS_CARD_PLAYER, LS_CARD_INFECTION_DISCARD, LS_CARD_PLAYER_DISCARD];
-if (localStorage.getItem(LS_CARD_SCHEMA) !== CARD_SCHEMA_V) {
-  CARD_LS_KEYS.forEach(k => localStorage.removeItem(k));
-  localStorage.setItem(LS_CARD_SCHEMA, CARD_SCHEMA_V);
-}
-
-// ─── Loaders ──────────────────────────────────────────────────────────────
+// ─── Loaders (all use the active StorageAdapter via _sa) ─────────────────────
 export function loadCard(key: string, def: CardState): CardState {
-  try { const r = localStorage.getItem(key); if (r) return JSON.parse(r); } catch { /* ignore */ }
+  try { const r = _sa.get(key); if (r) return JSON.parse(r); } catch { /* ignore */ }
   return def;
 }
 export function loadTrackPos(key: string, max: number): number {
-  try { const r = localStorage.getItem(key); if (r !== null) return Math.min(max, Math.max(0, Number(r))); }
+  try { const r = _sa.get(key); if (r !== null) return Math.min(max, Math.max(0, Number(r))); }
   catch { /* ignore */ }
   return 0;
 }
 export function loadHandCards(): HandCards {
-  try { const r = localStorage.getItem(LS_HAND_CARDS); if (r) return { p1: [], p2: [], p3: [], p4: [], ...JSON.parse(r) }; } catch { /* ignore */ }
+  try { const r = _sa.get(LS_HAND_CARDS); if (r) return { p1: [], p2: [], p3: [], p4: [], ...JSON.parse(r) }; } catch { /* ignore */ }
   return { p1: [], p2: [], p3: [], p4: [] };
 }
 export function loadResearchStations(): Set<string> {
-  try { const r = localStorage.getItem(LS_RESEARCH_STATIONS); if (r) return new Set(JSON.parse(r)); } catch { /* ignore */ }
+  try { const r = _sa.get(LS_RESEARCH_STATIONS); if (r) return new Set(JSON.parse(r)); } catch { /* ignore */ }
   return new Set();
 }
 export function loadResearchPos(): Record<string, { x: number; y: number }> {
-  try { const r = localStorage.getItem(LS_RESEARCH_POS); if (r) return JSON.parse(r); } catch { /* ignore */ }
+  try { const r = _sa.get(LS_RESEARCH_POS); if (r) return JSON.parse(r); } catch { /* ignore */ }
   return {};
 }
 export function loadPanicLevels(): Record<string, number> {
-  try { const r = localStorage.getItem(LS_PANIC_LEVELS); if (r) return JSON.parse(r); } catch { /* ignore */ }
+  try { const r = _sa.get(LS_PANIC_LEVELS); if (r) return JSON.parse(r); } catch { /* ignore */ }
   return {};
 }
 export function loadResearchStickers(): string[] {
-  try {
-    const r = localStorage.getItem(LS_RESEARCH_STICKERS);
-    if (r) return JSON.parse(r);
-  } catch { /* ignore */ }
-  // First run: seed the default baseline sticker at Atlanta.
+  try { const r = _sa.get(LS_RESEARCH_STICKERS); if (r) return JSON.parse(r); } catch { /* ignore */ }
   const def = ["atlanta"];
-  localStorage.setItem(LS_RESEARCH_STICKERS, JSON.stringify(def));
+  _sa.set(LS_RESEARCH_STICKERS, JSON.stringify(def));
   return def;
 }
 export function loadResearchStickersDestroyed(): string[] {
-  try { const r = localStorage.getItem(LS_RESEARCH_STICKERS_DESTROYED); if (r) return JSON.parse(r); } catch { /* ignore */ }
+  try { const r = _sa.get(LS_RESEARCH_STICKERS_DESTROYED); if (r) return JSON.parse(r); } catch { /* ignore */ }
   return [];
 }
 export function loadResearchStickerPos(): StickerPos {
-  try { const r = localStorage.getItem(LS_RESEARCH_STICKER_POS); if (r) return { ...DEF_RESEARCH_STICKER_POS, ...JSON.parse(r) }; } catch { /* ignore */ }
+  try { const r = _sa.get(LS_RESEARCH_STICKER_POS); if (r) return { ...DEF_RESEARCH_STICKER_POS, ...JSON.parse(r) }; } catch { /* ignore */ }
   return DEF_RESEARCH_STICKER_POS;
 }
 export function loadDestroyedStickerPos(): StickerPos {
-  try { const r = localStorage.getItem(LS_DESTROYED_STICKER_POS); if (r) return { ...DEF_DESTROYED_STICKER_POS, ...JSON.parse(r) }; } catch { /* ignore */ }
+  try { const r = _sa.get(LS_DESTROYED_STICKER_POS); if (r) return { ...DEF_DESTROYED_STICKER_POS, ...JSON.parse(r) }; } catch { /* ignore */ }
   return DEF_DESTROYED_STICKER_POS;
 }
 export function loadHcmc(): { x: number; y: number } {
-  try { const r = localStorage.getItem(LS_HCMC_TRAY); if (r) return JSON.parse(r); } catch { /* ignore */ }
+  try { const r = _sa.get(LS_HCMC_TRAY); if (r) return JSON.parse(r); } catch { /* ignore */ }
   return DEF_HCMC;
 }
 export function loadTurnState(): TurnStateData {
-  try { const r = localStorage.getItem(LS_TURN); if (r) return JSON.parse(r); } catch { /* ignore */ }
+  try { const r = _sa.get(LS_TURN); if (r) return JSON.parse(r); } catch { /* ignore */ }
   return { currentPlayerIndex: 0, actionsRemaining: 4, phase: "actions", pendingCharter: false, pendingShuttle: false, drawCount: 0, infectCount: 0 };
 }
 export function loadPlayerCities(count: number): string[] {
-  try { const r = localStorage.getItem(LS_PLAYER_CITIES); if (r) return JSON.parse(r); } catch { /* ignore */ }
+  try { const r = _sa.get(LS_PLAYER_CITIES); if (r) return JSON.parse(r); } catch { /* ignore */ }
   return Array(count).fill("atlanta");
 }
 export function loadCharacterNames(): Record<string, string> {
-  try { const r = localStorage.getItem(LS_CHARACTER_NAMES); if (r) return JSON.parse(r); } catch { /* ignore */ }
+  try { const r = _sa.get(LS_CHARACTER_NAMES); if (r) return JSON.parse(r); } catch { /* ignore */ }
   return {};
 }
 export function loadCodaColor(): string | null {
-  try { return localStorage.getItem(LS_CODA_COLOR); } catch { /* ignore */ }
+  try { return _sa.get(LS_CODA_COLOR); } catch { /* ignore */ }
   return null;
 }
 export function loadDiseaseNames(): Record<string, string> {
-  try { const r = localStorage.getItem(LS_DISEASE_NAMES); if (r) return JSON.parse(r); } catch { /* ignore */ }
+  try { const r = _sa.get(LS_DISEASE_NAMES); if (r) return JSON.parse(r); } catch { /* ignore */ }
   return {};
 }
 export function loadMutations(): Record<string, number> {
-  try { const r = localStorage.getItem(LS_MUTATIONS); if (r) return JSON.parse(r); } catch { /* ignore */ }
+  try { const r = _sa.get(LS_MUTATIONS); if (r) return JSON.parse(r); } catch { /* ignore */ }
   return {};
 }
 export function loadMutationStickerPos(): CardState {
-  try { const r = localStorage.getItem(LS_MUTATION_STICKER_POS); if (r) return { ...DEF_MUTATION_STICKER_POS, ...JSON.parse(r) }; } catch { /* ignore */ }
+  try { const r = _sa.get(LS_MUTATION_STICKER_POS); if (r) return { ...DEF_MUTATION_STICKER_POS, ...JSON.parse(r) }; } catch { /* ignore */ }
   return DEF_MUTATION_STICKER_POS;
 }
 export function loadMutationMarkerPos(): StickerPos {
-  try { const r = localStorage.getItem(LS_MUTATION_MARKER_POS); if (r) return { ...DEF_MUTATION_MARKER_POS, ...JSON.parse(r) }; } catch { /* ignore */ }
+  try { const r = _sa.get(LS_MUTATION_MARKER_POS); if (r) return { ...DEF_MUTATION_MARKER_POS, ...JSON.parse(r) }; } catch { /* ignore */ }
   return DEF_MUTATION_MARKER_POS;
 }
 
@@ -182,25 +198,19 @@ export const DEF_MUTATION_POSITIONS: CardState[] = [0, 1, 2, 3].map(i => ({
   w: DEF_MUTATION_STICKER_POS.w,
 }));
 export function loadMutationPositions(): CardState[] {
-  try { const r = localStorage.getItem(LS_MUTATION_POSITIONS); if (r) return JSON.parse(r); } catch { /* ignore */ }
+  try { const r = _sa.get(LS_MUTATION_POSITIONS); if (r) return JSON.parse(r); } catch { /* ignore */ }
   return DEF_MUTATION_POSITIONS.map(p => ({ ...p }));
 }
 
-// Per-city sticker position overrides (dx/dy/w relative to global StickerPos).
-// Pre-seeded with London's calibrated offset so it looks right out of the box.
+// Per-city sticker position overrides.
 export const LS_CITY_STICKER_OVERRIDES = "epidemic.city-sticker-overrides.v1";
-const DEF_CITY_STICKER_OVERRIDES: Record<string, Partial<StickerPos>> = {
-  london: { dx: 18.98, dy: -15.66, w: 1.27 },
-};
+const DEF_CITY_STICKER_OVERRIDES: Record<string, Partial<StickerPos>> = {};
 export function loadCityStickerOverrides(): Record<string, Partial<StickerPos>> {
-  try { const r = localStorage.getItem(LS_CITY_STICKER_OVERRIDES); if (r) return JSON.parse(r); } catch { /* ignore */ }
+  try { const r = _sa.get(LS_CITY_STICKER_OVERRIDES); if (r) return JSON.parse(r); } catch { /* ignore */ }
   return { ...DEF_CITY_STICKER_OVERRIDES };
 }
 
 // ─── Per-game reset ───────────────────────────────────────────────────────
-// All per-game state keys — cleared on Restart / Main Menu so a new game starts
-// fresh. Deliberately EXCLUDES calibration/layout positions (marker positions,
-// card-pile positions, HCMC tray) and permanent legacy state (panic levels).
 export const GAME_LS_KEYS = [
   LS_CITY_INFECTION, LS_HAND_CARDS, LS_CURED, LS_ERADICATED,
   LS_OUTBREAK_POS, LS_INFECTION_POS, LS_TURN, LS_PLAYER_CITIES,
@@ -209,5 +219,10 @@ export const GAME_LS_KEYS = [
   LS_INFECT_DECK, LS_INFECT_DISCARD, LS_PLAYER_DECK, LS_EPIDEMIC_COUNT,
 ];
 export function clearGameState() {
-  GAME_LS_KEYS.forEach(k => localStorage.removeItem(k));
+  GAME_LS_KEYS.forEach(k => _sa.remove(k));
+}
+
+// Wipes the entire campaign save (all keys for current namespace).
+export function clearAllSave() {
+  _sa.clear();
 }

@@ -2,7 +2,7 @@ import outbreakSrc from "../../object/outbreak marker.png";
 import cureSrc from "../../object/cure marker.png";
 import infectionRateSrc from "../../object/infection rate marker.png";
 import { type MarkerState } from "./BoardMarker";
-import { LS_CURED, LS_ERADICATED } from "./boardStorage";
+import { LS_CURED, LS_ERADICATED, getStorage } from "./boardStorage";
 
 // The fixed board markers (outbreak counter, infection-rate counter, and the
 // four cure markers). `def` is the start position; `curePos` (if present) is
@@ -26,19 +26,19 @@ export const CURE_INDICES = MARKERS.map((m, i) => m.curePos ? i : -1).filter(i =
 export const COLOR_TO_CURE_IDX: Record<string, number> = { red: 0, yellow: 1, blue: 2, black: 3 };
 
 export function loadMarker(key: string, def: MarkerState): MarkerState {
-  try { const r = localStorage.getItem(key); if (r) return { rot: 0, ...JSON.parse(r) }; }
+  try { const r = getStorage().get(key); if (r) return { rot: 0, ...JSON.parse(r) }; }
   catch { /* ignore */ }
   return def;
 }
 
 export function loadCured(): boolean[] {
-  try { const r = localStorage.getItem(LS_CURED); if (r) return JSON.parse(r); }
+  try { const r = getStorage().get(LS_CURED); if (r) return JSON.parse(r); }
   catch { /* ignore */ }
   return CURE_INDICES.map(() => false);
 }
 
 export function loadEradicated(): boolean[] {
-  try { const r = localStorage.getItem(LS_ERADICATED); if (r) return JSON.parse(r); }
+  try { const r = getStorage().get(LS_ERADICATED); if (r) return JSON.parse(r); }
   catch { /* ignore */ }
   return CURE_INDICES.map(() => false);
 }

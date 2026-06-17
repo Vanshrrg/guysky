@@ -3,9 +3,18 @@ import { GameProvider } from "./state/GameContext";
 import { DevPanel } from "./dev/DevPanel";
 import { Board } from "./board/Board";
 import { FundPhase, PreGamePhase, type PreGameSetup } from "./board/PreGamePhase";
+import { CITIES } from "./board/cities";
+import { shuffle } from "./board/boardGeometry";
+import {
+  LS_HAND_CARDS, LS_PLAYER_CITIES, LS_TURN, LS_RESEARCH_STATIONS,
+  LS_PLAYER_DECK, LS_INFECT_DECK, LS_EPIDEMIC_COUNT, LS_PANIC_LEVELS,
+  clearGameState, clearAllSave, makeStorage, setActiveStorage,
+} from "./board/boardStorage";
+
+const FUND_CARD_IDS = ["fund1", "fund2", "fund3", "fund4", "fund5", "fund6", "fund7", "fund8"];
 
 const SCENARIOS = [
-  { id: "board",  label: "Board",   built: true },
+  { id: "calibrate-jan", label: "Calibrate Board", built: true },
   { id: "month0", label: "Month 0", built: true },
   { id: "jan",    label: "January",   built: true },
   { id: "feb",    label: "February",  built: false },
@@ -25,7 +34,7 @@ const SCENARIOS = [
 type Phase = "infection" | "fund" | "fund-view" | "deal" | "roles" | "roles-hidden" | "game";
 
 function initialPhase(scenarioId: string): Phase {
-  return scenarioId === "month0" ? "infection" : "fund";
+  return scenarioId === "calibrate-jan" ? "game" : scenarioId === "board" ? "fund" : "infection";
 }
 
 export default function App() {
@@ -54,6 +63,47 @@ export default function App() {
   const handleResumeRoles  = () => setPhase("roles");
 
   const handleSetup = (s: PreGameSetup) => { setSetup(s); setPhase("game"); };
+
+  // Dev shortcut: skip infection/fund/deal/roles and drop straight into January,
+  // actions phase, 2 players with a 4-card starting hand each — for exercising
+  // the panic-level sandbox (right-click a city to set its panic level, then
+  // test Direct/Charter Flight, Build Research Station, and Drive/Ferry gates).
+  const handleQuickStartJan = () => {
+    // Seed the dev namespace (calibrate-jan's storage slot) with a fresh game state.
+    const dev = makeStorage("dev");
+    setActiveStorage(dev);
+    clearGameState();
+    dev.remove(LS_PANIC_LEVELS);
+
+    const deck = shuffle([...CITIES.map(c => c.id), ...FUND_CARD_IDS]);
+    const hand1 = deck.splice(0, 4);
+    const hand2 = deck.splice(0, 4);
+
+    dev.set(LS_HAND_CARDS, JSON.stringify({ p1: hand1, p2: hand2, p3: [], p4: [] }));
+    dev.set(LS_PLAYER_CITIES, JSON.stringify(["atlanta", "atlanta"]));
+    dev.set(LS_RESEARCH_STATIONS, JSON.stringify(["atlanta"]));
+    dev.set(LS_PLAYER_DECK, JSON.stringify(deck));
+    dev.set(LS_INFECT_DECK, JSON.stringify(shuffle(CITIES.map(c => c.id))));
+    dev.set(LS_EPIDEMIC_COUNT, "0");
+    dev.set(LS_TURN, JSON.stringify({
+      currentPlayerIndex: 0, actionsRemaining: 4, phase: "actions",
+      pendingCharter: false, pendingShuttle: false, drawCount: 0, infectCount: 0,
+    }));
+
+    setScenario("calibrate-jan");
+    setPlayerCount(2);
+    setFundingCards(FUND_CARD_IDS);
+    setSetup({
+      playerOrder: [
+        { color: "#e8479a", roleId: "dispatcher" },
+        { color: "#e8720a", roleId: "medic" },
+      ],
+      fundingCards: FUND_CARD_IDS,
+      characterNames: {},
+    });
+    setPhase("game");
+    setResetKey(k => k + 1);
+  };
 
   const handleRestart = () => {
     setSetup(null); setFundingCards([]);
@@ -90,8 +140,34 @@ export default function App() {
               {s.label}
             </button>
           ))}
+          {scenario === "calibrate-jan" && (
+            <button onClick={handleQuickStartJan} title="Skip straight to January, actions phase, 2 players, 4-card hands — for panic-level testing"
+              style={{
+                marginLeft: "auto", padding: "5px 12px", fontSize: 12,
+                background: "#1a2a12", color: "#9ad06a", border: "1px solid #3a5a2a",
+                borderRadius: 5, cursor: "pointer",
+              }}>
+              Quick Start: Jan (2p)
+            </button>
+          )}
+          {["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"].includes(scenario) && (
+            <button
+              onClick={() => {
+                if (!confirm("Reset all campaign save data? This clears cures, infection, hand cards, research stations, COdA, mutations and all other legacy state for ALL campaign months.")) return;
+                setActiveStorage(makeStorage("campaign"));
+                clearAllSave();
+                handleScenarioChange(scenario);
+              }}
+              style={{
+                marginLeft: "auto", padding: "5px 12px", fontSize: 12,
+                background: "#2a1010", color: "#e07070", border: "1px solid #5a2a2a",
+                borderRadius: 5, cursor: "pointer",
+              }}>
+              Reset Campaign Save
+            </button>
+          )}
           <button onClick={() => setShowDev(v => !v)} style={{
-            marginLeft: "auto", padding: "5px 12px", fontSize: 12,
+            padding: "5px 12px", fontSize: 12,
             background: "#111e2e", color: "#556", border: "1px solid #1e2d3d",
             borderRadius: 5, cursor: "pointer",
           }}>
@@ -110,6 +186,7 @@ export default function App() {
             onResumeRoles={phase === "roles-hidden" ? handleResumeRoles : undefined}
             onRestart={handleRestart}
             onMainMenu={handleMainMenu}
+            onDoneCalibrating={() => setPhase("game")}
           />
           {phase === "fund" && (
             <FundPhase onConfirm={handleFundConfirm} onViewBoard={() => setPhase("fund-view")} />
