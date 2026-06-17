@@ -1740,14 +1740,14 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                       style={{
                         position: "absolute",
                         left: `${x}%`, top: `${y}%`,
-                        width: `${w}%`, aspectRatio: "1",
+                        width: `${w}%`,
                         transform: "translate(-50%, -50%)",
                         zIndex: 5, pointerEvents: calibrating && tier === 1 ? "auto" : "none",
                         cursor: calibrating && tier === 1 ? "grab" : "default",
                         outline: calibrating && tier === 1 ? "1px dashed #3ddc6d" : "none",
                       }}>
                       <img src={MUT_STICKER_SRCS[tierIdx]} alt={MUT_NAMES[tier]} draggable={false}
-                        style={{ width: "100%", height: "100%", objectFit: "fill", display: "block", userSelect: "none", pointerEvents: "none" }} />
+                        style={{ width: "100%", height: "auto", display: "block", userSelect: "none", pointerEvents: "none" }} />
                       {calibrating && tier === 1 && (
                         <div
                           onPointerDown={(e: React.PointerEvent<HTMLDivElement>) => {
