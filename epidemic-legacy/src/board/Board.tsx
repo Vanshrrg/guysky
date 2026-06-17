@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect, useMemo, useCallback, memo, Fragment } from "react";
+import { useRef, useState, useEffect, useMemo, useCallback, memo } from "react";
 import boardArt from "../../object/newupdatedboard.png";
 import blackVirusSrc  from "../../object/black.png";
 import blueVirusSrc   from "../../object/blue.png";
@@ -67,8 +67,8 @@ import {
   loadCard, loadTrackPos, loadHandCards, loadResearchStations, loadResearchPos,
   loadPanicLevels, loadTurnState, loadPlayerCities, loadCodaColor, loadDiseaseNames, clearGameState,
   loadResearchStickers, loadResearchStickersDestroyed, loadResearchStickerPos, loadDestroyedStickerPos,
-  LS_MUTATIONS, LS_MUTATION_POSITIONS, DEF_MUTATION_POSITIONS,
-  loadMutations, loadMutationPositions,
+  LS_MUTATIONS,
+  loadMutations,
   LS_CITY_STICKER_OVERRIDES, loadCityStickerOverrides,
   type StickerPos,
 } from "./boardStorage";
@@ -110,6 +110,12 @@ const MUT_DESCS = [
 const MUT_STICKER_SRCS = [mutation1Src, mutation2Src, mutation3Src, mutation4Src];
 // Reverse of COLOR_TO_CURE_IDX: cure-index → disease color
 const CURE_IDX_TO_COLOR: Record<number, DiseaseColor> = { 0: "red", 1: "yellow", 2: "blue", 3: "black" };
+
+// Mutation sticker placement grid (board %). Column = disease color, row = tier,
+// fixed width. A disease at level N shows one sticker per tier 1..N in its column.
+const MUT_COL_X: Record<DiseaseColor, number> = { yellow: 3.42, red: 9.23, blue: 14.93, black: 20.75 };
+const MUT_ROW_Y = [0, 79.33, 82.00, 84.37, 86.85] as const; // indexed by tier 1–4
+const MUT_STICKER_W = 5.24;
 
 // 2×2 layout: P1 top-left, P3 bottom-left, P2 top-right, P4 bottom-right
 const HAND_P1 = { x: -4.56,  y: 27, w: 9.37, h: 50 };
@@ -260,7 +266,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   onDoneCalibrating?: () => void;
 }) {
   const boardRef = useRef<HTMLDivElement>(null);
-  const [calibrating, setCalibrating] = useState(false);
+  const [calibrating, setCalibrating] = useState(() => scenario === "calibrate-jan");
   const [states, setStates] = useState<MarkerState[]>(() => MARKERS.map(m => loadMarker(m.key, m.def)));
   // Month 0 is a fresh setup scenario — it never restores saved progress.
   // All other scenarios (campaign months + board sandbox) persist these.
@@ -279,7 +285,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   // 9 → 0: first 3 draws place 3 cubes (red), next 3 place 2 (orange), last 3 place 1 (yellow)
   // Every campaign month runs the initial infection phase; only the raw "board" sandbox skips it.
   const [setupRemaining, setSetupRemaining] = useState<number>(() =>
-    (scenario !== "board" && !setup) ? 9 : 0
+    (scenario !== "board" && scenario !== "calibrate-jan" && !setup) ? 9 : 0
   );
   // Card pile positions persist (calibration data)
   const [cardInfection, setCardInfection] = useState<CardState>(() => loadCard(LS_CARD_INFECTION, DEF_CARD_INFECTION));
@@ -322,7 +328,6 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   const [destroyedStickerPos, setDestroyedStickerPos] = useState<StickerPos>(() => loadDestroyedStickerPos());
   // Positive mutations: per-disease-color tier level (0–4), persistent across games.
   const [mutationLevels, setMutationLevels] = useState<Record<string, number>>(() => loadMutations());
-  const [mutationPositions, setMutationPositions] = useState<CardState[]>(() => loadMutationPositions());
   // Post-game upgrade flow: how many of the 2 picks are left, and whether we're
   // waiting for the player to click a city to place a Research Station sticker.
   const [upgradePicksRemaining, setUpgradePicksRemaining] = useState(0);
@@ -421,7 +426,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   const [undoSnapshot, setUndoSnapshot] = useState<ActionSnapshot | null>(null);
 
   // ─── January-specific state ────────────────────────────────────────────────
-  const isJan = scenario === 'jan';
+  const isJan = scenario === 'jan' || scenario === 'calibrate-jan';
   const [codaColor, setCodaColor] = useState<DiseaseColor | null>(() =>
     isJan ? (loadCodaColor() as DiseaseColor | null) : null
   );
@@ -707,7 +712,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   const setupInitialized = useRef(false);
   useEffect(() => {
     if (!setup || setupInitialized.current) return;
-    const isCampaignMonth = scenario !== "month0" && scenario !== "board";
+    const isCampaignMonth = scenario !== "month0" && scenario !== "board" && scenario !== "calibrate-jan";
     if (scenario !== "month0" && !isCampaignMonth) return;
     setupInitialized.current = true;
     const atlanta = CITIES.find(c => c.id === "atlanta");
@@ -1130,7 +1135,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
     if (isDealPhase) return;
     if (outbreakQueue.length > 0) return; // block clicks during chain resolution
     // In any real scenario (month0, january…), block manual cube placement; only board sandbox allows it
-    if (!setup && scenario !== "board") return;
+    if (!setup && scenario !== "board" && scenario !== "calibrate-jan") return;
 
     // Event card modes — work in any phase
     if (eventMode === 'govt-grant') {
@@ -1182,7 +1187,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   const handleCityRightClick = (cityId: string, forceColor?: DiseaseColor) => {
     if (isDealPhase) return;
     // In pre-game phases of real scenarios, block manual cube removal
-    if (!setup && scenario !== "board") return;
+    if (!setup && scenario !== "board" && scenario !== "calibrate-jan") return;
     const city = CITIES.find(c => c.id === cityId);
     if (!city) return;
     const color = forceColor ?? (city.color as DiseaseColor);
@@ -1359,7 +1364,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   const cityLayerRightClick = (cityId: string, e: React.MouseEvent) => {
     if (e.type === "contextmenu") {
       e.preventDefault();
-      if (!calibrating && (setup || scenario !== "board")) return;
+      if (!calibrating && (setup || (scenario !== "board" && scenario !== "calibrate-jan"))) return;
       setCityMenu({ cityId, x: e.clientX, y: e.clientY });
     }
   };
@@ -1673,10 +1678,6 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
         {calibrating && (
           <>
             <button onClick={() => {
-              const text = mutationPositions.map((p, i) => `tier${i + 1}: { x: ${p.x.toFixed(2)}, y: ${p.y.toFixed(2)}, w: ${p.w.toFixed(2)} }`).join("\n");
-              navigator.clipboard.writeText(text).then(() => alert("Copied!")).catch(() => window.prompt("Mutation positions", text));
-            }}>Copy mutation pos</button>
-            <button onClick={() => {
               const text = `stickerPos: { dx: ${stickerPos.dx.toFixed(2)}, dy: ${stickerPos.dy.toFixed(2)}, w: ${stickerPos.w.toFixed(2)} }`;
               navigator.clipboard.writeText(text).then(() => alert("Copied!")).catch(() => window.prompt("RS sticker pos", text));
             }}>Copy RS sticker pos</button>
@@ -1753,97 +1754,23 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
           );
         })()}
 
-        {/* Positive-mutation tier stickers — stacked above the disease tray.
-            Tier 1 anchored at mutationStickerPos; each subsequent tier offsets downward
-            by sticker height (w * 1.1 since stickers are ~square). Calibratable. */}
-        {(() => {
-          const saveMutPositions = (next: CardState[]) => {
-            setMutationPositions(next);
-            localStorage.setItem(LS_MUTATION_POSITIONS, JSON.stringify(next));
-          };
-          // In calibrate mode show all 4 tiers; otherwise only tiers with at least one disease
-          const renderedTiers: (1|2|3|4)[] = calibrating
-            ? [1, 2, 3, 4]
-            : ([1, 2, 3, 4] as const).filter(t => mutCountAtLeast(t) >= 1);
-          if (renderedTiers.length === 0) return null;
-          return (
-            <>
-              {renderedTiers.map(tier => {
-                const ti = tier - 1;
-                const pos = mutationPositions[ti] ?? DEF_MUTATION_POSITIONS[ti];
-                const colorsAtTier = DISEASE_COLORS.filter(c => (mutationLevels[c] ?? 0) >= tier);
-                return (
-                  <Fragment key={`mut-tier-${tier}`}>
-                    <div
-                      onPointerDown={calibrating ? (e: React.PointerEvent<HTMLDivElement>) => {
-                        e.stopPropagation(); e.preventDefault();
-                        const el = e.currentTarget; el.setPointerCapture(e.pointerId);
-                        const r = boardRef.current!.getBoundingClientRect();
-                        const sx = e.clientX; const sy = e.clientY;
-                        const ox = pos.x; const oy = pos.y;
-                        const onMove = (ev: PointerEvent) => {
-                          const next = [...mutationPositions];
-                          next[ti] = { ...pos, x: ox + ((ev.clientX - sx) / r.width) * 100, y: oy + ((ev.clientY - sy) / r.height) * 100 };
-                          saveMutPositions(next);
-                        };
-                        const onUp = () => { el.removeEventListener("pointermove", onMove as EventListener); el.removeEventListener("pointerup", onUp); };
-                        el.addEventListener("pointermove", onMove as EventListener); el.addEventListener("pointerup", onUp);
-                      } : undefined}
-                      style={{
-                        position: "absolute",
-                        left: `${pos.x}%`, top: `${pos.y}%`,
-                        width: `${pos.w}%`,
-                        transform: "translate(-50%, -50%)",
-                        zIndex: 5,
-                        pointerEvents: calibrating ? "auto" : "none",
-                        cursor: calibrating ? "grab" : "default",
-                        outline: calibrating ? "1px dashed #3ddc6d" : "none",
-                      }}>
-                      <img src={MUT_STICKER_SRCS[ti]} alt={MUT_NAMES[tier]} draggable={false}
-                        style={{ width: "100%", height: "auto", display: "block", userSelect: "none", pointerEvents: "none" }} />
-                      {calibrating && (
-                        <div
-                          onPointerDown={(e: React.PointerEvent<HTMLDivElement>) => {
-                            e.stopPropagation(); e.preventDefault();
-                            const el = e.currentTarget; el.setPointerCapture(e.pointerId);
-                            const r = boardRef.current!.getBoundingClientRect();
-                            const sx = e.clientX; const ow = pos.w;
-                            const onMove = (ev: PointerEvent) => {
-                              const next = [...mutationPositions];
-                              next[ti] = { ...pos, w: Math.max(0.5, ow + ((ev.clientX - sx) / r.width) * 100) };
-                              saveMutPositions(next);
-                            };
-                            const onUp = () => { el.removeEventListener("pointermove", onMove as EventListener); el.removeEventListener("pointerup", onUp); };
-                            el.addEventListener("pointermove", onMove as EventListener); el.addEventListener("pointerup", onUp);
-                          }}
-                          style={{ position: "absolute", bottom: 0, right: 0, width: 10, height: 10, background: "#3ddc6d", cursor: "se-resize", pointerEvents: "auto" }}
-                        />
-                      )}
-                    </div>
-                    {/* Per-color disease cube markers beside this tier sticker (display only) */}
-                    {colorsAtTier.map((col, mi) => {
-                      const DEF_MUT_MARKER_DX = 2.5; const DEF_MUT_MARKER_DY = 0; const DEF_MUT_MARKER_W = 1.3;
-                      const mx = pos.x + DEF_MUT_MARKER_DX + mi * (DEF_MUT_MARKER_W * 1.3);
-                      const my = pos.y + DEF_MUT_MARKER_DY;
-                      return (
-                        <div key={`mut-marker-${tier}-${col}`} style={{
-                          position: "absolute",
-                          left: `${mx}%`, top: `${my}%`,
-                          width: `${DEF_MUT_MARKER_W}%`, aspectRatio: "1",
-                          transform: "translate(-50%, -50%)",
-                          zIndex: 6, pointerEvents: "none",
-                        }}>
-                          <img src={COLOR_TO_CUBE_IMG[col]} alt={col} draggable={false}
-                            style={{ width: "100%", height: "100%", display: "block", pointerEvents: "none" }} />
-                        </div>
-                      );
-                    })}
-                  </Fragment>
-                );
-              })}
-            </>
-          );
-        })()}
+        {/* Positive-mutation tier stickers — one per (disease, tier) earned.
+            Placed on a fixed grid: column = disease color, row = tier. */}
+        {DISEASE_COLORS.flatMap(col => {
+          const lvl = mutationLevels[col] ?? 0;
+          return ([1, 2, 3, 4] as const).filter(t => lvl >= t).map(tier => (
+            <div key={`mut-${col}-${tier}`} style={{
+              position: "absolute",
+              left: `${MUT_COL_X[col]}%`, top: `${MUT_ROW_Y[tier]}%`,
+              width: `${MUT_STICKER_W}%`,
+              transform: "translate(-50%, -50%)",
+              zIndex: 5, pointerEvents: "none",
+            }}>
+              <img src={MUT_STICKER_SRCS[tier - 1]} alt={MUT_NAMES[tier]} draggable={false}
+                style={{ width: "100%", height: "auto", display: "block", userSelect: "none", pointerEvents: "none" }} />
+            </div>
+          ));
+        })}
 
         {/* Disease supply piles — static scattered positions, front cubes hidden as placed */}
         <SupplyPiles placedPerColor={placedPerColor} />
