@@ -2791,7 +2791,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                 <circle cx="50" cy="28" r="24" fill={color} stroke={color === "#f0f0f0" ? "#999" : "none"} strokeWidth={color === "#f0f0f0" ? 1.5 : 0} />
                 <circle cx="40" cy="20" r="7" fill="rgba(255,255,255,0.30)" />
                 {/* Bottom-half drag handle only — top half is click-through */}
-                {isInteractivePawn && (
+                {isInteractivePawn && !pickingStickerCity && (
                   <rect x="0" y="75" width="100" height="75" fill="transparent"
                     style={{ pointerEvents: "all", cursor: calibrating ? "default" : "grab" }}
                     onPointerDown={onDragDown as unknown as React.PointerEventHandler<SVGRectElement>} />
