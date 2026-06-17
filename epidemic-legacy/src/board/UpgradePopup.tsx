@@ -76,11 +76,13 @@ const PLACEHOLDER_LABELS = ["Character Upgrade", "Scarring"];
  * total (picksRemaining counts down); only Research Station is implemented
  * so far — the other 3 types render as disabled placeholders.
  */
-export function UpgradePopup({ picksRemaining, onPick, mutationAvailable = false }: {
+export function UpgradePopup({ picksRemaining, onPick, mutationAvailable = false, onClose }: {
   picksRemaining: number;
   onPick: (type: UpgradeType) => void;
   /** True when at least one disease eradicated this game can still gain a mutation tier. */
   mutationAvailable?: boolean;
+  /** When provided, shows a close (✕) button to dismiss the popup without picking. */
+  onClose?: () => void;
 }) {
   return (
     <div style={{
@@ -89,6 +91,7 @@ export function UpgradePopup({ picksRemaining, onPick, mutationAvailable = false
       display: "flex", alignItems: "center", justifyContent: "center",
     }}>
       <div style={{
+        position: "relative",
         background: "#0a1320", border: "2px solid #3a6aaa",
         borderRadius: 14, padding: "28px 32px",
         display: "flex", flexDirection: "column", alignItems: "center", gap: 16,
@@ -96,6 +99,13 @@ export function UpgradePopup({ picksRemaining, onPick, mutationAvailable = false
         fontFamily: "system-ui, sans-serif",
         boxShadow: "0 8px 60px #000",
       }}>
+        {onClose && (
+          <button onClick={onClose} title="Close" style={{
+            position: "absolute", top: 10, right: 12,
+            background: "transparent", border: "none", color: "#7bc4ff",
+            fontSize: 20, lineHeight: 1, cursor: "pointer", padding: 4,
+          }}>✕</button>
+        )}
         <div style={{ fontSize: 18, fontWeight: 700, color: "#7bc4ff", textAlign: "center" }}>
           Choose an Upgrade
         </div>

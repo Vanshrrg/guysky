@@ -586,13 +586,13 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
       for (const [col, tx, ty] of TRAY) {
         if (Math.hypot(ev.clientX - tx, ev.clientY - ty) > 60) continue;
         const ci = COLOR_TO_CURE_IDX[col];
-        const isErad = ci !== undefined && snapErad[ci];
+        const isCalibrate = scenario === "calibrate-jan";
+        const isErad = ci !== undefined && (isCalibrate || snapErad[ci]);
         const lvl = snapLevels[col] ?? 0;
-        if (!isErad || lvl + 1 !== tier || mutCountAtLeast(tier) >= MUT_QUOTA[tier]) break;
+        if (!isErad || (!isCalibrate && lvl + 1 !== tier) || (!isCalibrate && mutCountAtLeast(tier) >= MUT_QUOTA[tier])) break;
         // Valid drop — apply mutation
         setMutationLevels({ ...snapLevels, [col]: tier });
-        setPickingMutation(false);
-        setUpgradePicksRemaining(n => n - 1);
+        if (!isCalibrate) { setPickingMutation(false); setUpgradePicksRemaining(n => n - 1); }
         ghost.style.display = "none";
         setMutDragTier(null);
         applied = true;
@@ -1671,6 +1671,9 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
           // already-destroyed-this-game stickers.
           eligibleStickerCities.current = new Set(researchStations);
           researchStickersDestroyed.forEach(id => eligibleStickerCities.current.delete(id));
+          // For testing the Positive Mutation flow, mark all diseases eradicated
+          // if none are, so the mutation picker is reachable.
+          if (!eradicated.some(Boolean)) setEradicated(CURE_INDICES.map(() => true));
           setUpgradePicksRemaining(2);
         }} style={{ background: "#102030", border: "1px solid #3a6aaa", color: "#7bc4ff" }}>
           Test Upgrades
@@ -1681,6 +1684,18 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
               const text = `stickerPos: { dx: ${stickerPos.dx.toFixed(2)}, dy: ${stickerPos.dy.toFixed(2)}, w: ${stickerPos.w.toFixed(2)} }`;
               navigator.clipboard.writeText(text).then(() => alert("Copied!")).catch(() => window.prompt("RS sticker pos", text));
             }}>Copy RS sticker pos</button>
+            {scenario === "calibrate-jan" && (
+              <>
+                <button onClick={() => { setCodaCandidates(["yellow", "red", "blue", "black"]); setCodaPopupOpen(true); }}
+                  style={{ background: codaColor ? "#1a3020" : "#30180a", border: `1px solid ${codaColor ?? "#aa6622"}`, color: codaColor ? "#7de8a0" : "#ffaa55" }}>
+                  {codaColor ? `COdA: ${codaColor}` : "Set COdA color"}
+                </button>
+                <button onClick={() => setPickingMutation(v => !v)}
+                  style={{ background: "#101830", border: "1px solid #3d6cdc", color: "#7bb4ff" }}>
+                  {pickingMutation ? "Close mutations" : "Add Mutation"}
+                </button>
+              </>
+            )}
             <span style={{ color: "#9ab", fontSize: 12, alignSelf: "center" }}>Drag to move · drag ↘ corner to resize</span>
           </>
         )}
@@ -2948,10 +2963,13 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
         {/* Mutation drop zone rings — shown on eligible disease trays while picking mutation */}
         {pickingMutation && DISEASE_COLORS.map(col => {
           const ci = COLOR_TO_CURE_IDX[col];
-          if (ci === undefined || !eradicated[ci]) return null;
+          if (ci === undefined) return null;
+          const isCalibrate = scenario === "calibrate-jan";
+          if (!isCalibrate && !eradicated[ci]) return null;
           const lvl = mutationLevels[col] ?? 0;
           const nextTier = (lvl + 1) as 1|2|3|4;
-          if (nextTier > 4 || mutCountAtLeast(nextTier) >= MUT_QUOTA[nextTier]) return null;
+          if (nextTier > 4) return null;
+          if (!isCalibrate && mutCountAtLeast(nextTier) >= MUT_QUOTA[nextTier]) return null;
           const meta = _SUPPLY_META.find(m => m.color === col);
           if (!meta) return null;
           return (
@@ -3014,7 +3032,16 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
               cssFilter={m.cssFilter}
               eradicated={ci >= 0 ? eradicated[ci] : false}
               eradicatedColor={m.cssFilter?.includes("hue-rotate(58") ? "#666" : "white"}
-              onActivate={isCured && !calibrating && !onChooseRoles && !setup ? () => {
+              onActivate={ci >= 0 && scenario === "calibrate-jan" ? () => {
+                if (!cured[ci]) {
+                  setCured(prev => { const n = [...prev]; n[ci] = true; return n; });
+                } else if (!eradicated[ci]) {
+                  setEradicated(prev => { const n = [...prev]; n[ci] = true; return n; });
+                } else {
+                  setCured(prev => { const n = [...prev]; n[ci] = false; return n; });
+                  setEradicated(prev => { const n = [...prev]; n[ci] = false; return n; });
+                }
+              } : isCured && !calibrating && !onChooseRoles && !setup ? () => {
                 setEradicated(prev => {
                   const next = [...prev];
                   next[ci] = !next[ci];
@@ -3578,6 +3605,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
               setPickingMutation(true);
             }
           }}
+          onClose={calibrating ? () => setUpgradePicksRemaining(0) : undefined}
         />
       )}
 
@@ -3619,14 +3647,15 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
             Drag a sticker onto a glowing disease tray
           </div>
           {([1, 2, 3, 4] as const).map(tier => {
+            const isCalibrate = scenario === "calibrate-jan";
             const total = MUT_QUOTA[tier];
             const used = mutCountAtLeast(tier);
-            const available = total - used;
+            const available = isCalibrate ? 1 : total - used;
             return (
               <div key={tier}>
                 <div style={{ fontSize: 10, color: "#667", marginBottom: 5, display: "flex", justifyContent: "space-between" }}>
                   <span>Tier {tier} — {MUT_NAMES[tier]}</span>
-                  <span style={{ color: available > 0 ? "#3ddc6d" : "#444" }}>{available}/{total}</span>
+                  {!isCalibrate && <span style={{ color: available > 0 ? "#3ddc6d" : "#444" }}>{available}/{total}</span>}
                 </div>
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                   {Array.from({ length: available }, (_, i) => (
