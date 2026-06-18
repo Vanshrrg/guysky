@@ -38,13 +38,23 @@
   pointer-events: none;
 }
 
-/* 3D cube wrapper */
+/* 3D cube wrapper — default: no transition (snap) */
 .die-cube {
   width: 90px;
   height: 90px;
   position: relative;
   transform-style: preserve-3d;
+  transition: none;
+}
+
+/* Full roll animation */
+.die-cube.anim-roll {
   transition: transform 1.25s cubic-bezier(0.18, 0.82, 0.32, 1);
+}
+
+/* Coffee flip — short single-face Y sweep */
+.die-cube.anim-coffee {
+  transition: transform 0.35s ease-in-out;
 }
 
 /* Individual face */
@@ -71,7 +81,8 @@
 
 /* Respect reduced motion preference */
 @media (prefers-reduced-motion: reduce) {
-  .die-cube {
+  .die-cube.anim-roll,
+  .die-cube.anim-coffee {
     transition: transform 0.001s linear;
   }
 }

@@ -19,8 +19,24 @@ import Die from './Die'
 
 const NATIVE = 90 // Die's intrinsic size in px
 
-export default function DiceTray({ color = 'blue', dice = [], dieSize = NATIVE, onPointerDown, onRoll, draggingId, rollTriggers = {}, coffeeHighlight = false, onCoffeeSelect, rollHighlight }) {
+export default function DiceTray({ color = 'blue', dice = [], dieSize = NATIVE, onPointerDown, onRoll, draggingId, rollTriggers = {}, coffeeTriggers = {}, coffeeHighlight = false, onCoffeeSelect, rollHighlight, unrolledHighlight, rerollHighlight, canRoll, onRollAll, rollAllDisabled = false, selectedId = null }) {
   const ratio = dieSize / NATIVE
+
+  const getOutline = (id) => {
+    if (id === selectedId)        return '3px solid #2ecc71'
+    if (coffeeHighlight)          return '3px solid #f1c40f'
+    if (rerollHighlight?.(id))    return '3px solid #a855f7'
+    if (unrolledHighlight?.(id))  return '3px solid #e74c3c'
+    return 'none'
+  }
+
+  const getShadow = (id) => {
+    if (id === selectedId)        return '0 0 14px 5px rgba(46,204,113,0.85)'
+    if (coffeeHighlight)          return '0 0 10px 3px rgba(241,196,15,0.7)'
+    if (rerollHighlight?.(id))    return '0 0 14px 5px rgba(168,85,247,0.85)'
+    if (unrolledHighlight?.(id))  return '0 0 14px 5px rgba(231,76,60,0.85)'
+    return 'none'
+  }
 
   return (
     <div style={{
@@ -37,6 +53,29 @@ export default function DiceTray({ color = 'blue', dice = [], dieSize = NATIVE, 
       alignItems: 'center',
       gap: 12
     }}>
+      {onRollAll && (
+        <button
+          onClick={onRollAll}
+          disabled={rollAllDisabled}
+          style={{
+            padding: '8px 14px',
+            fontSize: 14,
+            fontWeight: 'bold',
+            fontFamily: 'sans-serif',
+            background: rollAllDisabled ? '#555' : '#2980b9',
+            color: '#fff',
+            border: 'none',
+            borderRadius: 8,
+            cursor: rollAllDisabled ? 'not-allowed' : 'pointer',
+            whiteSpace: 'nowrap',
+            boxShadow: '0 2px 6px rgba(0,0,0,0.4)',
+            opacity: rollAllDisabled ? 0.5 : 1,
+            flexShrink: 0,
+          }}
+        >
+          Roll
+        </button>
+      )}
       {dice.map((d) => (
         <div
           key={d.id}
@@ -52,12 +91,12 @@ export default function DiceTray({ color = 'blue', dice = [], dieSize = NATIVE, 
             visibility: draggingId === d.id ? 'hidden' : 'visible',
             position: 'relative',
             borderRadius: 12,
-            outline: coffeeHighlight ? '3px solid #f1c40f' : rollHighlight?.(d.id) ? '3px solid #27ae60' : 'none',
-            boxShadow: coffeeHighlight ? '0 0 10px 3px rgba(241,196,15,0.7)' : rollHighlight?.(d.id) ? '0 0 10px 3px rgba(39,174,96,0.7)' : 'none',
+            outline: getOutline(d.id),
+            boxShadow: getShadow(d.id),
           }}
         >
           <div style={{ transform: `scale(${ratio})`, transformOrigin: 'top left' }}>
-            <Die color={d.color} value={d.value} onRoll={(v) => onRoll && onRoll(d.id, v)} rollTrigger={rollTriggers[d.id] || 0} rollable={rollHighlight ? rollHighlight(d.id) : true} />
+            <Die color={d.color} value={d.value} onRoll={(v) => onRoll && onRoll(d.id, v)} rollTrigger={rollTriggers[d.id] || 0} coffeeTrigger={coffeeTriggers[d.id] || 0} rollable={canRoll ? canRoll(d.id) : true} />
           </div>
           {coffeeHighlight && (
             <div style={{ position: 'absolute', inset: 0, borderRadius: 12 }} />

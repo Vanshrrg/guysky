@@ -3,15 +3,10 @@
  * 3D rollable die component — blue and orange variants
  * Size: 90x90px (matches board squares exactly)
  *
- * Usage:
- *   <Die color="blue" value={1} />
- *   <Die color="orange" value={3} />
- *
- * Props:
- *   color  — 'blue' | 'orange'
- *   value  — 1-6 (starting face shown)
- *
- * Click to roll — animates 3D tumble, lands on random 1-6
+ * Animation modes:
+ *   roll    — full tumble (click or rollTrigger)
+ *   coffee  — short single Y-axis flip (coffeeTrigger)
+ *   snap    — instant, no transition (value sync / return from board)
  */
 
 import { useState, useRef, useCallback, useEffect } from 'react';
@@ -34,7 +29,6 @@ const FACE_ANGLE = {
 
 function DieFace({ num, color }) {
   const c = PALETTE[color] || PALETTE.blue;
-  // unique IDs per face to avoid SVG gradient conflicts
   const faceGrad = `face-${color}-${num}`;
   const glossGrad = `gloss-${color}-${num}`;
 
@@ -52,64 +46,41 @@ function DieFace({ num, color }) {
           <stop offset="100%" stopColor="#ffffff" stopOpacity="0" />
         </linearGradient>
       </defs>
-
-      {/* Die face background */}
-      <rect
-        x="2" y="2" width="86" height="86" rx="16" ry="16"
-        fill={`url(#${faceGrad})`}
-        stroke={c.border}
-        strokeWidth="2"
-      />
-
-      {/* Gloss highlight */}
-      <rect
-        x="8" y="6" width="74" height="44" rx="13" ry="13"
-        fill={`url(#${glossGrad})`}
-      />
-
-      {/* Number */}
-      <text
-        x="45" y="47"
-        textAnchor="middle"
-        dominantBaseline="central"
-        fontFamily='"Arial Black", Arial, sans-serif'
-        fontWeight="900"
-        fontSize="32"
-        fill="#ffffff"
-      >
+      <rect x="2" y="2" width="86" height="86" rx="16" ry="16"
+        fill={`url(#${faceGrad})`} stroke={c.border} strokeWidth="2" />
+      <rect x="8" y="6" width="74" height="44" rx="13" ry="13"
+        fill={`url(#${glossGrad})`} />
+      <text x="45" y="47" textAnchor="middle" dominantBaseline="central"
+        fontFamily='"Arial Black", Arial, sans-serif' fontWeight="900"
+        fontSize="32" fill="#ffffff">
         {num}
       </text>
     </svg>
   );
 }
 
-export default function Die({ color = 'blue', value = 1, onRoll, rollTrigger = 0, rollable = true }) {
+export default function Die({ color = 'blue', value = 1, onRoll, rollTrigger = 0, coffeeTrigger = 0, rollable = true }) {
   const init = FACE_ANGLE[value] || FACE_ANGLE[1];
   const [rot, setRot] = useState({ x: init.x, y: init.y });
-  const accum = useRef({ x: init.x, y: init.y }); // cumulative rotation, never reset
-  const rolling = useRef(false);
+  const [animClass, setAnimClass] = useState('');
+  const accum = useRef({ x: init.x, y: init.y });
+  const animating = useRef(false);
 
   const norm = (v) => ((v % 360) + 360) % 360;
 
   const roll = useCallback(() => {
-    if (rolling.current) return;
-    rolling.current = true;
+    if (animating.current) return;
+    animating.current = true;
+    setAnimClass('anim-roll');
 
     const target = Math.floor(Math.random() * 6) + 1;
-    // Report the new face so the parent can keep the value in sync across
-    // tray / drag / board (otherwise a rolled die would revert when moved).
     if (onRoll) onRoll(target);
     const t = FACE_ANGLE[target];
 
-    // Forward delta from current normalized angle to target
     let dx = (t.x - norm(accum.current.x) + 360) % 360;
     let dy = (t.y - norm(accum.current.y) + 360) % 360;
-
-    // Too small a turn reads as a twitch — make it a real tumble
     if (dx < 45) dx += 360;
     if (dy < 45) dy += 360;
-
-    // Two extra full turns of momentum
     dx += 720;
     dy += 720;
 
@@ -118,22 +89,41 @@ export default function Die({ color = 'blue', value = 1, onRoll, rollTrigger = 0
   }, [onRoll]);
 
   const onEnd = useCallback(() => {
-    rolling.current = false;
+    animating.current = false;
+    setAnimClass('');
   }, []);
 
-  // Sync rotation when the parent changes value externally (e.g. reset, or after
-  // dragging back to tray). Skip if a roll animation is already running.
+  // External roll trigger (Roll button) — use ref to ignore stale value on remount
+  const prevRollTrigger = useRef(rollTrigger);
   useEffect(() => {
-    if (rolling.current) return
-    const target = FACE_ANGLE[value] || FACE_ANGLE[1]
-    accum.current = { x: target.x, y: target.y }
-    setRot({ x: target.x, y: target.y })
-  }, [value]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // External roll trigger — when the parent increments rollTrigger, fire roll()
-  useEffect(() => {
-    if (rollTrigger > 0) roll();
+    if (rollTrigger > prevRollTrigger.current) roll();
+    prevRollTrigger.current = rollTrigger;
   }, [rollTrigger]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Coffee flip — single Y-axis sweep right-to-left to new value
+  const prevCoffeeTrigger = useRef(coffeeTrigger);
+  useEffect(() => {
+    if (coffeeTrigger <= prevCoffeeTrigger.current) return;
+    prevCoffeeTrigger.current = coffeeTrigger;
+    if (animating.current) return;
+    animating.current = true;
+    setAnimClass('anim-coffee');
+
+    const t = FACE_ANGLE[value] || FACE_ANGLE[1];
+    // Right-to-left = negative Y direction (subtract to go backward)
+    let dy = (norm(accum.current.y) - t.y + 360) % 360;
+    if (dy < 90) dy += 360; // ensure at least one visible face sweeps past
+    accum.current = { x: t.x, y: accum.current.y - dy };
+    setRot({ ...accum.current });
+  }, [coffeeTrigger]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Value sync — instant snap, no animation (return from board, reset, etc.)
+  useEffect(() => {
+    if (animating.current) return;
+    const target = FACE_ANGLE[value] || FACE_ANGLE[1];
+    accum.current = { x: target.x, y: target.y };
+    setRot({ x: target.x, y: target.y });
+  }, [value]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <button
@@ -144,7 +134,7 @@ export default function Die({ color = 'blue', value = 1, onRoll, rollTrigger = 0
     >
       <div className="die-ground" />
       <div
-        className="die-cube"
+        className={`die-cube${animClass ? ' ' + animClass : ''}`}
         style={{ transform: `rotateX(${rot.x}deg) rotateY(${rot.y}deg)` }}
         onTransitionEnd={onEnd}
       >
