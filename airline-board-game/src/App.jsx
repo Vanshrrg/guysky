@@ -503,6 +503,7 @@ export default function App() {
   const [turnResult, setTurnResult] = useState(null)
   const [engineLog, setEngineLog] = useState(null)
   const [axisLog, setAxisLog] = useState(null)
+  const [gameOver, setGameOver] = useState(false)
   const [coffeeChoice, setCoffeeChoice] = useState(null) // { tokenIndex } when pending
   // Approach strip calibration — remove debug once positions are locked
   const [approachDebug, setApproachDebug] = useState({ x: 246, y: 0, destW: 215, destH: 165, blankW: 215, blankH: 108 })
@@ -540,6 +541,7 @@ export default function App() {
     setTurnResult(null)
     setEngineLog(null)
     setAxisLog(null)
+    setGameOver(false)
   }
 
   const handleEndTurn = () => {
@@ -592,6 +594,14 @@ export default function App() {
     // Advance approach + decrement altitude when both checks pass
     if (engineCheckPassed && axisCheckPassed && gs.altitude > 0) {
       if (approachDistance !== null && gs.approachDistance > 0) {
+        // Collision check: tokens pushed to distance < 0 after advancing = lose
+        const newApproachDist = Math.max(0, gs.approachDistance - approachDistance)
+        const collision = gs.approachPanels.some((panel, i) => panel.tokens > 0 && (newApproachDist - i) < 0)
+        if (collision) {
+          setGameOver(true)
+          setTurnResult('COLLISION — You have lost the game!')
+          return
+        }
         dispatch({ type: 'ADVANCE_APPROACH', value: approachDistance })
       }
     }
@@ -1137,6 +1147,21 @@ export default function App() {
           </div>
         )
       })()}
+
+      {/* Game-over overlay */}
+      {gameOver && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 3000,
+          background: 'rgba(0,0,0,0.75)',
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 20,
+        }}>
+          <div style={{ fontSize: 36, fontWeight: 'bold', color: '#e74c3c', fontFamily: 'sans-serif' }}>COLLISION</div>
+          <div style={{ fontSize: 18, color: '#fff', fontFamily: 'sans-serif' }}>You have lost the game!</div>
+          <button onClick={handleReset} style={{ padding: '10px 28px', fontSize: 16, fontWeight: 'bold', background: '#555', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer' }}>
+            New Game
+          </button>
+        </div>
+      )}
 
       {/* The single opaque die that follows the cursor during a drag. Rendered
           in fixed/screen coordinates so it can move over board and trays alike. */}
