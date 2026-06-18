@@ -40,9 +40,11 @@ export const initialState = {
   approachHeader:   '',
   approachPanels:   [
     { type: 'destination', tokens: 0, planes: 0, planeSlots: 0 },
-    { type: 'blank', tokens: 0, navRect: false, planes: 0, planeSlots: 0 },
+    { type: 'blank', tokens: 0, navRect: false, planes: 0, planeSlots: 0, axisOn: true, axisMarks: ['T', 'T', 'T', 'T', 'X'], traffic: 0 },
   ],
   approachDistance: 2,
+  planeSupply:      12,   // shared airplane-token supply (Traffic die draws from this)
+  trafficPending:   0,    // remaining required Traffic-die rolls this round
   altitude:         6,
   gameReady:        0,
   gameOver:         false,
@@ -132,20 +134,53 @@ export function gameReducer(state, action) {
       return { ...state, approachPanels: kept }
     }
     case 'LOCK_APPROACH_VALUES': {
-      // action.values = [{ d, p }, ...] one per panel in order
+      // action.values = [{ d, p, cloud }, ...] one per panel in order
       const panels = state.approachPanels.map((p, i) => ({
-        ...p, d: action.values[i].d, p: action.values[i].p
+        ...p, d: action.values[i].d, p: action.values[i].p, cloud: !!action.values[i].cloud
       }))
+      // Shared airplane-token supply minus whatever the approach was designed with,
+      // and the round-1 Traffic count from the Current Position (the d === 0 panel).
+      const placed = panels.reduce((s, p) => s + (p.planes || 0), 0)
+      const current = panels.find(p => p.d === 0)
+      return {
+        ...state,
+        approachPanels: panels,
+        planeSupply: Math.max(0, 12 - placed),
+        trafficPending: current?.traffic ?? 0,
+      }
+    }
+    case 'SET_PANEL_BOX': {
+      const panels = state.approachPanels.map((p, i) => {
+        if (i !== action.index) return p
+        const next = { ...p }
+        if (action.axisOn !== undefined) next.axisOn = action.axisOn
+        if (action.axisMarks !== undefined) next.axisMarks = action.axisMarks
+        if (action.traffic !== undefined) next.traffic = action.traffic
+        return next
+      })
       return { ...state, approachPanels: panels }
     }
+    case 'SET_TRAFFIC_PENDING':
+      return { ...state, trafficPending: Math.max(0, action.value) }
+    case 'ROLL_TRAFFIC': {
+      if (state.trafficPending <= 0) return state
+      const maxD = state.approachPanels.reduce((m, p) => p.d != null && p.d > m ? p.d : m, 0)
+      const targetD = Math.min(action.value - 1, maxD)
+      let supply = state.planeSupply
+      const panels = state.approachPanels.map(p => {
+        if (p.d === targetD && supply > 0) { supply -= 1; return { ...p, planes: (p.planes || 0) + 1 } }
+        return p
+      })
+      return { ...state, approachPanels: panels, planeSupply: supply, trafficPending: state.trafficPending - 1 }
+    }
     case 'SET_APPROACH_PLANES': {
-      const v = Math.max(0, Math.min(3, action.value))
+      const v = Math.max(0, Math.min(4, action.value))
       const panels = state.approachPanels.map((p, i) =>
         i === action.index ? { ...p, planes: v, planeSlots: v } : p)
       return { ...state, approachPanels: panels }
     }
     case 'ADD_APPROACH_PANEL': {
-      const panels = [...state.approachPanels, { type: 'blank', tokens: 0, navRect: false, planes: 0, planeSlots: 0 }]
+      const panels = [...state.approachPanels, { type: 'blank', tokens: 0, navRect: false, planes: 0, planeSlots: 0, axisOn: true, axisMarks: ['T', 'T', 'T', 'T', 'X'], traffic: 0 }]
       return { ...state, approachPanels: panels, approachDistance: panels.length }
     }
     case 'REMOVE_APPROACH_PANEL': {
@@ -181,12 +216,22 @@ export function gameReducer(state, action) {
         idx === i && p.planes > 0 ? { ...p, planes: p.planes - 1 } : p)
       return { ...state, approachPanels: panels }
     }
+    case 'ADD_APPROACH_PLANE': {
+      // Inverse of REMOVE_APPROACH_PLANE — restores a plane when a radio die is
+      // picked back up (tap-to-return). Capped at the panel's original planeSlots.
+      const i = state.approachDistance - action.distanceValue
+      if (i < 0 || i >= state.approachPanels.length) return state
+      const panels = state.approachPanels.map((p, idx) =>
+        idx === i && p.planes < (p.planeSlots ?? Infinity) ? { ...p, planes: p.planes + 1 } : p)
+      return { ...state, approachPanels: panels }
+    }
     case 'LOAD_APPROACH_STRIP': {
       const { strip } = action
       const panels = strip.panels.map((p, i) =>
         i === 0
           ? { type: 'destination', tokens: 0, planes: p.planeSlots, planeSlots: p.planeSlots }
-          : { type: 'blank', tokens: 0, navRect: false, planes: p.planeSlots, planeSlots: p.planeSlots }
+          : { type: 'blank', tokens: 0, navRect: false, planes: p.planeSlots, planeSlots: p.planeSlots,
+              axisOn: p.axisOn ?? true, axisMarks: p.axisMarks ?? ['T', 'T', 'T', 'T', 'X'], traffic: p.traffic ?? 0 }
       )
       return { ...state, approachPanels: panels, approachDistance: panels.length, approachHeader: strip.name }
     }
