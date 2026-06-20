@@ -835,8 +835,7 @@ export default function App() {
       } else if (key === 'roles') {
         if (!val) return
         setRoles(val)
-        if (val.blue === cid) setMyRole('blue')
-        else if (val.orange === cid) setMyRole('orange')
+        // myRole is only set via the claim buttons — never restored from Firebase
       } else if (key === 'host') {
         setHost(val || null)
       } else if (key === 'rerollGranted') {
@@ -899,6 +898,9 @@ export default function App() {
           if (data) for (const k of GAME_KEYS) if (data[k] !== undefined) applyKey(k, data[k])
           if (!data || data.gameState === undefined) needsSeedRef.current = true
           hydratedRef.current = true
+          // Clear any stale role assignments from previous sessions so players must
+          // re-pick their role each time they load the page.
+          fetch(`${DB}${FB_NODE}/roles.json`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) }).catch(() => {})
         } else {
           const seg = path.split('/').filter(Boolean)
           if (seg.length === 1) applyKey(seg[0], data, isPatch)
