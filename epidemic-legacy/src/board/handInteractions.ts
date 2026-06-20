@@ -31,9 +31,10 @@ export interface DeckDrawCtx {
   handCards: HandCards;
   currentPlayerKey: string;
   onChooseRoles: ((playerCount: number) => void) | undefined; // truthy ⇒ deal phase
-  maxDealTargetIdx: number;
-  dealRequiredCards: number;
-  dealCounts: number[];
+  /** Player slot indices (0=p1..3=p4) eligible to receive the next dealt card. */
+  allowedDealIndices: number[];
+  /** True once every active player has their required hand of dealt cards. */
+  dealComplete: boolean;
   setPlayerDrag: (d: { cityId: string; x: number; y: number } | null) => void;
   setPlayerDeck: React.Dispatch<React.SetStateAction<string[]>>;
   setPlayerDiscard: React.Dispatch<React.SetStateAction<string[]>>;
@@ -44,8 +45,12 @@ export interface DeckDrawCtx {
   onFlip?: (cityId: string) => void;
   /** Optional: called when a face-up card is tapped (flip back to back); responsible for delaying state removal */
   onUnflip?: (cityId: string) => void;
-  /** Called when an epidemic card is drawn from the player deck */
-  onEpidemic?: () => void;
+  /** Append a line to the action log */
+  log?: (msg: string) => void;
+  /** Resolve a card id to a human-readable label ("Atlanta", "EPIDEMIC", "Forecast") */
+  cardLabel?: (id: string) => string;
+  /** Resolve a player key ("p1") to a human-readable label ("Medic") */
+  playerLabel?: (key: string) => string;
 }
 
 /**
@@ -78,8 +83,9 @@ export function makePlayerDeckDraw(ctx: DeckDrawCtx, cityId: string, faceUp: boo
 
       if (!moved) {
         ctx.setPlayerDrag(null);
-        // tap = flip; in draw phase block once both draws are committed
+        // tap = flip; in draw phase block once both draws are committed; in deal phase block once dealing is done
         if (inDrawPhase && ctx.turnState.drawCount >= 2) return;
+        if (ctx.onChooseRoles && ctx.dealComplete) return;
         if (!faceUp) {
           ctx.onFlip?.(cityId);
           ctx.setPlayerFlipped(prev => { const n = new Set(prev); n.add(cityId); return n; });
@@ -105,6 +111,8 @@ export function makePlayerDeckDraw(ctx: DeckDrawCtx, cityId: string, faceUp: boo
         const newCount = ctx.turnState.drawCount + 1;
         const hand = (ctx.handCards as Record<string,string[]>)[ctx.currentPlayerKey] ?? [];
         const handAfter = hand.length + (!isEpidemic ? 1 : 0);
+        const who = ctx.playerLabel?.(ctx.currentPlayerKey) ?? ctx.currentPlayerKey;
+        ctx.log?.(`${who}: card draw ${newCount}/2 (${handAfter} in hand)`);
         if (newCount >= 2) {
           // Both cards drawn — discard if over 7, else infect
           const phase: TurnPhase = handAfter > 7 ? "discard" : "infect";
@@ -122,29 +130,44 @@ export function makePlayerDeckDraw(ctx: DeckDrawCtx, cityId: string, faceUp: boo
         ctx.setPlayerDrag(null);
         ctx.setPlayerDeck(deck.slice(0, -1)); ctx.setPlayerDiscard([...disc, cityId]);
         ctx.setPlayerFlipped(prev => { const n = new Set(prev); n.delete(cityId); return n; });
-        if (inDrawPhase && isEpidemic) { ctx.onEpidemic?.(); completeOneDraw(); }
+        if (inDrawPhase && isEpidemic) {
+          // NOTE: triggerEpidemic() already ran once when the card was flipped face-up
+          // (see Board.tsx onFlip). Calling ctx.onEpidemic?.() here too would re-run it
+          // and reset epidemicState back to the 'infect' step, wiping out Increase/Infect/
+          // Intensify progress the player already made — this is what caused the game to
+          // keep demanding extra draws after an epidemic was resolved.
+          const who = ctx.playerLabel?.(ctx.currentPlayerKey) ?? ctx.currentPlayerKey;
+          ctx.log?.(`${who}: discarded EPIDEMIC card (epidemic resolution already in progress from the flip)`);
+          completeOneDraw();
+        } else if (!inDrawPhase) {
+          ctx.log?.(`Player deck: ${ctx.cardLabel?.(cityId) ?? cityId} discarded`);
+        }
       } else if (droppedHand && faceUp) {
         // Draw phase: epidemic must go to discard — only normal cards allowed to hand
         if (inDrawPhase && isEpidemic) { ctx.setPlayerDrag(null); return; }
         ctx.setPlayerDrag(null);
         if (ctx.onChooseRoles) {
           const playerIdx = ['p1','p2','p3','p4'].indexOf(droppedHand);
-          if (playerIdx > ctx.maxDealTargetIdx) return;
-          if ((ctx.dealCounts[playerIdx] ?? 0) >= ctx.dealRequiredCards) return;
+          if (!ctx.allowedDealIndices.includes(playerIdx)) return;
         }
         const player = inDrawPhase ? ctx.currentPlayerKey : droppedHand;
         ctx.setPlayerDeck(deck.slice(0, -1));
         ctx.setPlayerFlipped(prev => { const n = new Set(prev); n.delete(cityId); return n; });
         const dest = (ctx.handCards as Record<string,string[]>)[player] ?? [];
         ctx.saveHandCards({ ...ctx.handCards, [player]: [...dest, cityId] });
+        if (inDrawPhase) {
+          const who = ctx.playerLabel?.(player) ?? player;
+          ctx.log?.(`${who}: drew ${ctx.cardLabel?.(cityId) ?? cityId}`);
+        } else {
+          ctx.log?.(`${ctx.playerLabel?.(player) ?? player}: dealt ${ctx.cardLabel?.(cityId) ?? cityId}`);
+        }
         completeOneDraw();
       } else if (droppedHand && !faceUp && !inDrawPhase) {
         // Deal phase only: face-down drag straight to hand
         ctx.setPlayerDrag(null);
         if (ctx.onChooseRoles) {
           const playerIdx = ['p1','p2','p3','p4'].indexOf(droppedHand);
-          if (playerIdx > ctx.maxDealTargetIdx) return;
-          if ((ctx.dealCounts[playerIdx] ?? 0) >= ctx.dealRequiredCards) return;
+          if (!ctx.allowedDealIndices.includes(playerIdx)) return;
         }
         ctx.setPlayerDeck(deck.slice(0, -1));
         ctx.setPlayerFlipped(prev => { const n = new Set(prev); n.delete(cityId); return n; });
@@ -175,7 +198,12 @@ export interface HandCardCtx {
   eventMode: string | null;
   pendingEventCard: { player: string; idx: number; cardId: string } | null;
   playerCities: string[];
+  panicLevels: Record<string, number>;
+  pendingDriveDiscard: { pawnKey: string; pi: number; targetId: string; color: string; required: number; discarded: number } | null;
+  setPendingDriveDiscard: (d: { pawnKey: string; pi: number; targetId: string; color: string; required: number; discarded: number } | null) => void;
   onFundCardDiscard?: (cardId: string, player: string, idx: number) => void;
+  /** Called during the hand-limit discard phase when a fund card is dragged to discard — lets the UI ask "use ability or plain discard?" */
+  onFundDiscardPrompt?: (cardId: string, player: string, idx: number, x: number, y: number) => void;
   handStackOffset: (area: HandArea, count: number) => number;
   snapPawnToCity: (playerKey: string, cityId: string) => void;
   savePlayerCities: (next: string[]) => void;
@@ -191,6 +219,9 @@ export interface HandCardCtx {
   setPendingDiscardMenu: (m: { cityId: string; player: string; idx: number; x: number; y: number } | null) => void;
   canPlayFund?: (cardId: string) => boolean;
   onFlexibleAidComplete?: () => void;
+  log?: (msg: string) => void;
+  cardLabel?: (id: string) => string;
+  playerLabel?: (key: string) => string;
 }
 
 /**
@@ -224,7 +255,10 @@ export function makeHandCardPointerDown(
           const isMatchingTake = cityId === ctx.currentPlayerCityId;
           // Allow dragging any city card to the discard during flexible-aid mode (any phase)
           const isFlexibleAidDrag = ctx.eventMode === 'flexible-aid';
-          if (!isFlexibleAidDrag && (ctx.turnState.phase !== "actions" || (!isResearcher && !isMatchingTake))) return;
+          // Dispatcher moved this player's pawn into a Fallen city — allow them to drag
+          // their own cards to satisfy the forced discard requirement
+          const isPendingDriveOwner = !!ctx.pendingDriveDiscard && ctx.pendingDriveDiscard.pawnKey === player;
+          if (!isFlexibleAidDrag && !isPendingDriveOwner && (ctx.turnState.phase !== "actions" || (!isResearcher && !isMatchingTake))) return;
         }
       }
     }
@@ -271,6 +305,7 @@ export function makeHandCardPointerDown(
           ctx.setPlayerDiscard(prev => [...prev, cityId]);
           const next = [...ctx.flexibleAidSelected, cityId];
           ctx.setFlexibleAidSelected(() => next);
+          ctx.log?.(`${ctx.playerLabel?.(player) ?? player}: discarded ${ctx.cardLabel?.(cityId) ?? cityId} (Flexible Aid ${next.length}/3)`);
           if (next.length >= 3) ctx.onFlexibleAidComplete?.();
         }
         return;
@@ -287,10 +322,40 @@ export function makeHandCardPointerDown(
       // Fund event cards: drag to discard to activate — fund8 now goes to graveyard immediately like others
       if (nearDiscard && ctx.setup && isFundingHand && cityId !== 'epidemic' && fundPhaseOk) {
         if (ctx.canPlayFund && !ctx.canPlayFund(cityId)) return;
+        // During hand-limit discard phase: ask whether to use ability or just discard
+        if (isDiscardPhase && ctx.onFundDiscardPrompt) {
+          ctx.onFundDiscardPrompt(cityId, player, i, ev.clientX, ev.clientY);
+          return;
+        }
         ctx.saveHandCards({ ...ctx.handCards, [player]: current.filter((_, j) => j !== i) });
         ctx.setPlayerDiscard(prev => [...prev, cityId]);
+        ctx.log?.(`${ctx.playerLabel?.(player) ?? player}: played event card ${ctx.cardLabel?.(cityId) ?? cityId}`);
         ctx.onFundCardDiscard?.(cityId, player, i);
         return;
+      }
+
+      // Collapsing/Fallen Drive/Ferry in progress: dragging a matching-color card to
+      // discard counts toward the forced discard instead of triggering flight/build.
+      if (nearDiscard && ctx.setup && ctx.pendingDriveDiscard && ctx.pendingDriveDiscard.pawnKey === player) {
+        const pd = ctx.pendingDriveDiscard;
+        const cardColor = CITIES.find(c => c.id === cityId)?.color;
+        if (cardColor === pd.color) {
+          ctx.saveHandCards({ ...ctx.handCards, [player]: current.filter((_, j) => j !== i) });
+          ctx.setPlayerDiscard(prev => [...prev, cityId]);
+          const discarded = pd.discarded + 1;
+          if (discarded >= pd.required) {
+            const nextCities = [...ctx.playerCities]; nextCities[pd.pi] = pd.targetId;
+            ctx.savePlayerCities(nextCities);
+            ctx.snapPawnToCity(pd.pawnKey, pd.targetId);
+            ctx.saveTurnState(ctx.consumeAction(ctx.turnState));
+            ctx.log?.(`${ctx.playerLabel?.(player) ?? player}: Drive/Ferry to ${ctx.cardLabel?.(pd.targetId) ?? pd.targetId} complete`);
+            ctx.setPendingDriveDiscard(null);
+          } else {
+            ctx.setPendingDriveDiscard({ ...pd, discarded });
+            ctx.log?.(`${ctx.playerLabel?.(player) ?? player}: discarded ${ctx.cardLabel?.(cityId) ?? cityId} (${discarded}/${pd.required})`);
+          }
+          return;
+        }
       }
 
       if (nearDiscard && ctx.setup && ctx.turnState.phase === "actions") {
@@ -298,10 +363,20 @@ export function makeHandCardPointerDown(
         const isEpidemicCard = cityId === "epidemic";
         if (!isEpidemicCard) {
           if (cityId === ctx.currentPlayerCityId) {
+            // Rioting (panic 2-3): no Charter Flight out of here // bypass hook
+            if ((ctx.panicLevels[cityId] ?? 0) >= 2) {
+              ctx.log?.(`Charter Flight blocked — ${ctx.cardLabel?.(cityId) ?? cityId} is rioting`);
+              return;
+            }
             // Charter Flight or Build Research Station — show popup
             ctx.setPendingDiscardMenu({ cityId, player, idx: i, x: ev.clientX, y: ev.clientY });
             return;
           } else {
+            // Rioting (panic 2-3): no Direct Flight in or out // bypass hook
+            if ((ctx.panicLevels[cityId] ?? 0) >= 2 || (ctx.panicLevels[ctx.currentPlayerCityId] ?? 0) >= 2) {
+              ctx.log?.(`Direct Flight blocked — rioting city in or out`);
+              return;
+            }
             // Direct Flight — fly to card's city
             const destCity = CITIES.find(c => c.id === cityId);
             if (destCity) {
@@ -309,6 +384,7 @@ export function makeHandCardPointerDown(
               ctx.savePlayerCities(nextCities); ctx.snapPawnToCity(player, cityId);
               ctx.saveHandCards({ ...ctx.handCards, [player]: current.filter((_, j) => j !== i) });
               ctx.setPlayerDiscard(prev => [...prev, cityId]);
+              ctx.log?.(`${ctx.playerLabel?.(player) ?? player}: Direct Flight to ${destCity.name} (discarded ${ctx.cardLabel?.(cityId) ?? cityId})`);
               ctx.saveTurnState(ctx.consumeAction(ctx.turnState));
               return;
             }
@@ -317,6 +393,7 @@ export function makeHandCardPointerDown(
         // Epidemic card: plain discard
         ctx.saveHandCards({ ...ctx.handCards, [player]: current.filter((_, j) => j !== i) });
         ctx.setPlayerDiscard(prev => [...prev, cityId]);
+        ctx.log?.(`${ctx.playerLabel?.(player) ?? player}: discarded ${ctx.cardLabel?.(cityId) ?? cityId}`);
         return;
       }
 
@@ -324,6 +401,7 @@ export function makeHandCardPointerDown(
         // Hand-limit phase: plain discard for city/epidemic cards (fund cards handled above)
         ctx.saveHandCards({ ...ctx.handCards, [player]: current.filter((_, j) => j !== i) });
         ctx.setPlayerDiscard(prev => [...prev, cityId]);
+        ctx.log?.(`${ctx.playerLabel?.(player) ?? player}: discarded ${ctx.cardLabel?.(cityId) ?? cityId} (over hand limit)`);
         return;
       }
 
@@ -346,6 +424,7 @@ export function makeHandCardPointerDown(
           if (legal) {
             const myCards = (ctx.handCards as Record<string,string[]>)[ctx.currentPlayerKey] ?? [];
             ctx.saveHandCards({ ...ctx.handCards, [player]: current.filter((_, j) => j !== i), [ctx.currentPlayerKey]: [...myCards, cityId] });
+            ctx.log?.(`${ctx.playerLabel?.(ctx.currentPlayerKey) ?? ctx.currentPlayerKey}: took ${ctx.cardLabel?.(cityId) ?? cityId} from ${ctx.playerLabel?.(player) ?? player}`);
             ctx.saveTurnState(ctx.consumeAction(ctx.turnState));
           }
           return;
@@ -363,6 +442,7 @@ export function makeHandCardPointerDown(
             const receiverCards = (ctx.handCards as Record<string,string[]>)[otherPlayer] ?? [];
             const newReceiverCards = [...receiverCards, cityId];
             ctx.saveHandCards({ ...ctx.handCards, [player]: current.filter((_, j) => j !== i), [otherPlayer]: newReceiverCards });
+            ctx.log?.(`${ctx.playerLabel?.(player) ?? player}: shared ${ctx.cardLabel?.(cityId) ?? cityId} with ${ctx.playerLabel?.(otherPlayer) ?? otherPlayer}`);
             const afterAction = ctx.consumeAction(ctx.turnState);
             if (newReceiverCards.length > 7) {
               ctx.saveTurnState({ ...afterAction, phase: "discard-action", discardPlayer: otherPlayer });
