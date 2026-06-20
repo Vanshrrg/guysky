@@ -992,7 +992,14 @@ export default function App() {
     setMyRole(color)
     setRoles(next)
   }
-  // No auto-assign: players pick their own role via the buttons in the top bar.
+  // Player 2 auto-takes whichever role Player 1 didn't pick.
+  useEffect(() => {
+    if (isFirstPlayer || myRole) return          // only fires for Player 2 without a role
+    const takenColor = roles.blue ? 'blue' : roles.orange ? 'orange' : null
+    if (!takenColor) return                      // Player 1 hasn't chosen yet
+    const myColor = takenColor === 'blue' ? 'orange' : 'blue'
+    claimRole(myColor)
+  }, [isFirstPlayer, myRole, roles]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Host election: claim /host when it's empty or its holder has left. Ghosts
   // (closed tabs) never reach here, so /host is always a live client → Player-1
@@ -1313,19 +1320,19 @@ export default function App() {
             <span style={{ color: myRole === 'blue' ? '#4a9eff' : '#ff8c42' }}>
               ✈ {myRole === 'blue' ? 'Captain (Blue)' : 'Co-Captain (Orange)'}
             </span>
-          ) : (
+          ) : isFirstPlayer ? (
             <>
               <button
                 onClick={() => claimRole('blue')}
-                disabled={roleTaken('blue')}
-                style={{ padding: '3px 10px', borderRadius: 5, border: 'none', cursor: roleTaken('blue') ? 'not-allowed' : 'pointer', fontWeight: 'bold', background: roleTaken('blue') ? '#444' : '#1a5aaa', color: roleTaken('blue') ? '#666' : '#4a9eff', fontSize: 13 }}
+                style={{ padding: '3px 10px', borderRadius: 5, border: 'none', cursor: 'pointer', fontWeight: 'bold', background: '#1a5aaa', color: '#4a9eff', fontSize: 13 }}
               >Captain (Blue)</button>
               <button
                 onClick={() => claimRole('orange')}
-                disabled={roleTaken('orange')}
-                style={{ padding: '3px 10px', borderRadius: 5, border: 'none', cursor: roleTaken('orange') ? 'not-allowed' : 'pointer', fontWeight: 'bold', background: roleTaken('orange') ? '#444' : '#7a3a00', color: roleTaken('orange') ? '#666' : '#ff8c42', fontSize: 13 }}
+                style={{ padding: '3px 10px', borderRadius: 5, border: 'none', cursor: 'pointer', fontWeight: 'bold', background: '#7a3a00', color: '#ff8c42', fontSize: 13 }}
               >Co-Captain (Orange)</button>
             </>
+          ) : (
+            <span style={{ color: '#888' }}>Waiting for Player 1 to choose role…</span>
           )}
         </div>
 
@@ -1335,9 +1342,9 @@ export default function App() {
             ? <span style={{ color: gameState.activePlayer === 'blue' ? '#4a9eff' : '#ff8c42', fontWeight: 'bold' }}>
                 ✈ Turn: {gameState.activePlayer === 'blue' ? 'Captain (Blue)' : 'Co-Captain (Orange)'}
               </span>
-            : !(roleTaken('blue') && roleTaken('orange'))
-              ? <span style={{ color: '#e0a020' }}>● Waiting for both players…</span>
-              : <span style={{ color: '#27ae60' }}>● Both players connected</span>}
+            : peers.length >= 2
+              ? <span style={{ color: '#27ae60' }}>● Both players connected</span>
+              : <span style={{ color: '#e0a020' }}>● Waiting for 2nd player…</span>}
         </div>
       </div>
 
