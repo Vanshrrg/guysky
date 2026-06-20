@@ -1304,7 +1304,7 @@ export default function App() {
         <div style={{ fontSize: 16, fontWeight: 'bold', color: '#f1c40f', display: 'flex', alignItems: 'center', gap: 6 }}>
           <span style={{ width: 8, height: 8, borderRadius: '50%', background: connected ? '#27ae60' : '#c0392b', display: 'inline-block', flexShrink: 0 }} />
           SkyTeam
-          <span style={{ fontSize: 11, color: '#888', fontWeight: 'normal' }}>{peers.length <= 1 ? 'Player 1' : isFirstPlayer ? 'Player 1' : 'Player 2'}</span>
+          <span style={{ fontSize: 11, color: '#888', fontWeight: 'normal' }}>{isFirstPlayer ? 'Player 1' : 'Player 2'}</span>
           <span style={{ fontSize: 10, color: '#666', fontWeight: 'normal', marginLeft: 6 }}>[{BUILD}]</span>
         </div>
 
