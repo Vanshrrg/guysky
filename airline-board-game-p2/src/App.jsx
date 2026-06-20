@@ -1433,12 +1433,14 @@ export default function App() {
               style={{ display: 'block', userSelect: 'none' }}
             />
 
-            {/* Standalone black Traffic die — always visible */}
-            <div style={{ position: 'absolute', left: approachPos.x - SQUARE - 16, top: -120, width: SQUARE, height: SQUARE, zIndex: 10 }}>
-              <div style={{ transform: `scale(${SQUARE / 90})`, transformOrigin: 'top left' }}>
-                <Die color="black" value={blackDieValue} onRoll={(v) => { setBlackDieValue(v); dispatch({ type: 'ROLL_TRAFFIC', value: v }); fbWrite('/blackDie', { v, _by: clientIdRef.current }) }} rollable={isMyTurn} />
+            {/* Black Traffic die — only shown when current position has traffic (trafficPending > 0) */}
+            {gameState.trafficPending > 0 && (
+              <div style={{ position: 'absolute', left: approachPos.x - SQUARE - 16, top: -120, width: SQUARE, height: SQUARE, zIndex: 10 }}>
+                <div style={{ transform: `scale(${SQUARE / 90})`, transformOrigin: 'top left' }}>
+                  <Die color="black" value={blackDieValue} onRoll={(v) => { setBlackDieValue(v); dispatch({ type: 'ROLL_TRAFFIC', value: v }); fbWrite('/blackDie', { v, _by: clientIdRef.current }) }} rollable={isMyTurn} />
+                </div>
               </div>
-            </div>
+            )}
 
             {/* Approach strip panels — overlaid on the board */}
             {(() => {
