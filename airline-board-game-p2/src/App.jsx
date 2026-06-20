@@ -884,6 +884,8 @@ export default function App() {
         setTurnResult(null)
         setSelectedDie(null)
         setApproachPos(APPROACH_START)
+        setMyRole(null)
+        setRoles({})
       }
       // 'presence' is intentionally ignored — owned by useFirebaseSync polling.
     }
@@ -1006,14 +1008,6 @@ export default function App() {
     setMyRole(color)
     setRoles(next)
   }
-  // Player 2 auto-claims whichever colour Player 1 left open.
-  useEffect(() => {
-    if (isFirstPlayer || myRole) return
-    if (peers.length < 2) return
-    const other = roleTaken('blue') ? 'orange' : roleTaken('orange') ? 'blue' : null
-    if (other && !roleTaken(other)) claimRole(other)
-  }, [isFirstPlayer, myRole, roles, peers]) // eslint-disable-line react-hooks/exhaustive-deps
-
   // No auto-assign: players pick their own role via the buttons in the top bar.
 
   // Host election: claim /host when it's empty or its holder has left. Ghosts
@@ -1148,7 +1142,10 @@ export default function App() {
     fbWrite('/rolled', { ids: [], _by: cid }, 'PUT')
     fbWrite('/rerollUsed', { ids: [], _by: cid }, 'PUT')
     fbWrite('/rerollGranted', null, 'PUT')
+    fbWrite('/roles', {}, 'PUT')
     fbWrite('/resetAt', ts, 'PUT')
+    setMyRole(null)
+    setRoles({})
   }
 
   const handleEndTurn = () => {
