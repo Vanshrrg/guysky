@@ -127,8 +127,11 @@ export function gameReducer(state, action) {
     case 'SET_APPROACH_HEADER':
       return { ...state, approachHeader: action.value }
     case 'DECREMENT_PANEL_D': {
+      const rems = action.planeRemovals || {}
       const panels = state.approachPanels
-        .map(p => p.d != null ? { ...p, d: p.d - action.amount } : p)
+        .map((p, idx) => p.d != null
+          ? { ...p, d: p.d - action.amount, planes: Math.max(0, p.planes - (rems[idx] || 0)) }
+          : p)
         .filter(p => p.d == null || p.d >= 0)
       const kept = panels.length > 0 ? panels : [state.approachPanels[0]]
       return { ...state, approachPanels: kept }

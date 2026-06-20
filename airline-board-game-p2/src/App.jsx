@@ -242,37 +242,19 @@ const TRAYS = [
   { name: 'radio2', group: 'radio2', cascade: false, x: 616, y: 27, snapR: 50,
     acceptColor: 'orange', acceptValues: [1, 2, 3, 4, 5, 6],
     prereq: () => true,
-    onSnap: (dispatch, gs, val) => {
-      dispatch({ type: 'SET_RADIO2', value: val })
-      dispatch({ type: 'REMOVE_APPROACH_PLANE', distanceValue: val })
-    },
-    onUnsnap: (dispatch, gs, val) => {
-      dispatch({ type: 'SET_RADIO2', value: null })
-      dispatch({ type: 'ADD_APPROACH_PLANE', distanceValue: val })
-    } },
+    onSnap: (dispatch, gs, val) => { dispatch({ type: 'SET_RADIO2', value: val }) },
+    onUnsnap: (dispatch, gs, val) => { dispatch({ type: 'SET_RADIO2', value: null }) } },
   { name: 'radio3', group: 'radio3', cascade: false, x: 616, y: 141, snapR: 50,
     acceptColor: 'orange', acceptValues: [1, 2, 3, 4, 5, 6],
     prereq: () => true,
-    onSnap: (dispatch, gs, val) => {
-      dispatch({ type: 'SET_RADIO3', value: val })
-      dispatch({ type: 'REMOVE_APPROACH_PLANE', distanceValue: val })
-    },
-    onUnsnap: (dispatch, gs, val) => {
-      dispatch({ type: 'SET_RADIO3', value: null })
-      dispatch({ type: 'ADD_APPROACH_PLANE', distanceValue: val })
-    } },
+    onSnap: (dispatch, gs, val) => { dispatch({ type: 'SET_RADIO3', value: val }) },
+    onUnsnap: (dispatch, gs, val) => { dispatch({ type: 'SET_RADIO3', value: null }) } },
 
   { name: 'radio1', group: 'radio1', cascade: false, x: 22, y: 141, snapR: 50,
     acceptColor: 'blue', acceptValues: [1, 2, 3, 4, 5, 6],
     prereq: () => true,
-    onSnap: (dispatch, gs, val) => {
-      dispatch({ type: 'SET_RADIO1', value: val })
-      dispatch({ type: 'REMOVE_APPROACH_PLANE', distanceValue: val })
-    },
-    onUnsnap: (dispatch, gs, val) => {
-      dispatch({ type: 'SET_RADIO1', value: null })
-      dispatch({ type: 'ADD_APPROACH_PLANE', distanceValue: val })
-    } },
+    onSnap: (dispatch, gs, val) => { dispatch({ type: 'SET_RADIO1', value: val }) },
+    onUnsnap: (dispatch, gs, val) => { dispatch({ type: 'SET_RADIO1', value: null }) } },
 
   // ── Concentration track (3 slots, any die) — toggles coffee tokens in order ─
   // Order: upper (0) → bottom-left (1) → bottom-right (2)
@@ -1211,6 +1193,21 @@ export default function App() {
         dispatch({ type: 'SET_REROLL_TOKEN', value: true })
       }
 
+      // Compute radio-die plane removals: both clients' radio dice that were placed
+      // this turn. Keyed by panel index so DECREMENT_PANEL_D can apply them atomically,
+      // avoiding the race where handleEndTurn pushes stale planes before the other
+      // client's radio-die patch arrives.
+      const radioPendingRemovals = {}
+      for (const slot of ['radio1', 'radio2', 'radio3']) {
+        const dieId = trayDice[slot]
+        if (dieId && values[dieId] != null) {
+          const panelIdx = gs.approachDistance - values[dieId]
+          if (panelIdx >= 0 && panelIdx < gs.approachPanels.length) {
+            radioPendingRemovals[panelIdx] = (radioPendingRemovals[panelIdx] || 0) + 1
+          }
+        }
+      }
+
       // Advance approach strip + panel distance checks
       if (approachDistance !== null && gs.approachDistance > 0) {
         dispatch({ type: 'ADVANCE_APPROACH', value: approachDistance })
@@ -1223,8 +1220,10 @@ export default function App() {
         } else {
           setApproachPos(p => ({ ...p, y: p.y + approachDistance * (BLANK_H + PANEL_GAP) }))
           if (gs.gameReady === 1) {
+            // Use effective planes (after radio removals) for collision check
             const planeCollision = gs.approachPanels.some(
-              p => p.d != null && p.d - approachDistance < 0 && p.planes > 0
+              (p, idx) => p.d != null && p.d - approachDistance < 0 &&
+                Math.max(0, p.planes - (radioPendingRemovals[idx] || 0)) > 0
             )
             // Axis (Turns) constraint: every space flown through (d in 0..advance-1)
             // must permit the airplane's axis position; an X at that slot = loss.
@@ -1236,7 +1235,7 @@ export default function App() {
               dispatch({ type: 'SET_GAME_OVER', value: true })
               roundLost = true
             } else {
-              dispatch({ type: 'DECREMENT_PANEL_D', amount: approachDistance })
+              dispatch({ type: 'DECREMENT_PANEL_D', amount: approachDistance, planeRemovals: radioPendingRemovals })
             }
           }
         }
@@ -1449,7 +1448,20 @@ export default function App() {
                   {/* + and − buttons outside left edge at the panel junction */}
                   {(() => {
                     const maxDist = gameState.approachPanels.length
-                    const destPlanes = gameState.approachPanels[0].planes
+                    // Derive visual plane removals from placed radio dice so both clients
+                    // see the effect immediately without waiting for end-turn Firebase sync.
+                    const radioPendingRemovals = {}
+                    for (const slot of ['radio1', 'radio2', 'radio3']) {
+                      const dieId = trayDice[slot]
+                      if (dieId && values[dieId] != null) {
+                        const panelIdx = gameState.approachDistance - values[dieId]
+                        if (panelIdx >= 0 && panelIdx < gameState.approachPanels.length) {
+                          radioPendingRemovals[panelIdx] = (radioPendingRemovals[panelIdx] || 0) + 1
+                        }
+                      }
+                    }
+                    const effectivePlanes = (idx, raw) => Math.max(0, raw - (radioPendingRemovals[idx] || 0))
+                    const destPlanes = effectivePlanes(0, gameState.approachPanels[0].planes)
                     const planeBtnStyle = { width: 18, height: 16, fontSize: 11, lineHeight: 1, padding: 0, cursor: 'pointer', border: '1px solid #4a6a8a', background: '#2a4a6a', color: '#fff', fontWeight: 'bold' }
                     const slotSymbol = (count, extraTop = 0) => (
                       <div style={{ position: 'absolute', top: 3 + extraTop, bottom: 0, left: 9, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', justifyContent: 'center', gap: 3, pointerEvents: 'none' }}>
@@ -1522,7 +1534,7 @@ export default function App() {
                         {gameState.approachPanels.slice(1).map((panel, i) => {
                           const dist = maxDist - 1 - i
                           const panelIndex = i + 1
-                          const planes = panel.planes
+                          const planes = effectivePlanes(panelIndex, panel.planes)
                           const btnBase = { width: 22, height: 18, fontSize: 13, lineHeight: 1, padding: 0, cursor: 'pointer', border: '1px solid #6a7fa0', background: '#5b7fa6', color: '#fff', fontWeight: 'bold', position: 'absolute', right: '100%' }
                           return (
                             <div key={i} style={{ position: 'relative' }}>
