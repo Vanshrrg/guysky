@@ -47,7 +47,7 @@ const FB_NODE = '/game-mp'
 // Bump on every deploy so you can confirm at a glance which build a tab is
 // running (shown in the top bar). If two tabs show different markers, one is
 // serving a stale cached bundle and needs a hard refresh.
-const BUILD = 'mp-b4'
+const BUILD = 'mp-b5'
 const BOARD_W = 706
 const BOARD_H = Math.round(BOARD_W * 1078 / 768) // ≈ 991
 // A die slot measures 72px in the native 768-wide artwork (see
@@ -1014,20 +1014,7 @@ export default function App() {
     if (other && !roleTaken(other)) claimRole(other)
   }, [isFirstPlayer, myRole, roles, peers]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-assign roles by player order: host = Captain (Blue), the other live peer
-  // = Co-Captain (Orange). Removes the manual role-pick step so Player 1 can start
-  // as soon as both are connected. Only re-assigns if a role's holder isn't live.
-  useEffect(() => {
-    if (!isFirstPlayer) return
-    if (roleTaken('blue') && roleTaken('orange')) return
-    const cid = clientIdRef.current
-    const peer = peers.find(p => p.clientId !== cid)
-    if (!peer) return
-    const next = { blue: cid, orange: peer.clientId }
-    fbWrite('/roles', next)
-    setRoles(next)
-    setMyRole('blue')
-  }, [isFirstPlayer, peers, roles]) // eslint-disable-line react-hooks/exhaustive-deps
+  // No auto-assign: players pick their own role via the buttons in the top bar.
 
   // Host election: claim /host when it's empty or its holder has left. Ghosts
   // (closed tabs) never reach here, so /host is always a live client → Player-1
@@ -1238,7 +1225,7 @@ export default function App() {
           setApproachPos(p => ({ ...p, y: p.y + approachDistance * (BLANK_H + PANEL_GAP) }))
           if (gs.gameReady === 1) {
             const planeCollision = gs.approachPanels.some(
-              p => p.d != null && p.d - approachDistance <= 0 && p.planes > 0
+              p => p.d != null && p.d - approachDistance < 0 && p.planes > 0
             )
             // Axis (Turns) constraint: every space flown through (d in 0..advance-1)
             // must permit the airplane's axis position; an X at that slot = loss.
@@ -1323,13 +1310,24 @@ export default function App() {
         </div>
 
         {/* Role pick (before you have a colour) or your role label */}
-        <div style={{ fontSize: 13, fontWeight: 'bold' }}>
+        <div style={{ fontSize: 13, fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: 6 }}>
           {myRole !== null ? (
             <span style={{ color: myRole === 'blue' ? '#4a9eff' : '#ff8c42' }}>
               ✈ {myRole === 'blue' ? 'Captain (Blue)' : 'Co-Captain (Orange)'}
             </span>
           ) : (
-            <span style={{ color: '#888' }}>Assigning roles… {peers.length < 2 ? '(waiting for 2nd player)' : ''}</span>
+            <>
+              <button
+                onClick={() => claimRole('blue')}
+                disabled={roleTaken('blue')}
+                style={{ padding: '3px 10px', borderRadius: 5, border: 'none', cursor: roleTaken('blue') ? 'not-allowed' : 'pointer', fontWeight: 'bold', background: roleTaken('blue') ? '#444' : '#1a5aaa', color: roleTaken('blue') ? '#666' : '#4a9eff', fontSize: 13 }}
+              >Captain (Blue)</button>
+              <button
+                onClick={() => claimRole('orange')}
+                disabled={roleTaken('orange')}
+                style={{ padding: '3px 10px', borderRadius: 5, border: 'none', cursor: roleTaken('orange') ? 'not-allowed' : 'pointer', fontWeight: 'bold', background: roleTaken('orange') ? '#444' : '#7a3a00', color: roleTaken('orange') ? '#666' : '#ff8c42', fontSize: 13 }}
+              >Co-Captain (Orange)</button>
+            </>
           )}
         </div>
 
@@ -1436,20 +1434,12 @@ export default function App() {
               style={{ display: 'block', userSelect: 'none' }}
             />
 
-            {/* Standalone black Traffic die — only shown when the Current Position has
-                pending Traffic rolls. Each roll places an airplane token and counts
-                down trafficPending; colored dice stay locked until it reaches 0. */}
-            {trafficLocked && (
-              <div style={{ position: 'absolute', left: approachPos.x - SQUARE - 16, top: -120, width: SQUARE, height: SQUARE, zIndex: 10 }}>
-                <div style={{ transform: `scale(${SQUARE / 90})`, transformOrigin: 'top left' }}>
-                  <Die color="black" value={blackDieValue} onRoll={(v) => { setBlackDieValue(v); dispatch({ type: 'ROLL_TRAFFIC', value: v }); fbWrite('/blackDie', { v, _by: clientIdRef.current }) }} rollable={isMyTurn} />
-                </div>
-                {/* remaining-rolls badge */}
-                <div style={{ position: 'absolute', top: -14, left: '50%', transform: 'translateX(-50%)', background: '#b8341f', color: '#fff', fontSize: 11, fontWeight: 'bold', padding: '1px 6px', borderRadius: 8, whiteSpace: 'nowrap', boxShadow: '0 1px 3px rgba(0,0,0,0.4)' }}>
-                  roll ×{gameState.trafficPending}
-                </div>
+            {/* Standalone black Traffic die — always visible */}
+            <div style={{ position: 'absolute', left: approachPos.x - SQUARE - 16, top: -120, width: SQUARE, height: SQUARE, zIndex: 10 }}>
+              <div style={{ transform: `scale(${SQUARE / 90})`, transformOrigin: 'top left' }}>
+                <Die color="black" value={blackDieValue} onRoll={(v) => { setBlackDieValue(v); dispatch({ type: 'ROLL_TRAFFIC', value: v }); fbWrite('/blackDie', { v, _by: clientIdRef.current }) }} rollable={isMyTurn} />
               </div>
-            )}
+            </div>
 
             {/* Approach strip panels — overlaid on the board */}
             {(() => {
