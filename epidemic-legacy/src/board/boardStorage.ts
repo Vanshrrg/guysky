@@ -85,7 +85,43 @@ export const LS_PLAYER_DECK = "epidemic.player-deck.v1";
 export const LS_EPIDEMIC_COUNT = "epidemic.epidemic-count.v1";
 
 // ─── Campaign-persistent keys ─────────────────────────────────────────────────
-export const LS_CHARACTER_NAMES = "epidemic.character-names.v1";
+export const LS_CHARACTER_NAMES    = "epidemic.character-names.v1";
+export const LS_CHARACTER_UPGRADES = "epidemic.character-upgrades.v1";
+
+// ─── Scar system (campaign-persistent — NOT in GAME_LS_KEYS) ────────────────
+export const LS_SCARS      = "epidemic.scars.v1";
+export const LS_LOST_ROLES = "epidemic.lost-roles.v1";
+export const LS_SCAR_POOL  = "epidemic.scar-pool.v1";
+
+export type ScarRegion = "north-america" | "south-america" | "europe" | "africa" | "asia" | "pacific-rim";
+export interface ScarEntry { id: string; region: ScarRegion }
+export type ScarState = Record<string, { scars: ScarEntry[]; civilian: boolean }>;
+
+export const SCAR_POOL_MAX: Record<string, number> = {
+  scar1: 2, scar2: 2, scar3: 2,
+  scar4: 1, scar5: 1, scar6: 1, scar7: 1, scar8: 1, scar9: 1,
+};
+
+export function loadScars(): ScarState {
+  try { const r = _sa.get(LS_SCARS); if (r) return JSON.parse(r); } catch { /**/ }
+  return {};
+}
+export function loadLostRoles(): string[] {
+  try { const r = _sa.get(LS_LOST_ROLES); if (r) return JSON.parse(r); } catch { /**/ }
+  return [];
+}
+export function loadScarPool(): Record<string, number> {
+  try { const r = _sa.get(LS_SCAR_POOL); if (r) return JSON.parse(r); } catch { /**/ }
+  return {};
+}
+
+export type CharUpgradeSlot = "upgrade1" | "upgrade2" | "upgrade3" | "upgrade4";
+// { roleId: { "upgrade1": 3, "upgrade2": 1 } } — value = sticker index 1–6
+export type CharacterUpgradesData = Record<string, Partial<Record<CharUpgradeSlot, number>>>;
+export function loadCharacterUpgrades(): CharacterUpgradesData {
+  try { const r = _sa.get(LS_CHARACTER_UPGRADES); if (r) return JSON.parse(r); } catch { /**/ }
+  return {};
+}
 
 // ─── Character card calibration (global, not per-campaign) ───────────────────
 export const LS_CHARACTER_CAL = "epidemic.character-cal.v1";
@@ -102,6 +138,8 @@ export interface CharacterCalData {
   relationship2: CharCalItem;
   upgrade1:      CharCalItem;
   upgrade2:      CharCalItem;
+  upgrade3:      CharCalItem; // Generalist only
+  upgrade4:      CharCalItem; // Generalist only
   scar1:         CharCalItem;
   scar2:         CharCalItem;
 }
@@ -111,6 +149,8 @@ export const DEF_CHARACTER_CAL: CharacterCalData = {
   relationship2: { top: 25, left: 55, w: 40, h:  9 },
   upgrade1:      { top: 44, left: 55, w: 40, h:  9 },
   upgrade2:      { top: 56, left: 55, w: 40, h:  9 },
+  upgrade3:      { top: 56, left: 55, w: 40, h:  9 },
+  upgrade4:      { top: 68, left: 55, w: 40, h:  9 },
   scar1:         { top: 68, left: 55, w: 40, h:  9 },
   scar2:         { top: 80, left: 55, w: 40, h:  9 },
 };

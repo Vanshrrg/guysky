@@ -104,6 +104,39 @@ export const WRAP_PAIR_KEYS = new Set(
   WRAP_ROUTES.map((w) => [w.a, w.b].sort().join("|"))
 );
 
+export type ScarRegion = "north-america" | "south-america" | "europe" | "africa" | "asia" | "pacific-rim";
+
+export const CITY_REGION: Record<string, ScarRegion> = {
+  // North America (blue)
+  "san-francisco": "north-america", "chicago": "north-america", "montreal": "north-america",
+  "new-york": "north-america", "washington": "north-america", "atlanta": "north-america",
+  // Europe (blue)
+  "london": "europe", "madrid": "europe", "paris": "europe",
+  "essen": "europe", "milan": "europe", "st-petersburg": "europe",
+  // South America (yellow)
+  "los-angeles": "north-america", "mexico-city": "north-america", "miami": "north-america",
+  "bogota": "south-america", "lima": "south-america", "santiago": "south-america",
+  "buenos-aires": "south-america", "sao-paulo": "south-america",
+  // Africa (yellow)
+  "lagos": "africa", "kinshasa": "africa", "khartoum": "africa", "johannesburg": "africa",
+  // Middle East / Asia (black)
+  "algiers": "africa", "cairo": "africa",
+  "istanbul": "europe", "moscow": "europe",
+  "baghdad": "asia", "riyadh": "asia", "tehran": "asia",
+  "karachi": "asia", "delhi": "asia", "mumbai": "asia",
+  "chennai": "asia", "kolkata": "asia",
+  // Asia / Pacific Rim (red)
+  "beijing": "asia", "seoul": "asia", "tokyo": "pacific-rim",
+  "osaka": "pacific-rim", "shanghai": "asia", "taipei": "pacific-rim",
+  "hong-kong": "asia", "bangkok": "asia",
+  "ho-chi-minh-city": "pacific-rim", "manila": "pacific-rim",
+  "jakarta": "pacific-rim", "sydney": "pacific-rim",
+};
+
+export function regionOf(cityId: string): ScarRegion {
+  return CITY_REGION[cityId] ?? "north-america";
+}
+
 /** Fill color per disease colour for dots/labels. */
 export const COLOR_HEX: Record<Color, string> = {
   blue:   "#000569",

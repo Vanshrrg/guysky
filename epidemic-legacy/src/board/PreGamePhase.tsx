@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect } from "react";
-import { LS_CHARACTER_NAMES, loadCharacterNames, loadCharacterCal } from "./boardStorage";
+import { LS_CHARACTER_NAMES, loadCharacterNames, loadCharacterCal, loadLostRoles } from "./boardStorage";
 import medicSrc from "../../object/medic.png";
 import scientistSrc from "../../object/scientist.png";
 import researcherSrc from "../../object/researcher.png";
@@ -140,6 +140,7 @@ export function PreGamePhase({ playerCount, onBegin, onViewBoard, fundingCards, 
   const [placements, setPlacements] = useState<Array<{ roleId: string; color: string }>>([]);
   const [dragging, setDragging] = useState<{ color: string; x: number; y: number } | null>(null);
   const roleRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const lostRoles = loadLostRoles();
   // Character names — only for January; persisted across restarts
   const [characterNames, setCharacterNames] = useState<Record<string, string>>(loadCharacterNames);
   // Snapshot of names that existed before this session — used to decide read-only.
@@ -182,18 +183,29 @@ export function PreGamePhase({ playerCount, onBegin, onViewBoard, fundingCards, 
   }
 
   function renderRole(role: typeof ALL_ROLES[0]) {
+    const isLost = lostRoles.includes(role.id);
     const tokenColor = slotMap[role.id] ?? null;
     const placed = placements.some(p => p.roleId === role.id);
     const existingName = characterNames[role.id] ?? '';
     const isReadOnly = (priorNames[role.id] ?? '').length > 0; // locked only if named in a prior campaign month
 
     return (
-      <div key={role.id} ref={el => { roleRefs.current[role.id] = el; }}
-        style={{ flex: 1, position: "relative", display: "flex", flexDirection: "column", gap: 4 }}>
+      <div key={role.id} ref={isLost ? undefined : (el => { roleRefs.current[role.id] = el; })}
+        style={{ flex: 1, position: "relative", display: "flex", flexDirection: "column", gap: 4, opacity: isLost ? 0.45 : 1 }}>
         <div style={{ position: "relative", containerType: "inline-size" }}>
           <img src={role.src} alt={role.name} draggable={false}
             style={{ width: "100%", height: "auto", display: "block", userSelect: "none", pointerEvents: "none" }} />
-          {tokenColor && (
+          {isLost && (
+            <div style={{
+              position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center",
+              background: "rgba(10,0,0,0.55)", borderRadius: 4,
+            }}>
+              <span style={{ color: "#f44", fontWeight: 900, fontSize: "3cqw", fontFamily: "system-ui", letterSpacing: "0.05em", userSelect: "none" }}>
+                LOST
+              </span>
+            </div>
+          )}
+          {tokenColor && !isLost && (
             <div onPointerDown={e => startDrag(tokenColor, role.id, e)}
               style={{ position: "absolute", top: 8, right: 8, cursor: "grab", touchAction: "none", userSelect: "none", zIndex: 10 }}>
               <PawnSvg color={tokenColor} size={36} />

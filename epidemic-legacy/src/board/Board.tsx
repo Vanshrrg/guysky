@@ -74,6 +74,10 @@ import {
   loadMutations,
   loadCharacterNames,
   loadCharacterCal,
+  loadCharacterUpgrades,
+  LS_CHARACTER_UPGRADES,
+  type CharacterUpgradesData,
+  type CharUpgradeSlot,
   LS_CITY_STICKER_OVERRIDES, loadCityStickerOverrides,
   LS_CARD_STICKERS, loadCardStickers,
   type StickerPos,
@@ -82,6 +86,7 @@ import {
 import { MARKERS, CURE_INDICES, COLOR_TO_CURE_IDX, loadMarker, loadCured, loadEradicated } from "./boardMarkers";
 import { GameOverOverlay } from "./GameOverOverlay";
 import { UpgradePopup, ResearchStickerPanel, type UpgradeType } from "./UpgradePopup";
+import { CharacterUpgradePanel, UPGRADE_SRCS } from "./CharacterUpgradePanel";
 import { CodaPopup } from "./CodaPopup";
 import { DiseaseNamePopup } from "./DiseaseNamePopup";
 import { InfectionDiscardPopup } from "./InfectionDiscardPopup";
@@ -89,6 +94,14 @@ import { ForecastPopup } from "./ForecastPopup";
 import { ContextMenu, MenuItem } from "./ContextMenu";
 import { TurnPanel } from "./TurnPanel";
 import { makePlayerDeckDraw, makeHandCardPointerDown } from "./handInteractions";
+import { ScarPickPopup, TearOverlay, SCAR_SRCS } from "./ScarPopup";
+import civilianSrc from "../../object/Jan/civilian.jpg";
+import { regionOf } from "./cities";
+import {
+  LS_SCARS, LS_LOST_ROLES, LS_SCAR_POOL,
+  loadScars, loadLostRoles, loadScarPool,
+  type ScarState, type ScarEntry, type ScarRegion,
+} from "./boardStorage";
 
 const COLOR_TO_CUBE: Record<string, string> = {
   blue: "#0A00A1", yellow: "#FFFA73", black: "#1a1a1a", red: "#cc1111",
@@ -279,6 +292,20 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   });
   const [outbreakQueue, setOutbreakQueue] = useState<{ cityId: string; color: DiseaseColor }[]>([]);
   const [outbreakAlready, setOutbreakAlready] = useState<Set<string>>(new Set());
+
+  // ── Scar system ────────────────────────────────────────────────────────────
+  const [scars, setScars_] = useState<ScarState>(() => loadScars());
+  const saveScars = (next: ScarState) => { setScars_(next); getStorage().set(LS_SCARS, JSON.stringify(next)); };
+  const [scarPool, setScarPool_] = useState<Record<string, number>>(() => loadScarPool());
+  const saveScarPool = (next: Record<string, number>) => { setScarPool_(next); getStorage().set(LS_SCAR_POOL, JSON.stringify(next)); };
+  const [lostRoles, setLostRoles_] = useState<string[]>(() => loadLostRoles());
+  const saveLostRoles = (next: string[]) => { setLostRoles_(next); getStorage().set(LS_LOST_ROLES, JSON.stringify(next)); };
+  // Queue of { pk, region } waiting for scar resolution
+  const [scarQueue, setScarQueue] = useState<{ pk: string; region: ScarRegion }[]>([]);
+  const [tearPlayer, setTearPlayer] = useState<string | null>(null);
+  const [scarRespawn, setScarRespawn] = useState<string | null>(null);
+  // Forced discard counters (scar effects 4,5,8,9)
+  const [forcedDiscard, setForcedDiscard] = useState<Record<string, number>>({});
   const [epidemicState, setEpidemicState] = useState<{ phase: 'infect' | 'intensify'; infectedCityId: string | null; infectedColor: DiseaseColor | null } | null>(null);
   // 9 → 0: first 3 draws place 3 cubes (red), next 3 place 2 (orange), last 3 place 1 (yellow)
   // Every campaign month runs the initial infection phase; only the raw "board" sandbox skips it.
@@ -334,6 +361,11 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   const [showRSStickerPanel, setShowRSStickerPanel] = useState(false);
   const [pickingMutation, setPickingMutation] = useState(false); // choosing which eradicated disease to mutate
   const [placingUnfund, setPlacingUnfund] = useState(false);
+  const [pickingCharUpgrade, setPickingCharUpgrade] = useState(false);
+  const [charUpgrades, setCharUpgrades] = useState<CharacterUpgradesData>(() => loadCharacterUpgrades());
+  const [forecasterPeekCards, setForecasterPeekCards] = useState<string[] | null>(null);
+  const [localConnectionsUsed, setLocalConnectionsUsed] = useState(false);
+  const [flexiblePickMode, setFlexiblePickMode] = useState(false);
   const [selectedUnfund, setSelectedUnfund] = useState<number | null>(null); // sticker index 1-3
   const [pendingUnfundMenu, setPendingUnfundMenu] = useState<{ cityId: string; player: string; idx: number; x: number; y: number } | null>(null);
   const [forecastReadOnly, setForecastReadOnly] = useState(false);
@@ -551,7 +583,12 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   const currentPlayerKey: string = setup ? ((['p1','p2','p3','p4'] as const).slice(0, setup.playerOrder.length)[turnState.currentPlayerIndex] ?? 'p1') : 'p1';
   const currentPlayerCityId: string = playerCities[turnState.currentPlayerIndex] ?? "atlanta";
   const roleId = setup?.playerOrder[turnState.currentPlayerIndex]?.roleId ?? null;
-  const cureThreshold = roleId === 'scientist' ? 4 : 5;
+  // Returns true if the current player's character has a given upgrade sticker (1–6)
+  const currentRoleUpgrades = roleId ? (charUpgrades[roleId] ?? {}) : {};
+  const hasCharUpgrade = (n: number) => Object.values(currentRoleUpgrades).includes(n);
+  const _scarRec = scars[currentPlayerKey] ?? { scars: [], civilian: false };
+  const _overcautious = _scarRec.scars.filter(s => s.id === 'scar3' || s.id === 'scar6').length;
+  const cureThreshold = (roleId === 'scientist' ? 4 : 5) + _overcautious;
   // Mutation helpers: how many cards a given color needs (tier 3 "Easier Agent"
   // shaves one), and how many diseases currently hold at least a given tier.
   const cureThresholdFor = (col: DiseaseColor) => cureThreshold - ((mutationLevels[col] ?? 0) >= 3 ? 1 : 0);
@@ -668,16 +705,90 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
     }
     return bestId;
   };
+  // ── Scar helpers ──────────────────────────────────────────────────────────
+  const getScarRecord = (pk: string) => scars[pk] ?? { scars: [], civilian: false };
+  const countScar = (pk: string, id: string) => getScarRecord(pk).scars.filter(s => s.id === id).length;
+  const playerHandLimit = (pk: string) => (hasCharUpgrade(4) ? 8 : 7) - countScar(pk, 'scar1');
+
+  const loseCharacter = (pk: string) => {
+    // Immediately kill the player — tear animation, then respawn
+    setTearPlayer(pk);
+  };
+
+  // Call whenever a player discards a card from hand (for forced-discard tracking)
+  const onCardDiscarded = (pk: string) => {
+    setForcedDiscard(prev => {
+      const cur = prev[pk] ?? 0;
+      if (cur <= 0) return prev;
+      const next = { ...prev, [pk]: cur - 1 };
+      return next;
+    });
+  };
+
+  const enqueueScar = (pk: string, region: ScarRegion) => {
+    setScarQueue(prev => [...prev, { pk, region }]);
+  };
+
+  const resolveScarFromQueue = () => {
+    setScarQueue(prev => prev.slice(1));
+  };
+
+  const finalizeTear = (pk: string) => {
+    if (!setup) return;
+    const pi = (['p1','p2','p3','p4'] as const).indexOf(pk as 'p1'|'p2'|'p3'|'p4');
+    const roleId = setup.playerOrder[pi]?.roleId;
+    const nextScars: ScarState = { ...scars, [pk]: { scars: [], civilian: true } };
+    saveScars(nextScars);
+    if (roleId && !lostRoles.includes(roleId)) saveLostRoles([...lostRoles, roleId]);
+    setTearPlayer(null);
+    if (researchStations.size === 0) {
+      // Auto-respawn in Atlanta
+      const nextCities = [...playerCities]; nextCities[pi] = "atlanta";
+      savePlayerCities(nextCities); snapPawnToCity(pk, "atlanta");
+      log(`${playerLabel(pk)}: no research stations — respawned in Atlanta`);
+    } else {
+      setScarRespawn(pk);
+      setHighlightCities([...researchStations]);
+    }
+  };
+
   const advanceTurn = () => {
     if (!setup) return;
     const nextIdx = (turnState.currentPlayerIndex + 1) % setup.playerOrder.length;
     const nextRoleId = setup.playerOrder[nextIdx]?.roleId ?? null;
     const baseActions = nextRoleId === 'generalist' ? 5 : 4;
-    saveTurnState({ currentPlayerIndex: nextIdx, actionsRemaining: baseActions + bonusActionsNextTurn, phase: "actions", pendingCharter: false, pendingShuttle: false, drawCount: 0, infectCount: 0 });
+
+    // OBSESSED (scar8): leaving player ends turn with even hand count → forced discard
+    const leavingPk = (['p1','p2','p3','p4'] as const)[turnState.currentPlayerIndex];
+    if (leavingPk) {
+      const leavingHand = (handCards as Record<string,string[]>)[leavingPk] ?? [];
+      if (countScar(leavingPk, 'scar8') > 0 && leavingHand.length > 0 && leavingHand.length % 2 === 0) {
+        setForcedDiscard(prev => ({ ...prev, [leavingPk]: (prev[leavingPk] ?? 0) + 1 }));
+        log(`${playerLabel(leavingPk)}: OBSESSED — must discard 1 card (even hand)`);
+      }
+    }
+
+    // PTSD (scar2): next player starts turn in the region of a PTSD scar → −1 action
+    const nextPk = (['p1','p2','p3','p4'] as const)[nextIdx];
+    const nextCityId = playerCities[nextIdx] ?? "atlanta";
+    const nextCityRegion = regionOf(nextCityId);
+    let ptsdPenalty = 0;
+    if (nextPk) {
+      const ptsdScars = getScarRecord(nextPk).scars.filter(s => s.id === 'scar2');
+      if (ptsdScars.some(s => s.region === nextCityRegion)) ptsdPenalty = 1;
+    }
+
+    saveTurnState({ currentPlayerIndex: nextIdx, actionsRemaining: baseActions + bonusActionsNextTurn - ptsdPenalty, phase: "actions", pendingCharter: false, pendingShuttle: false, drawCount: 0, infectCount: 0 });
     setBonusActionsNextTurn(0);
     setHighlightCities([]); setSelectedHandCards([]); setCureSelecting(false);
     setEventMode(null); setAirliftPawn(null); setFlexibleAidSelected([]); setEventModeRemaining(0); setPendingEventCard(null);
     setUndoSnapshot(null);
+    setLocalConnectionsUsed(false);
+    // Upgrade 3 (Forecaster): peek top 2 infection cards at start of the next player's turn
+    const nextUpgrades = charUpgrades[nextRoleId ?? ''] ?? {};
+    if (Object.values(nextUpgrades).includes(3) && infectDeck.length > 0) {
+      setForecasterPeekCards(infectDeck.slice(-Math.min(2, infectDeck.length)).reverse());
+    }
   };
   const restoreUndoSnapshot = () => {
     const s = undoSnapshot; if (!s) return;
@@ -765,6 +876,41 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [setup]);
 
+  // Scar effects 4 (REGRETFUL) and 5 (GERMOPHOBIC): triggered when a player moves
+  const prevPlayerCitiesRef = useRef<string[]>(playerCities);
+  useEffect(() => {
+    if (!setup) { prevPlayerCitiesRef.current = playerCities; return; }
+    const prev = prevPlayerCitiesRef.current;
+    const activePks = (['p1','p2','p3','p4'] as const).slice(0, setup.playerOrder.length);
+    activePks.forEach((pk, i) => {
+      if (prev[i] === playerCities[i]) return;
+      const fromCity = prev[i];
+      const toCity = playerCities[i];
+      // REGRETFUL (scar4): leaving a city that has ≥3 cubes of any single color
+      if (countScar(pk, 'scar4') > 0 && fromCity) {
+        const fromInf = cityInfection[fromCity] ?? {};
+        const hasThree = Object.values(fromInf).some(n => (n ?? 0) >= 3);
+        if (hasThree) {
+          const hand = (handCards as Record<string,string[]>)[pk] ?? [];
+          if (hand.length > 0) {
+            setForcedDiscard(prev2 => ({ ...prev2, [pk]: (prev2[pk] ?? 0) + 1 }));
+            log(`${playerLabel(pk)}: REGRETFUL — must discard 1 card`);
+          }
+        }
+      }
+      // GERMOPHOBIC (scar5): entering a city with a research station
+      if (countScar(pk, 'scar5') > 0 && toCity && researchStations.has(toCity)) {
+        const hand = (handCards as Record<string,string[]>)[pk] ?? [];
+        if (hand.length > 0) {
+          setForcedDiscard(prev2 => ({ ...prev2, [pk]: (prev2[pk] ?? 0) + 1 }));
+          log(`${playerLabel(pk)}: GERMOPHOBIC — must discard 1 card`);
+        }
+      }
+    });
+    prevPlayerCitiesRef.current = playerCities;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playerCities]);
+
   // Panic levels and mutation levels are permanent legacy state — save whenever they change
   useEffect(() => {
     getStorage().set(LS_PANIC_LEVELS, JSON.stringify(panicLevels));
@@ -785,13 +931,13 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   useEffect(() => { getStorage().set(LS_OUTBREAK_POS, String(outbreakPos)); }, [outbreakPos]);
   useEffect(() => { getStorage().set(LS_INFECTION_POS, String(infectionPos)); }, [infectionPos]);
 
-  // Auto-advance discard once the current player's hand is ≤ 7
+  // Auto-advance discard once the current player's hand is ≤ hand limit (INSOMNIAC scar1 reduces it)
   // Mid-draw discard (drawCount < 2): return to draw phase to pick up 2nd card
   // Post-draw discard (drawCount >= 2): advance to infect phase
   useEffect(() => {
     if (!setup || turnState.phase !== "discard") return;
     const hand = (handCards as Record<string, string[]>)[currentPlayerKey] ?? [];
-    if (hand.length <= 7) {
+    if (hand.length <= playerHandLimit(currentPlayerKey)) {
       if (turnState.drawCount < 2) {
         saveTurnState({ ...turnState, phase: "draw" });
       } else {
@@ -800,11 +946,11 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
     }
   }, [handCards, turnState.phase]);
 
-  // Auto-resume actions once the designated player has discarded to ≤ 7 (Share Knowledge over-limit)
+  // Auto-resume actions once the designated player has discarded to ≤ their hand limit
   useEffect(() => {
     if (!setup || turnState.phase !== "discard-action" || !turnState.discardPlayer) return;
     const hand = (handCards as Record<string, string[]>)[turnState.discardPlayer] ?? [];
-    if (hand.length <= 7) saveTurnState({ ...turnState, phase: "actions", discardPlayer: undefined });
+    if (hand.length <= playerHandLimit(turnState.discardPlayer)) saveTurnState({ ...turnState, phase: "actions", discardPlayer: undefined });
   }, [handCards, turnState.phase]);
 
   // Auto-advance infect → next turn once all infection cards are drawn; skip entirely if Quiet Night
@@ -900,7 +1046,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
         if (setup && turnState.phase === "draw") {
           const newCount = turnState.drawCount + 1;
           const hand = (handCards as Record<string, string[]>)[currentPlayerKey] ?? [];
-          const phase: TurnPhase = hand.length > 7 ? "discard" : newCount >= 2 ? "infect" : "draw";
+          const phase: TurnPhase = hand.length > playerHandLimit(currentPlayerKey) ? "discard" : newCount >= 2 ? "infect" : "draw";
           const who = playerLabel(currentPlayerKey);
           log(`${who}: epidemic resolved — drawCount ${turnState.drawCount} → ${newCount}/2 (${hand.length} in hand) → phase "${phase}"`);
           saveTurnState({ ...turnState, drawCount: newCount, phase, infectCount: 0 });
@@ -1083,6 +1229,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
 
   // Trigger an outbreak: advances marker, marks city as already-outbroken,
   // queues all eligible neighbors as manual cube-placement targets.
+  // TODO Upgrade 1 (Grizzled): players in cityId who have this upgrade do not gain a scar — implement when scar system is built.
   const triggerOutbreak = (cityId: string, color: DiseaseColor, baseAlready: Set<string>) => {
     if (isColorEradicated(color)) return;
     setOutbreakPos(prev => Math.min(OUTBREAK_TRACK.length - 1, prev + 1));
@@ -1111,6 +1258,21 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
           destroyStickerIfAny(cityId);
         }
       }
+      // Panic 4→5: any player here is immediately killed (no scar)
+      if (curPanic < 5 && newPanic >= 5 && setup) {
+        const activePks = (['p1','p2','p3','p4'] as const).slice(0, setup.playerOrder.length);
+        activePks.forEach((pk, i) => {
+          if (playerCities[i] === cityId) loseCharacter(pk);
+        });
+      }
+    }
+    // Outbreak: any player in this city gains a scar
+    if (setup) {
+      const activePks = (['p1','p2','p3','p4'] as const).slice(0, setup.playerOrder.length);
+      const region = regionOf(cityId);
+      activePks.forEach((pk, i) => {
+        if (playerCities[i] === cityId) enqueueScar(pk, region);
+      });
     }
     const newAlready = new Set([...baseAlready, cityId]);
     setOutbreakAlready(newAlready);
@@ -1156,6 +1318,19 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   };
 
   const handleCityClick = (cityId: string) => {
+    // Respawn after character tear: player clicks a research-station city
+    if (scarRespawn && setup) {
+      if (researchStations.has(cityId)) {
+        const pi = (['p1','p2','p3','p4'] as const).indexOf(scarRespawn as 'p1'|'p2'|'p3'|'p4');
+        if (pi >= 0) {
+          const nextCities = [...playerCities]; nextCities[pi] = cityId;
+          savePlayerCities(nextCities); snapPawnToCity(scarRespawn, cityId);
+          log(`${playerLabel(scarRespawn)}: respawned in ${CITIES.find(c=>c.id===cityId)?.name ?? cityId}`);
+        }
+        setScarRespawn(null); setHighlightCities([]);
+      }
+      return;
+    }
     if (showRSStickerPanel) return; // drag-and-drop mode active, clicks ignored
     if (isDealPhase) return;
     if (outbreakQueue.length > 0) return; // block clicks during chain resolution
@@ -1259,7 +1434,12 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
     if (setup) {
       // In game phase: cube removal only via Treat Disease action
       if (turnState.phase !== "actions") return;
-      if (cityId !== currentPlayerCityId) return; // must be in same city
+      // Upgrade 5 (Local Connections): once per turn, may treat in an adjacent city
+      const currentCity = CITIES.find(c => c.id === currentPlayerCityId);
+      const isAdjacent = currentCity?.neighbors.includes(cityId) ?? false;
+      if (cityId !== currentPlayerCityId) {
+        if (!hasCharUpgrade(5) || !isAdjacent || localConnectionsUsed) return;
+      }
       // January: COdA-403a costs 2 actions; block if insufficient
       const isCoda = isJan && codaColor !== null && color === codaColor;
       if (isCoda && turnState.actionsRemaining < 2) return;
@@ -1283,9 +1463,18 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
           if (isJan && !calibrating && !diseaseNames[color]) setNamePopupColor(color as DiseaseColor);
         }
       }
-      const nextTs = isCoda ? consumeAction(consumeAction(turnState)) : consumeAction(turnState);
+      // INTIMIDATED (scar7): +1 action cost in rioting/collapsing/fallen cities (panic ≥2)
+      const isRioting = (panicLevels[cityId] ?? 0) >= 2;
+      const intimidated = countScar(currentPlayerKey, 'scar7') > 0 && isRioting;
+      if (intimidated && turnState.actionsRemaining < (isCoda ? 3 : 2)) {
+        log(`${playerLabel(currentPlayerKey)}: INTIMIDATED — not enough actions to treat here`);
+        return;
+      }
+      let nextTs = isCoda ? consumeAction(consumeAction(turnState)) : consumeAction(turnState);
+      if (intimidated) nextTs = consumeAction(nextTs);
       log(`${playerLabel(currentPlayerKey)}: treated ${color} in ${city.name} (${nextTs.actionsRemaining} actions left)`);
       saveTurnState(nextTs);
+      if (cityId !== currentPlayerCityId) setLocalConnectionsUsed(true); // Upgrade 5: one adjacent treat used
       return;
     }
 
@@ -1303,6 +1492,19 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
     setInfectionPos(prev => Math.min(prev + 1, INFECTION_TRACK.length - 1));
     // Step 2 — Infect: wait for player to draw the bottom card manually
     setEpidemicState({ phase: 'infect', infectedCityId: null, infectedColor: null });
+    // DEMORALIZED (scar9): each holder discards 1 card when epidemic is revealed
+    if (setup) {
+      const activePks = (['p1','p2','p3','p4'] as const).slice(0, setup.playerOrder.length);
+      activePks.forEach(pk => {
+        if (countScar(pk, 'scar9') > 0) {
+          const hand = (handCards as Record<string,string[]>)[pk] ?? [];
+          if (hand.length > 0) {
+            setForcedDiscard(prev => ({ ...prev, [pk]: (prev[pk] ?? 0) + 1 }));
+            log(`${playerLabel(pk)}: DEMORALIZED — must discard 1 card (epidemic!)`);
+          }
+        }
+      });
+    }
   };
 
   // Called when player draws the bottom card during epidemic infect phase
@@ -2095,6 +2297,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                   setPlayerDrag, setPlayerDeck, setPlayerDiscard, setPlayerFlipped,
                   saveTurnState, saveHandCards,
                   log, cardLabel, playerLabel,
+                  handLimit: hasCharUpgrade(4) ? 8 : 7,
                   onFlip: (id) => {
                     const PL_STEP = 0.10;
                     const plLayers = Math.max(0, Math.min(playerDeck.length, 10));
@@ -2644,6 +2847,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
             setSelectedHandCards, setPlayerDiscard, setPendingDiscardMenu,
             cardStickers, setPendingUnfundMenu,
             log, cardLabel, playerLabel,
+            hasPilotUpgrade: hasCharUpgrade(6),
             canPlayFund: (cardId: string) => {
               if (cardId === 'fund4') return infectDiscard.length > 0;
               if (cardId === 'fund8') return turnState.phase === 'actions' || (turnState.phase === 'draw' && turnState.drawCount === 0) || turnState.phase === 'discard' || turnState.phase === 'discard-action';
@@ -3005,14 +3209,13 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
           const area = pid === 'p1' ? HAND_P1 : pid === 'p2' ? HAND_P2 : pid === 'p3' ? HAND_P3 : HAND_P4;
           const pidIndex = ['p1','p2','p3','p4'].indexOf(pid);
           const roleId = setup?.playerOrder[pidIndex]?.roleId ?? null;
-          const roleSrc = roleId ? ROLE_IMGS[roleId] : null;
-          if (!roleSrc) return null;
+          const scarRec = getScarRecord(pid);
+          const isCivilian = scarRec.civilian;
+          // Show civilian card if character is lost; otherwise role card
+          const displaySrc = isCivilian ? civilianSrc : (roleId ? ROLE_IMGS[roleId] : null);
+          if (!displaySrc) return null;
           const color = playerColors[pid];
           const isLeft = pid === 'p1' || pid === 'p3';
-          // P1/P2 (top): icon floats above their hand area.
-          // P3/P4 (bottom): icon floats directly below the lowest stacked card — depends on
-          // card count, since the stack offset (and thus the lowest card's bottom edge) shrinks
-          // as more cards are added.
           const handCount = Math.max(1, ((handCards as Record<string, string[]>)[pid] ?? []).length);
           const cardH = area.w * BOARD_RATIO;
           const lowestCardBottom = (area.y - area.h / 2) + (handCount - 1) * handStackOffset(area, handCount) + cardH;
@@ -3038,11 +3241,11 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                 height: 48,
                 borderRadius: 8,
                 overflow: "hidden",
-                border: `2.5px solid ${color}`,
-                boxShadow: `0 0 14px ${color}88`,
+                border: `2.5px solid ${isCivilian ? "#888" : color}`,
+                boxShadow: `0 0 14px ${isCivilian ? "#88888888" : color + "88"}`,
               }}>
                 <img
-                  src={roleSrc}
+                  src={displaySrc}
                   draggable={false}
                   style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: "top center", display: "block", pointerEvents: "none", userSelect: "none" }}
                 />
@@ -3057,11 +3260,11 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                 }}>
                   <div style={{ position: "relative", display: "inline-block", containerType: "inline-size" }}>
                     <img
-                      src={roleSrc}
+                      src={displaySrc}
                       draggable={false}
                       style={{ width: 280, height: "auto", borderRadius: 10, boxShadow: "0 8px 36px #000e", display: "block", userSelect: "none" }}
                     />
-                    {(() => {
+                    {!isCivilian && (() => {
                       const charName = loadCharacterNames()[roleId ?? ''] ?? '';
                       const nc = loadCharacterCal().name;
                       return charName ? (
@@ -3085,6 +3288,35 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                         </div>
                       ) : null;
                     })()}
+                    {/* Character upgrade stickers on hover card */}
+                    {!isCivilian && (["upgrade1", "upgrade2", "upgrade3", "upgrade4"] as CharUpgradeSlot[]).map(slot => {
+                      const idx = charUpgrades[roleId ?? '']?.[slot];
+                      if (!idx) return null;
+                      const uc = loadCharacterCal()[slot];
+                      if (!uc) return null;
+                      return (
+                        <img key={slot} src={UPGRADE_SRCS[idx]} draggable={false} style={{
+                          position: "absolute",
+                          top: `${uc.top}%`, left: `${uc.left}%`,
+                          width: `${uc.w}%`, height: `${uc.h}%`,
+                          objectFit: "contain", pointerEvents: "none",
+                        }} />
+                      );
+                    })}
+                    {/* Scar stickers on hover card */}
+                    {!isCivilian && scarRec.scars.map((s, i) => {
+                      const slotKey = i === 0 ? 'scar1' : 'scar2';
+                      const sc = loadCharacterCal()[slotKey as 'scar1' | 'scar2'];
+                      if (!sc) return null;
+                      return (
+                        <img key={`scar-${i}`} src={SCAR_SRCS[s.id]} draggable={false} style={{
+                          position: "absolute",
+                          top: `${sc.top}%`, left: `${sc.left}%`,
+                          width: `${sc.w}%`,
+                          pointerEvents: "none",
+                        }} />
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -3441,6 +3673,48 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
         </ContextMenu>
       )}
 
+      {/* Upgrade 3 (Forecaster): peek top 2 infection cards at turn start */}
+      {forecasterPeekCards && (
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 2800, background: "rgba(2,6,14,0.80)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }} onClick={() => setForecasterPeekCards(null)}>
+          <div style={{
+            background: "#0a1320", border: "2px solid #3a9aff", borderRadius: 14,
+            padding: "22px 28px", maxWidth: 380, width: "90vw",
+            fontFamily: "system-ui, sans-serif", boxShadow: "0 8px 60px #000",
+          }} onClick={e => e.stopPropagation()}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "#7bc4ff", marginBottom: 6 }}>
+              Forecaster — Top {forecasterPeekCards.length} Infection Card{forecasterPeekCards.length !== 1 ? "s" : ""}
+            </div>
+            <div style={{ fontSize: 11, color: "#7a9aaa", marginBottom: 14 }}>
+              These are the next cards to be drawn (top first)
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {forecasterPeekCards.map((cardId, i) => {
+                const city = CITIES.find(c => c.id === cardId);
+                const COLOR_HEX: Record<string, string> = { blue: "#3a9aff", yellow: "#ffcc44", red: "#cc3344", black: "#8899aa" };
+                return (
+                  <div key={i} style={{
+                    display: "flex", alignItems: "center", gap: 10,
+                    padding: "8px 12px", borderRadius: 8,
+                    background: "#111e30", border: `1.5px solid ${COLOR_HEX[city?.color ?? "blue"] ?? "#3a9aff"}44`,
+                  }}>
+                    <div style={{ width: 10, height: 10, borderRadius: "50%", background: COLOR_HEX[city?.color ?? "blue"] ?? "#3a9aff", flexShrink: 0 }} />
+                    <span style={{ fontSize: 13, color: "#cfe8ff", fontWeight: 600 }}>{i + 1}. {city?.name ?? cardId}</span>
+                  </div>
+                );
+              })}
+            </div>
+            <button onClick={() => setForecasterPeekCards(null)} style={{
+              marginTop: 16, width: "100%", padding: "8px", borderRadius: 8,
+              background: "#1a3060", border: "1px solid #3a6aaa", color: "#7bc4ff",
+              cursor: "pointer", fontSize: 12, fontWeight: 600,
+            }}>OK</button>
+          </div>
+        </div>
+      )}
+
       {/* Forecast popup */}
       {forecastCards && boardPxW > 0 && (
         <ForecastPopup
@@ -3472,7 +3746,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
       {/* Infection discard popup */}
       {showPlayerDiscardPopup && (
         <div
-          onClick={() => setShowPlayerDiscardPopup(false)}
+          onClick={() => { setShowPlayerDiscardPopup(false); setFlexiblePickMode(false); }}
           style={{
             position: "fixed", inset: 0, background: "#000a",
             display: "flex", alignItems: "center", justifyContent: "center",
@@ -3482,14 +3756,16 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
           <div
             onClick={e => e.stopPropagation()}
             style={{
-              background: "#0c1335", border: "2px solid #334",
+              background: "#0c1335", border: `2px solid ${flexiblePickMode ? "#9a44ff" : "#334"}`,
               borderRadius: 10, padding: 20, maxWidth: "90vw", maxHeight: "80vh",
               overflowY: "auto",
             }}
           >
             <div style={{ color: "#aac", fontSize: 13, marginBottom: 12, fontFamily: "monospace" }}>
-              Player Discard — {playerDiscard.length} card{playerDiscard.length !== 1 ? "s" : ""}
-              <button onClick={() => setShowPlayerDiscardPopup(false)}
+              {flexiblePickMode
+                ? <span style={{ color: "#cc99ff", fontWeight: 700 }}>Flexible — click a card to take it (1 action)</span>
+                : `Player Discard — ${playerDiscard.length} card${playerDiscard.length !== 1 ? "s" : ""}`}
+              <button onClick={() => { setShowPlayerDiscardPopup(false); setFlexiblePickMode(false); }}
                 style={{ float: "right", background: "none", border: "1px solid #556", color: "#aac", cursor: "pointer", borderRadius: 4, padding: "2px 8px" }}>
                 ✕
               </button>
@@ -3499,10 +3775,21 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                 const isFundPopup = FUND_IMGS[cityId] !== undefined;
                 const city = (cityId === "epidemic" || isFundPopup) ? null : CITIES.find(c => c.id === cityId);
                 if (!city && cityId !== "epidemic" && !isFundPopup) return null;
+                const handleFlexiblePick = flexiblePickMode && city ? () => {
+                  // Take this card from discard into current player's hand; cost 1 action
+                  setPlayerDiscard(prev => { const idx = [...prev].reverse().findIndex(c => c === cityId); const realIdx = prev.length - 1 - idx; return prev.filter((_, j) => j !== realIdx); });
+                  saveHandCards({ ...handCards, [currentPlayerKey]: [...((handCards as Record<string,string[]>)[currentPlayerKey] ?? []), cityId] });
+                  const nextTs = consumeAction(turnState);
+                  log(`${playerLabel(currentPlayerKey)}: Flexible — took ${cardLabel(cityId)} from discard (${nextTs.actionsRemaining} actions left)`);
+                  saveTurnState(nextTs);
+                  setShowPlayerDiscardPopup(false);
+                  setFlexiblePickMode(false);
+                } : undefined;
                 return (
                   <div key={`pdpopup-${i}`}
-                    onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setDiscardCardMenu({ cityId, x: e.clientX, y: e.clientY }); }}
-                    style={{ cursor: "context-menu" }}>
+                    onContextMenu={flexiblePickMode ? undefined : e => { e.preventDefault(); e.stopPropagation(); setDiscardCardMenu({ cityId, x: e.clientX, y: e.clientY }); }}
+                    onClick={handleFlexiblePick}
+                    style={{ cursor: handleFlexiblePick ? "pointer" : "context-menu", outline: flexiblePickMode && city ? "2px solid #9a44ff44" : "none", borderRadius: 6 }}>
                     {city
                       ? (
                         <div style={{ position: "relative" }}>
@@ -3626,6 +3913,16 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
             }}>
             {`Build Research Station${researchStations.has(pendingDiscardMenu.cityId) ? " (already here)" : researchStations.size >= 6 ? " (pool empty)" : (panicLevels[pendingDiscardMenu.cityId] ?? 0) >= 2 ? " (rioting)" : ""}`}
           </MenuItem>
+          {/* Upgrade 2 (Flexible): current player's card + has upgrade + actions phase + discard has cards */}
+          {pendingDiscardMenu.player === currentPlayerKey && hasCharUpgrade(2) && turnState.phase === "actions" && playerDiscard.length > 0 && (
+            <MenuItem padding="9px 14px" onClick={() => {
+              setPendingDiscardMenu(null);
+              setFlexiblePickMode(true);
+              setShowPlayerDiscardPopup(true);
+            }}>
+              Flexible — pick from discard (1 action)
+            </MenuItem>
+          )}
         </ContextMenu>
       )}
 
@@ -3714,16 +4011,17 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
               Direct Flight
             </MenuItem>
           )}
-          {(turnState.phase === "discard" || turnState.phase === "discard-action") && (
+          {(turnState.phase === "discard" || turnState.phase === "discard-action" || (forcedDiscard[pendingUnfundMenu?.player ?? ''] ?? 0) > 0) && (
             <MenuItem padding="9px 14px" onClick={() => {
               const { player, idx, cityId } = pendingUnfundMenu;
               const current = (handCards as Record<string,string[]>)[player] ?? [];
               saveHandCards({ ...handCards, [player]: current.filter((_, j) => j !== idx) });
               setPlayerDiscard(prev => [...prev, cityId]);
+              onCardDiscarded(player);
               log(`${playerLabel(player)}: discarded ${cardLabel(cityId)}`);
               setPendingUnfundMenu(null);
             }}>
-              Discard
+              {(forcedDiscard[pendingUnfundMenu?.player ?? ''] ?? 0) > 0 ? `Discard (forced: ${forcedDiscard[pendingUnfundMenu?.player ?? '']})` : 'Discard'}
             </MenuItem>
           )}
         </ContextMenu>
@@ -3851,6 +4149,91 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
         />
       )}
 
+      {/* ── Scar system UI ──────────────────────────────────────────── */}
+
+      {/* Tear animation — kills the character */}
+      {tearPlayer && setup && (() => {
+        const pi = (['p1','p2','p3','p4'] as const).indexOf(tearPlayer as 'p1'|'p2'|'p3'|'p4');
+        const tRoleId = setup.playerOrder[pi]?.roleId;
+        const currentSrc = getScarRecord(tearPlayer).civilian ? civilianSrc : (tRoleId ? ROLE_IMGS[tRoleId] : null);
+        if (!currentSrc) return null;
+        return (
+          <TearOverlay
+            roleSrc={currentSrc}
+            civilianSrc={civilianSrc}
+            onDone={() => finalizeTear(tearPlayer)}
+          />
+        );
+      })()}
+
+      {/* Scar pick popup — only when no tear is pending */}
+      {!tearPlayer && scarQueue.length > 0 && setup && (() => {
+        const { pk, region } = scarQueue[0];
+        const rec = getScarRecord(pk);
+        // If already 2 scars or is civilian, immediately trigger tear and shift queue
+        if (rec.civilian || rec.scars.length >= 2) {
+          // Use effect-like deferred call via timeout to avoid render-during-render
+          setTimeout(() => {
+            loseCharacter(pk);
+            resolveScarFromQueue();
+          }, 0);
+          return null;
+        }
+        const pi = (['p1','p2','p3','p4'] as const).indexOf(pk as 'p1'|'p2'|'p3'|'p4');
+        const pkRoleId = setup.playerOrder[pi]?.roleId;
+        const roleSrc = pkRoleId ? ROLE_IMGS[pkRoleId] : null;
+        if (!roleSrc) return null;
+        return (
+          <ScarPickPopup
+            roleSrc={roleSrc}
+            placedScars={rec.scars}
+            scarPool={scarPool}
+            region={region}
+            onPlace={(scarId) => {
+              const newEntry: ScarEntry = { id: scarId, region };
+              const nextScars: ScarState = {
+                ...scars,
+                [pk]: { ...rec, scars: [...rec.scars, newEntry] },
+              };
+              saveScars(nextScars);
+              saveScarPool({ ...scarPool, [scarId]: (scarPool[scarId] ?? 0) + 1 });
+              log(`${playerLabel(pk)}: gained scar — ${scarId}`);
+              resolveScarFromQueue();
+            }}
+          />
+        );
+      })()}
+
+      {/* Respawn hint banner */}
+      {scarRespawn && (
+        <div style={{
+          position: "fixed", top: 60, left: "50%", transform: "translateX(-50%)",
+          zIndex: 3200, background: "#1a0505e0", border: "2px solid #f44",
+          borderRadius: 10, padding: "10px 22px", color: "#f99",
+          fontSize: 14, fontWeight: 700, fontFamily: "system-ui",
+          pointerEvents: "none",
+        }}>
+          {playerLabel(scarRespawn)}: click a research station city to respawn
+        </div>
+      )}
+
+      {/* Forced discard banner */}
+      {(() => {
+        const pending = forcedDiscard[currentPlayerKey] ?? 0;
+        if (!setup || pending <= 0) return null;
+        return (
+          <div style={{
+            position: "fixed", bottom: 80, left: "50%", transform: "translateX(-50%)",
+            zIndex: 2800, background: "#1a0a00e0", border: "2px solid #f80",
+            borderRadius: 10, padding: "8px 20px", color: "#fc8",
+            fontSize: 13, fontWeight: 700, fontFamily: "system-ui",
+            pointerEvents: "none",
+          }}>
+            Forced discard: right-click a card in your hand and choose Discard ({pending} remaining)
+          </div>
+        );
+      })()}
+
       {/* Win / Lose overlay */}
       {gameResult !== null && gameResult !== dismissedResult && (
         <GameOverOverlay
@@ -3870,7 +4253,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
       )}
 
       {/* Post-game upgrade selection */}
-      {upgradePicksRemaining > 0 && !showRSStickerPanel && !pickingMutation && !placingUnfund && (
+      {upgradePicksRemaining > 0 && !showRSStickerPanel && !pickingMutation && !placingUnfund && !pickingCharUpgrade && (
         <UpgradePopup
           picksRemaining={upgradePicksRemaining}
           onPick={(type: UpgradeType) => {
@@ -3882,9 +4265,33 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
             } else if (type === "unfunded-event") {
               setPlacingUnfund(true);
               setSelectedUnfund(null);
+            } else if (type === "character-upgrade") {
+              setPickingCharUpgrade(true);
             }
           }}
           onClose={() => setUpgradePicksRemaining(0)}
+        />
+      )}
+
+      {pickingCharUpgrade && setup && (
+        <CharacterUpgradePanel
+          activeRoles={setup.playerOrder}
+          upgrades={charUpgrades}
+          onPlace={(roleId, slot, idx) => {
+            const _sa = getStorage();
+            const next: CharacterUpgradesData = {
+              ...charUpgrades,
+              [roleId]: { ...(charUpgrades[roleId] ?? {}), [slot]: idx },
+            };
+            setCharUpgrades(next);
+            _sa.set(LS_CHARACTER_UPGRADES, JSON.stringify(next));
+            setPickingCharUpgrade(false);
+            setUpgradePicksRemaining(n => n - 1);
+          }}
+          onDone={() => {
+            setPickingCharUpgrade(false);
+            setUpgradePicksRemaining(n => n - 1);
+          }}
         />
       )}
 
