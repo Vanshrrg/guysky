@@ -195,47 +195,39 @@ export function PreGamePhase({ playerCount, onBegin, onViewBoard, fundingCards, 
               <PawnSvg color={tokenColor} size={36} />
             </div>
           )}
-          {/* Name overlay — shown when placed this month OR already named from prior month */}
+          {/* Name — sits directly on the printed CHARACTER NAME area of the card image */}
           {(placed || existingName.length > 0) && (
-            <div style={{
-              position: "absolute",
-              top: 0, left: 0, right: "50%",  // covers left-half of card (CHARACTER NAME zone)
-              height: "13%",
-              background: "rgba(245, 237, 210, 0.92)",
-              borderBottom: "1px solid #9a7a40",
-              display: "flex",
-              flexDirection: "column",
-              justifyContent: "space-between",
-              padding: "2px 5px 2px",
-              boxSizing: "border-box",
-              zIndex: 5,
-            }}>
-              <span style={{ fontSize: 6, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: "#7a5c28", lineHeight: 1 }}>
-                Character Name
-              </span>
-              {isReadOnly ? (
-                <div style={{ fontSize: 11, fontWeight: 700, color: "#0a0500", fontFamily: "Georgia, serif", borderBottom: "1px solid #8a6030", padding: "0 1px", lineHeight: 1.2 }}>
-                  {existingName}
-                </div>
-              ) : (
-                <input
-                  type="text"
-                  maxLength={20}
-                  placeholder="Enter name…"
-                  autoFocus
-                  value={characterNames[role.id] ?? ''}
-                  onChange={e => setCharacterNames(prev => ({ ...prev, [role.id]: e.target.value }))}
-                  style={{
-                    background: "transparent", border: "none",
-                    borderBottom: "1.5px solid #8a6030", outline: "none",
-                    fontSize: 11, fontWeight: 700, color: "#0a0500",
-                    fontFamily: "Georgia, serif", padding: "0 1px",
-                    width: "100%", boxSizing: "border-box", lineHeight: 1.2,
-                  }}
-                />
-              )}
-              <span style={{ fontSize: 6, color: "#8a6e3e", letterSpacing: "0.05em", lineHeight: 1 }}>DOB:</span>
-            </div>
+            isReadOnly ? (
+              <div style={{
+                position: "absolute",
+                top: "6.5%", left: "5%", width: "42%",
+                fontFamily: "Georgia, 'Times New Roman', serif",
+                fontWeight: 700, fontSize: 11, color: "#0a0500",
+                lineHeight: 1.2, pointerEvents: "none", userSelect: "none",
+                overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis",
+                zIndex: 5,
+              }}>
+                {existingName}
+              </div>
+            ) : (
+              <input
+                type="text"
+                maxLength={20}
+                placeholder="Type name…"
+                autoFocus
+                value={characterNames[role.id] ?? ''}
+                onChange={e => setCharacterNames(prev => ({ ...prev, [role.id]: e.target.value }))}
+                style={{
+                  position: "absolute",
+                  top: "6.5%", left: "5%", width: "42%",
+                  background: "transparent", border: "none", outline: "none",
+                  fontFamily: "Georgia, 'Times New Roman', serif",
+                  fontWeight: 700, fontSize: 11, color: "#0a0500",
+                  lineHeight: 1.2, padding: 0, zIndex: 5,
+                  caretColor: "#0a0500",
+                }}
+              />
+            )
           )}
         </div>
       </div>
