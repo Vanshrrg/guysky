@@ -143,7 +143,7 @@ export function PreGamePhase({ playerCount, onBegin, onViewBoard, fundingCards, 
   // Character names — only for January; persisted across restarts
   const [characterNames, setCharacterNames] = useState<Record<string, string>>(loadCharacterNames);
   useEffect(() => {
-    if (isJan) localStorage.setItem(LS_CHARACTER_NAMES, JSON.stringify(characterNames));
+    localStorage.setItem(LS_CHARACTER_NAMES, JSON.stringify(characterNames));
   }, [characterNames, isJan]);
 
   // Only offer TOKEN_COLORS[0..playerCount-1] — matches the dealt hands
@@ -195,7 +195,7 @@ export function PreGamePhase({ playerCount, onBegin, onViewBoard, fundingCards, 
             </div>
           )}
         </div>
-        {isJan && nameKey && (
+        {nameKey && (
           <input
             type="text"
             maxLength={20}
@@ -213,6 +213,8 @@ export function PreGamePhase({ playerCount, onBegin, onViewBoard, fundingCards, 
     );
   }
 
+  const allNamed = placements.every((_, i) => (characterNames[`p${i + 1}`] ?? '').trim().length > 0);
+
   return (
     <div style={overlayStyle}>
       <div style={panelStyle}>
@@ -221,12 +223,14 @@ export function PreGamePhase({ playerCount, onBegin, onViewBoard, fundingCards, 
             <div style={{ fontSize: 20, fontWeight: 700, color: "#e4f0ff" }}>Choose Roles</div>
             {onViewBoard && <button onClick={onViewBoard} style={viewBoardBtn}>View Board</button>}
           </div>
-          {placements.length >= validColors.length ? (
+          {placements.length >= validColors.length && allNamed ? (
             <button onClick={() => onBegin({ playerOrder: placements, fundingCards, characterNames })}
               style={confirmBtn}>✓</button>
           ) : (
-            <span style={{ fontSize: 11, color: "#556", fontFamily: "monospace" }}>
-              {placements.length}/{validColors.length} roles assigned
+            <span style={{ fontSize: 11, color: placements.length >= validColors.length ? "#996622" : "#556", fontFamily: "monospace" }}>
+              {placements.length < validColors.length
+                ? `${placements.length}/${validColors.length} roles assigned`
+                : "Name all characters to continue"}
             </span>
           )}
         </div>
