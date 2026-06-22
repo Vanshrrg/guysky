@@ -3136,7 +3136,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
               cssFilter={m.cssFilter}
               eradicated={ci >= 0 ? eradicated[ci] : false}
               eradicatedColor={m.cssFilter?.includes("hue-rotate(58") ? "#666" : "white"}
-              onActivate={ci >= 0 && scenario === "calibrate-jan" ? () => {
+              onActivate={ci >= 0 && !calibrating ? () => {
                 if (!cured[ci]) {
                   setCured(prev => { const n = [...prev]; n[ci] = true; return n; });
                 } else if (!eradicated[ci]) {
@@ -3145,12 +3145,6 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                   setCured(prev => { const n = [...prev]; n[ci] = false; return n; });
                   setEradicated(prev => { const n = [...prev]; n[ci] = false; return n; });
                 }
-              } : isCured && !calibrating && !onChooseRoles && !setup ? () => {
-                setEradicated(prev => {
-                  const next = [...prev];
-                  next[ci] = !next[ci];
-                  return next;
-                });
               } : undefined}
               onRightClick={(() => {
                 // Tier 1 "Common Structure": right-click cure token to start off-RS cure
