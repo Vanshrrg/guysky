@@ -97,18 +97,22 @@ export interface CharCalItem {
   h:    number; // % of card height
 }
 export interface CharacterCalData {
-  name:     CharCalItem;
-  upgrade1: CharCalItem;
-  upgrade2: CharCalItem;
-  scar1:    CharCalItem;
-  scar2:    CharCalItem;
+  name:          CharCalItem;
+  relationship1: CharCalItem;
+  relationship2: CharCalItem;
+  upgrade1:      CharCalItem;
+  upgrade2:      CharCalItem;
+  scar1:         CharCalItem;
+  scar2:         CharCalItem;
 }
 export const DEF_CHARACTER_CAL: CharacterCalData = {
-  name:     { top:  5, left:  4, w: 32, h:  7 },
-  upgrade1: { top: 44, left: 55, w: 40, h:  9 },
-  upgrade2: { top: 56, left: 55, w: 40, h:  9 },
-  scar1:    { top: 68, left: 55, w: 40, h:  9 },
-  scar2:    { top: 80, left: 55, w: 40, h:  9 },
+  name:          { top:  5, left:  4, w: 32, h:  7 },
+  relationship1: { top: 13, left: 55, w: 40, h:  9 },
+  relationship2: { top: 25, left: 55, w: 40, h:  9 },
+  upgrade1:      { top: 44, left: 55, w: 40, h:  9 },
+  upgrade2:      { top: 56, left: 55, w: 40, h:  9 },
+  scar1:         { top: 68, left: 55, w: 40, h:  9 },
+  scar2:         { top: 80, left: 55, w: 40, h:  9 },
 };
 export function loadCharacterCal(): CharacterCalData {
   try { const r = localStorage.getItem(LS_CHARACTER_CAL); if (r) return JSON.parse(r); } catch { /**/ }

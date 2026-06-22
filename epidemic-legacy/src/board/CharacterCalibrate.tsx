@@ -4,6 +4,8 @@ import scientistSrc  from "../../object/scientist.png";
 import researcherSrc from "../../object/researcher.png";
 import generalistSrc from "../../object/generalist.png";
 import dispatcherSrc from "../../object/dispatcher.png";
+import rel1Src       from "../../object/Feb/relationship1.png";
+import rel2Src       from "../../object/Feb/relationship2.png";
 import upgrade1Src   from "../../object/Jan/characterupgrade1.png";
 import upgrade2Src   from "../../object/Jan/characterupgrade2.png";
 import scar1Src      from "../../object/Jan/scar1.png";
@@ -30,11 +32,13 @@ interface ItemDef {
 }
 
 const ITEMS: ItemDef[] = [
-  { key: "name",     label: "NAME",      color: "#3ddc6d", src: undefined,  resizeH: true  },
-  { key: "upgrade1", label: "UPGRADE 1", color: "#ffcc44", src: upgrade1Src, resizeH: false },
-  { key: "upgrade2", label: "UPGRADE 2", color: "#ff8844", src: upgrade2Src, resizeH: false },
-  { key: "scar1",    label: "SCAR 1",    color: "#ff4466", src: scar1Src,   resizeH: false },
-  { key: "scar2",    label: "SCAR 2",    color: "#cc44ff", src: scar2Src,   resizeH: false },
+  { key: "name",          label: "NAME",           color: "#3ddc6d", src: undefined,   resizeH: true  },
+  { key: "relationship1", label: "RELATIONSHIP 1", color: "#44aaff", src: rel1Src,     resizeH: false },
+  { key: "relationship2", label: "RELATIONSHIP 2", color: "#0077cc", src: rel2Src,     resizeH: false },
+  { key: "upgrade1",      label: "UPGRADE 1",      color: "#ffcc44", src: upgrade1Src, resizeH: false },
+  { key: "upgrade2",      label: "UPGRADE 2",      color: "#ff8844", src: upgrade2Src, resizeH: false },
+  { key: "scar1",         label: "SCAR 1",         color: "#ff4466", src: scar1Src,    resizeH: false },
+  { key: "scar2",         label: "SCAR 2",         color: "#cc44ff", src: scar2Src,    resizeH: false },
 ];
 
 // ── Single draggable / resizable overlay item ─────────────────────────────────
