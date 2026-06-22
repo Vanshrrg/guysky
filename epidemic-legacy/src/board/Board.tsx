@@ -1056,7 +1056,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
       if (!m.curePos) continue;
       const startPos = states[mi];
 
-      if (!setup) {
+      if (!setup && calibrating) {
         if (inBox(px, py, startPos.x, startPos.y, startPos.w)) {
           setCured(prev => { const n = [...prev]; n[ci] = false; return n; });
           setEradicated(prev => { const n = [...prev]; n[ci] = false; return n; });
@@ -3138,7 +3138,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
               cssFilter={m.cssFilter}
               eradicated={ci >= 0 ? eradicated[ci] : false}
               eradicatedColor={m.cssFilter?.includes("hue-rotate(58") ? "#666" : "white"}
-              onActivate={ci >= 0 && !calibrating ? () => {
+              onActivate={ci >= 0 && calibrating ? () => {
                 if (!cured[ci]) {
                   setCured(prev => { const n = [...prev]; n[ci] = true; return n; });
                 } else if (!eradicated[ci]) {
