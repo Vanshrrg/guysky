@@ -189,7 +189,7 @@ export function PreGamePhase({ playerCount, onBegin, onViewBoard, fundingCards, 
     return (
       <div key={role.id} ref={el => { roleRefs.current[role.id] = el; }}
         style={{ flex: 1, position: "relative", display: "flex", flexDirection: "column", gap: 4 }}>
-        <div style={{ position: "relative" }}>
+        <div style={{ position: "relative", containerType: "inline-size" }}>
           <img src={role.src} alt={role.name} draggable={false}
             style={{ width: "100%", height: "auto", display: "block", userSelect: "none", pointerEvents: "none" }} />
           {tokenColor && (
@@ -203,9 +203,9 @@ export function PreGamePhase({ playerCount, onBegin, onViewBoard, fundingCards, 
             isReadOnly ? (
               <div style={{
                 position: "absolute",
-                top: "calc(6.5% - 4px)", left: "5%", width: "42%",
+                top: "calc(6.5% - 4px)", left: "5%", width: "34%",
                 fontFamily: "Georgia, 'Times New Roman', serif",
-                fontWeight: 700, fontSize: 11, color: "#0a0500",
+                fontWeight: 700, fontSize: "2.8cqw", color: "#0a0500",
                 lineHeight: 1.2, pointerEvents: "none", userSelect: "none",
                 overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis",
                 zIndex: 5,
@@ -222,12 +222,12 @@ export function PreGamePhase({ playerCount, onBegin, onViewBoard, fundingCards, 
                 onChange={e => setCharacterNames(prev => ({ ...prev, [role.id]: e.target.value }))}
                 style={{
                   position: "absolute",
-                  top: "calc(6.5% - 4px)", left: "5%", width: "42%",
+                  top: "calc(6.5% - 4px)", left: "5%", width: "34%",
                   background: "transparent", border: "none", outline: "none",
                   fontFamily: "Georgia, 'Times New Roman', serif",
-                  fontWeight: 700, fontSize: 11, color: "#0a0500",
+                  fontWeight: 700, fontSize: "2.8cqw", color: "#0a0500",
                   lineHeight: 1.2, padding: 0, zIndex: 5,
-                  caretColor: "#0a0500",
+                  caretColor: "#0a0500", overflow: "hidden",
                 }}
               />
             )
