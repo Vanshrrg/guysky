@@ -149,7 +149,7 @@ const SUPPLY_PILES = _SUPPLY_META.map((m, ci) => ({
 const SupplyPiles = memo(function SupplyPiles({ placedPerColor }: { placedPerColor: number[] }) {
   return (
     <>
-      {SUPPLY_PILES.flatMap(({ color, src }, ci) => {
+      {SUPPLY_PILES.flatMap(({ color }, ci) => {
         const remaining = 24 - Math.min(24, placedPerColor[ci]);
         const pile = SUPPLY_PILES[ci].positions;
         return [
