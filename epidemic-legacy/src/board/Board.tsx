@@ -579,12 +579,17 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
       const board = boardRef.current;
       if (!board) { ghost.style.display = "none"; setMutDragTier(null); return; }
       const br = board.getBoundingClientRect();
-      // Disease tray screen positions — must match _SUPPLY_META iconX/iconY
-      const TRAY: [DiseaseColor, number, number][] = _SUPPLY_META.map(m => [
-        m.color as DiseaseColor,
-        br.left + m.iconX / 100 * br.width,
-        br.top  + m.iconY / 100 * br.height,
-      ]);
+      // Drop target positions — match MUT_COL_X / MUT_ROW_Y[nextTier] used by drop zone rings and placed stickers
+      const snapLvl = snapLevels;
+      const TRAY: [DiseaseColor, number, number][] = (Object.keys(MUT_COL_X) as DiseaseColor[]).map(col => {
+        const lvl = snapLvl[col] ?? 0;
+        const nextTier = Math.min(lvl + 1, 4) as 1|2|3|4;
+        return [
+          col,
+          br.left + MUT_COL_X[col] / 100 * br.width,
+          br.top  + MUT_ROW_Y[nextTier] / 100 * br.height,
+        ];
+      });
       let applied = false;
       for (const [col, tx, ty] of TRAY) {
         if (Math.hypot(ev.clientX - tx, ev.clientY - ty) > 60) continue;
@@ -3073,13 +3078,11 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
           const nextTier = (lvl + 1) as 1|2|3|4;
           if (nextTier > 4) return null;
           if (isUpgFlow && mutCountAtLeast(nextTier) >= MUT_QUOTA[nextTier]) return null;
-          const meta = _SUPPLY_META.find(m => m.color === col);
-          if (!meta) return null;
           return (
             <div key={`mut-drop-${col}`} style={{
               position: "absolute",
-              left: `${meta.iconX}%`, top: `${meta.iconY}%`,
-              width: "7%", aspectRatio: "1",
+              left: `${MUT_COL_X[col as DiseaseColor]}%`, top: `${MUT_ROW_Y[nextTier]}%`,
+              width: `${MUT_STICKER_W * 1.1}%`, aspectRatio: "1",
               transform: "translate(-50%, -50%)",
               border: "2px dashed #3ddc6d",
               borderRadius: "50%",
