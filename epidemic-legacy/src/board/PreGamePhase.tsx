@@ -179,9 +179,10 @@ export function PreGamePhase({ playerCount, onBegin, onViewBoard, fundingCards, 
 
   function renderRole(role: typeof ALL_ROLES[0]) {
     const tokenColor = slotMap[role.id] ?? null;
-    // For Jan: name key = "p{slotIndex+1}" based on which placement slot this role fills
-    const placementIdx = placements.findIndex(p => p.roleId === role.id);
-    const nameKey = placementIdx >= 0 ? `p${placementIdx + 1}` : null;
+    const placed = placements.some(p => p.roleId === role.id);
+    const existingName = characterNames[role.id] ?? '';
+    const isReadOnly = existingName.length > 0 && !placed; // already named in a prior campaign month
+
     return (
       <div key={role.id} ref={el => { roleRefs.current[role.id] = el; }}
         style={{ flex: 1, position: "relative", display: "flex", flexDirection: "column", gap: 4 }}>
@@ -194,26 +195,54 @@ export function PreGamePhase({ playerCount, onBegin, onViewBoard, fundingCards, 
               <PawnSvg color={tokenColor} size={36} />
             </div>
           )}
+          {/* Name overlay — shown when a token is placed on this role */}
+          {placed && (
+            <div style={{
+              position: "absolute",
+              top: 0, left: 0, right: "50%",  // covers left-half of card (CHARACTER NAME zone)
+              height: "13%",
+              background: "rgba(245, 237, 210, 0.92)",
+              borderBottom: "1px solid #9a7a40",
+              display: "flex",
+              flexDirection: "column",
+              justifyContent: "space-between",
+              padding: "2px 5px 2px",
+              boxSizing: "border-box",
+              zIndex: 5,
+            }}>
+              <span style={{ fontSize: 6, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: "#7a5c28", lineHeight: 1 }}>
+                Character Name
+              </span>
+              {isReadOnly ? (
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#0a0500", fontFamily: "Georgia, serif", borderBottom: "1px solid #8a6030", padding: "0 1px", lineHeight: 1.2 }}>
+                  {existingName}
+                </div>
+              ) : (
+                <input
+                  type="text"
+                  maxLength={20}
+                  placeholder="Enter name…"
+                  autoFocus
+                  value={characterNames[role.id] ?? ''}
+                  onChange={e => setCharacterNames(prev => ({ ...prev, [role.id]: e.target.value }))}
+                  style={{
+                    background: "transparent", border: "none",
+                    borderBottom: "1.5px solid #8a6030", outline: "none",
+                    fontSize: 11, fontWeight: 700, color: "#0a0500",
+                    fontFamily: "Georgia, serif", padding: "0 1px",
+                    width: "100%", boxSizing: "border-box", lineHeight: 1.2,
+                  }}
+                />
+              )}
+              <span style={{ fontSize: 6, color: "#8a6e3e", letterSpacing: "0.05em", lineHeight: 1 }}>DOB:</span>
+            </div>
+          )}
         </div>
-        {nameKey && (
-          <input
-            type="text"
-            maxLength={20}
-            placeholder="Character name…"
-            value={characterNames[nameKey] ?? ''}
-            onChange={e => setCharacterNames(prev => ({ ...prev, [nameKey]: e.target.value }))}
-            style={{
-              background: "#0a1525", border: "1px solid #1e3555", borderRadius: 4,
-              color: "#c8ddf4", fontSize: 11, padding: "3px 7px", width: "100%",
-              boxSizing: "border-box", fontFamily: "system-ui, sans-serif", outline: "none",
-            }}
-          />
-        )}
       </div>
     );
   }
 
-  const allNamed = placements.every((_, i) => (characterNames[`p${i + 1}`] ?? '').trim().length > 0);
+  const allNamed = placements.every(p => (characterNames[p.roleId] ?? '').trim().length > 0);
 
   return (
     <div style={overlayStyle}>

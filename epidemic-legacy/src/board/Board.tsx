@@ -29,6 +29,7 @@ import panicLevel4Src from "../../object/paniclevel4.png";
 import panicLevel5Src from "../../object/paniclevel5.png";
 const PANIC_LEVEL_SRCS = ["", panicLevel1Src, panicLevel2Src, panicLevel3Src, panicLevel4Src, panicLevel5Src];
 import { CityLayer, loadRoadblocks, saveRoadblocks, type RoadblockState } from "./CityLayer";
+import { CharacterCard, MONTH_NAMES, getCharacterName } from "./CharacterCard";
 import { BoardMarker, type MarkerState } from "./BoardMarker";
 import { CITIES } from "./cities";
 import { InfectionCard } from "./InfectionCard";
@@ -1227,6 +1228,10 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
         if (isJan && !diseaseNames[color]) setNamePopupColor(color as DiseaseColor);
       }
       setGrassrootsPending(null);
+      // Exit grassroots after cube is removed if all cards already discarded (3) or player can stop early
+      if (flexibleAidSelected.length >= 3) {
+        setEventMode(null); setFlexibleAidSelected([]);
+      }
       return;
     }
 
@@ -1650,6 +1655,19 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
             : eventMode === 'remote-treatment' ? `Remote Treatment — right-click a cube (${eventModeRemaining} left)`
             : eventMode === 'airlift' ? "Airlift — drag a pawn to any city"
             : eventMode === 'resilient-pop' ? "Resilient Population — click a card in the popup to remove it from the game"
+            : eventMode === 'grassroots' ? (
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                {grassrootsPending
+                  ? `Grassroots Program — right-click a ${grassrootsPending.color} cube to remove it`
+                  : `Grassroots Program — drag a city card to discard (${flexibleAidSelected.length}/3)`}
+                {!grassrootsPending && flexibleAidSelected.length >= 1 && (
+                  <button onClick={() => { setEventMode(null); setFlexibleAidSelected([]); }}
+                    style={{ padding: "2px 8px", fontSize: 11, borderRadius: 4, cursor: "pointer", background: "#1a3a1a", border: "1px solid #4a9a4a", color: "#88dd88" }}>
+                    Done
+                  </button>
+                )}
+              </span>
+            )
             : eventMode === 'flexible-aid' ? (
               <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
                 {`Flexible Aid — drag any card to the graveyard (${flexibleAidSelected.length}/3 selected)`}
@@ -1741,7 +1759,6 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
             <button onClick={() => {
               eligibleStickerCities.current = new Set(researchStations);
               researchStickersDestroyed.forEach(id => eligibleStickerCities.current.delete(id));
-              if (!eradicated.some(Boolean)) setEradicated(CURE_INDICES.map(() => true));
               setUpgradePicksRemaining(2);
             }} style={{ background: "#102030", border: "1px solid #3a6aaa", color: "#7bc4ff" }}>
               Test Upgrades
@@ -2642,13 +2659,8 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
               setEventMode(null); setFlexibleAidSelected([]);
             },
             onGrassrootsCubeRemoval: ({ color }: { color: string }) => {
-              // Triggered when a card is discarded in Grassroots mode — set pending cube removal of that color
+              // Card discarded — set pending cube removal; stay in grassroots until cube is removed
               setGrassrootsPending({ color });
-              // If 3 cards discarded, exit grassroots mode after granting the removal
-              const nextCount = flexibleAidSelected.length + 1;
-              if (nextCount >= 3) {
-                setEventMode(null); setFlexibleAidSelected([]);
-              }
             },
             onFundCardDiscard: (cardId: string, _fundPlayer: string, _fundIdx: number) => {
               if (!setup) return;
@@ -2962,7 +2974,23 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
               boxShadow: "0 6px 20px 0 #000e",
             }}>
               {city
-                ? <PlayerCard city={city} width={pxW} />
+                ? (
+                  <div style={{ position: "relative" }}>
+                    <PlayerCard city={city} width={pxW} />
+                    {cardStickers[cityId] !== undefined && (
+                      <img
+                        src={UNFUND_STICKER_SRCS[(cardStickers[cityId] as number) - 1]}
+                        alt={UNFUND_NAMES[(cardStickers[cityId] as number) - 1]}
+                        draggable={false}
+                        style={{
+                          position: "absolute", top: "50%", left: 2,
+                          transform: "translateY(-50%)",
+                          width: "calc(100% - 2px)", pointerEvents: "none", zIndex: 2,
+                        }}
+                      />
+                    )}
+                  </div>
+                )
                 : isFundDrag
                 ? <div style={{ width: "100%", aspectRatio: "2.5/3.5", overflow: "hidden", position: "relative" }}><img src={FUND_IMGS[cityId]} draggable={false} style={{ position: "absolute", bottom: 0, left: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: "bottom", display: "block" }} /></div>
                 : <div style={{ width: "100%", aspectRatio: "2.5/3.5", overflow: "hidden" }}><img src={epidemicCardSrc} alt="Epidemic" draggable={false} style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: "bottom", display: "block" }} /></div>
@@ -3026,10 +3054,11 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                   zIndex: 600,
                   pointerEvents: "none",
                 }}>
-                  <img
-                    src={roleSrc}
-                    draggable={false}
-                    style={{ width: 280, height: "auto", borderRadius: 10, boxShadow: "0 8px 36px #000e", display: "block", userSelect: "none" }}
+                  <CharacterCard
+                    roleSrc={roleSrc}
+                    characterName={getCharacterName(roleId ?? '')}
+                    dob={MONTH_NAMES[scenario] ?? scenario}
+                    width={280}
                   />
                 </div>
               )}
