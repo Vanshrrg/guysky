@@ -568,6 +568,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
     // Capture current closure values so handler is stable during gesture
     const snapLevels = mutationLevels;
     const snapErad = eradicated;
+    const isUpgradeFlow = upgradePicksRemaining > 0;
     const onMove = (ev: PointerEvent) => {
       ghost.style.left = `${ev.clientX}px`;
       ghost.style.top = `${ev.clientY}px`;
@@ -589,13 +590,19 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
       for (const [col, tx, ty] of TRAY) {
         if (Math.hypot(ev.clientX - tx, ev.clientY - ty) > 60) continue;
         const ci = COLOR_TO_CURE_IDX[col];
-        const isCalibrate = scenario === "calibrate-jan";
-        const isErad = ci !== undefined && (isCalibrate || snapErad[ci]);
-        const lvl = snapLevels[col] ?? 0;
-        if (!isErad || (!isCalibrate && lvl + 1 !== tier) || (!isCalibrate && mutCountAtLeast(tier) >= MUT_QUOTA[tier])) break;
-        // Valid drop — apply mutation
-        setMutationLevels({ ...snapLevels, [col]: tier });
-        if (!isCalibrate) { setPickingMutation(false); setUpgradePicksRemaining(n => n - 1); }
+        if (ci === undefined) break;
+        if (isUpgradeFlow) {
+          // Upgrade flow: enforce eradication, tier order, and quota
+          const isErad = snapErad[ci];
+          const lvl = snapLevels[col] ?? 0;
+          if (!isErad || lvl + 1 !== tier || mutCountAtLeast(tier) >= MUT_QUOTA[tier]) break;
+          setMutationLevels({ ...snapLevels, [col]: tier });
+          setPickingMutation(false);
+          setUpgradePicksRemaining(n => n - 1);
+        } else {
+          // Calibrate debug: allow any tier, skip checks
+          setMutationLevels({ ...snapLevels, [col]: tier });
+        }
         ghost.style.display = "none";
         setMutDragTier(null);
         applied = true;
@@ -1691,6 +1698,20 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                 getStorage().remove(LS_CODA_COLOR);
                 getStorage().remove(LS_PANIC_LEVELS);
                 getStorage().remove(LS_DISEASE_NAMES);
+                // Reset campaign-permanent sticker data
+                getStorage().remove(LS_RESEARCH_STICKERS);
+                getStorage().remove(LS_RESEARCH_STICKERS_DESTROYED);
+                getStorage().remove(LS_CARD_STICKERS);
+                // Reset research stations to Atlanta only
+                const atlantaOnly = new Set(["atlanta"]);
+                getStorage().set(LS_RESEARCH_STATIONS, JSON.stringify([...atlantaOnly]));
+                // Reset eradicated (all false)
+                getStorage().set(LS_ERADICATED, JSON.stringify([false, false, false, false]));
+                setResearchStations(atlantaOnly);
+                setEradicated([false, false, false, false]);
+                setResearchStickers([]);
+                setResearchStickersDestroyed([]);
+                setCardStickers({});
                 onMainMenu?.();
                 window.location.reload();
               }
@@ -2120,7 +2141,23 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                   cursor: isTop ? "pointer" : "default",
                 }}>
                 {city
-                  ? <PlayerCard city={city} width={pxW} />
+                  ? (
+                    <div style={{ position: "relative" }}>
+                      <PlayerCard city={city} width={pxW} />
+                      {cardStickers[cid] !== undefined && (
+                        <img
+                          src={UNFUND_STICKER_SRCS[(cardStickers[cid] as number) - 1]}
+                          alt={UNFUND_NAMES[(cardStickers[cid] as number) - 1]}
+                          draggable={false}
+                          style={{
+                            position: "absolute", top: "50%", left: 2,
+                            transform: "translateY(-50%)",
+                            width: "calc(100% - 2px)", pointerEvents: "none", zIndex: 2,
+                          }}
+                        />
+                      )}
+                    </div>
+                  )
                   : isFunding
                   ? <div style={{ width: "100%", aspectRatio: "2.5/3.5", overflow: "hidden", position: "relative" }}><img src={FUND_IMGS[cid]} draggable={false} style={{ position: "absolute", bottom: 0, left: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: "bottom", display: "block", pointerEvents: "none" }} /></div>
                   : <div style={{ width: "100%", aspectRatio: "2.5/3.5", overflow: "hidden" }}><img src={epidemicCardSrc} alt="Epidemic" draggable={false} style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: "bottom", display: "block", pointerEvents: "none" }} /></div>
@@ -2660,9 +2697,9 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                           alt={UNFUND_NAMES[(cardStickers[cityId] as number) - 1]}
                           draggable={false}
                           style={{
-                            position: "absolute", top: "50%", left: "50%",
-                            transform: "translate(-50%, -50%)",
-                            width: "100%", pointerEvents: "none", zIndex: 2,
+                            position: "absolute", top: "50%", left: 2,
+                            transform: "translateY(-50%)",
+                            width: "calc(100% - 2px)", pointerEvents: "none", zIndex: 2,
                           }}
                         />
                       )}
@@ -3012,11 +3049,15 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
           const ci = COLOR_TO_CURE_IDX[col];
           if (ci === undefined) return null;
           const isCalibrate = scenario === "calibrate-jan";
-          if (!isCalibrate && !eradicated[ci]) return null;
+          const isUpgFlow = upgradePicksRemaining > 0;
+          // In upgrade flow: only eradicated diseases are valid targets
+          if (isUpgFlow && !eradicated[ci]) return null;
+          // In calibrate debug: show all (no eradication gate)
+          if (!isCalibrate && !isUpgFlow && !eradicated[ci]) return null;
           const lvl = mutationLevels[col] ?? 0;
           const nextTier = (lvl + 1) as 1|2|3|4;
           if (nextTier > 4) return null;
-          if (!isCalibrate && mutCountAtLeast(nextTier) >= MUT_QUOTA[nextTier]) return null;
+          if (isUpgFlow && mutCountAtLeast(nextTier) >= MUT_QUOTA[nextTier]) return null;
           const meta = _SUPPLY_META.find(m => m.color === col);
           if (!meta) return null;
           return (
