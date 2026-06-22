@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect } from "react";
-import { LS_CHARACTER_NAMES, loadCharacterNames } from "./boardStorage";
+import { LS_CHARACTER_NAMES, loadCharacterNames, loadCharacterCal } from "./boardStorage";
 import medicSrc from "../../object/medic.png";
 import scientistSrc from "../../object/scientist.png";
 import researcherSrc from "../../object/researcher.png";
@@ -145,6 +145,7 @@ export function PreGamePhase({ playerCount, onBegin, onViewBoard, fundingCards, 
   // Snapshot of names that existed before this session — used to decide read-only.
   // Names typed THIS session stay editable; only prior-campaign names are locked.
   const [priorNames] = useState<Record<string, string>>(loadCharacterNames);
+  const nameCal = loadCharacterCal().name;
   useEffect(() => {
     localStorage.setItem(LS_CHARACTER_NAMES, JSON.stringify(characterNames));
   }, [characterNames, isJan]);
@@ -202,7 +203,8 @@ export function PreGamePhase({ playerCount, onBegin, onViewBoard, fundingCards, 
           {(placed || existingName.length > 0) && (
             <div style={{
               position: "absolute",
-              top: "calc(6.5% - 4px)", left: "5%", width: "34%",
+              top: `${nameCal.top}%`, left: `${nameCal.left}%`,
+              width: `${nameCal.w}%`, height: `${nameCal.h}%`,
               overflow: "hidden", zIndex: 5,
             }}>
               {isReadOnly ? (
@@ -212,6 +214,7 @@ export function PreGamePhase({ playerCount, onBegin, onViewBoard, fundingCards, 
                   lineHeight: 1.2, whiteSpace: "nowrap",
                   overflow: "hidden", textOverflow: "ellipsis",
                   pointerEvents: "none", userSelect: "none",
+                  height: "100%", display: "flex", alignItems: "center",
                 }}>
                   {existingName}
                 </div>
@@ -224,7 +227,7 @@ export function PreGamePhase({ playerCount, onBegin, onViewBoard, fundingCards, 
                   value={characterNames[role.id] ?? ''}
                   onChange={e => setCharacterNames(prev => ({ ...prev, [role.id]: e.target.value }))}
                   style={{
-                    width: "100%", boxSizing: "border-box",
+                    width: "100%", height: "100%", boxSizing: "border-box",
                     background: "transparent", border: "none", outline: "none",
                     fontFamily: "Georgia, 'Times New Roman', serif",
                     fontWeight: 700, fontSize: "2.8cqw", color: "#0a0500",

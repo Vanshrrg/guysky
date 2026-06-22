@@ -86,6 +86,34 @@ export const LS_EPIDEMIC_COUNT = "epidemic.epidemic-count.v1";
 
 // ─── Campaign-persistent keys ─────────────────────────────────────────────────
 export const LS_CHARACTER_NAMES = "epidemic.character-names.v1";
+
+// ─── Character card calibration (global, not per-campaign) ───────────────────
+export const LS_CHARACTER_CAL = "epidemic.character-cal.v1";
+
+export interface CharCalItem {
+  top:  number; // % of card height
+  left: number; // % of card width
+  w:    number; // % of card width
+  h:    number; // % of card height
+}
+export interface CharacterCalData {
+  name:     CharCalItem;
+  upgrade1: CharCalItem;
+  upgrade2: CharCalItem;
+  scar1:    CharCalItem;
+  scar2:    CharCalItem;
+}
+export const DEF_CHARACTER_CAL: CharacterCalData = {
+  name:     { top:  5, left:  4, w: 32, h:  7 },
+  upgrade1: { top: 44, left: 55, w: 40, h:  9 },
+  upgrade2: { top: 56, left: 55, w: 40, h:  9 },
+  scar1:    { top: 68, left: 55, w: 40, h:  9 },
+  scar2:    { top: 80, left: 55, w: 40, h:  9 },
+};
+export function loadCharacterCal(): CharacterCalData {
+  try { const r = localStorage.getItem(LS_CHARACTER_CAL); if (r) return JSON.parse(r); } catch { /**/ }
+  return DEF_CHARACTER_CAL;
+}
 export const LS_CODA_COLOR      = "epidemic.coda-color.v1";
 export const LS_DISEASE_NAMES   = "epidemic.disease-names.v1";
 export const LS_MUTATIONS            = "epidemic.mutations.v1";

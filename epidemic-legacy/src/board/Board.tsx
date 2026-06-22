@@ -73,6 +73,7 @@ import {
   LS_MUTATIONS,
   loadMutations,
   loadCharacterNames,
+  loadCharacterCal,
   LS_CITY_STICKER_OVERRIDES, loadCityStickerOverrides,
   LS_CARD_STICKERS, loadCardStickers,
   type StickerPos,
@@ -3054,7 +3055,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                   zIndex: 600,
                   pointerEvents: "none",
                 }}>
-                  <div style={{ position: "relative", display: "inline-block" }}>
+                  <div style={{ position: "relative", display: "inline-block", containerType: "inline-size" }}>
                     <img
                       src={roleSrc}
                       draggable={false}
@@ -3062,24 +3063,25 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                     />
                     {(() => {
                       const charName = loadCharacterNames()[roleId ?? ''] ?? '';
+                      const nc = loadCharacterCal().name;
                       return charName ? (
                         <div style={{
                           position: "absolute",
-                          top: "7%",
-                          left: "4%",
-                          width: "46%",
-                          fontFamily: "Georgia, 'Times New Roman', serif",
-                          fontWeight: 700,
-                          fontSize: 13,
-                          color: "#0a0500",
-                          lineHeight: 1.2,
-                          pointerEvents: "none",
-                          userSelect: "none",
+                          top: `${nc.top}%`, left: `${nc.left}%`,
+                          width: `${nc.w}%`, height: `${nc.h}%`,
                           overflow: "hidden",
-                          whiteSpace: "nowrap",
-                          textOverflow: "ellipsis",
+                          display: "flex", alignItems: "center",
+                          pointerEvents: "none",
                         }}>
-                          {charName}
+                          <div style={{
+                            fontFamily: "Georgia, 'Times New Roman', serif",
+                            fontWeight: 700, fontSize: "2.8cqw", color: "#0a0500",
+                            lineHeight: 1.2, whiteSpace: "nowrap",
+                            overflow: "hidden", textOverflow: "ellipsis",
+                            userSelect: "none", width: "100%",
+                          }}>
+                            {charName}
+                          </div>
                         </div>
                       ) : null;
                     })()}

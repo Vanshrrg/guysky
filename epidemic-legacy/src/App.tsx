@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { GameProvider } from "./state/GameContext";
 import { DevPanel } from "./dev/DevPanel";
+import { CharacterCalibrate } from "./board/CharacterCalibrate";
 import { Board } from "./board/Board";
 import { FundPhase, PreGamePhase, type PreGameSetup } from "./board/PreGamePhase";
 import { CITIES } from "./board/cities";
@@ -40,6 +41,7 @@ function initialPhase(scenarioId: string): Phase {
 
 export default function App() {
   const [showDev, setShowDev] = useState(false);
+  const [showCharCal, setShowCharCal] = useState(false);
   const [setup, setSetup] = useState<PreGameSetup | null>(null);
   const [scenario, setScenario] = useState("month0");
   const [phase, setPhase] = useState<Phase>(() => initialPhase("month0"));
@@ -179,6 +181,13 @@ export default function App() {
               Reset Campaign Save
             </button>
           )}
+          <button onClick={() => setShowCharCal(true)} style={{
+            padding: "5px 12px", fontSize: 12,
+            background: "#111e2e", color: "#7aafdd", border: "1px solid #1e3555",
+            borderRadius: 5, cursor: "pointer",
+          }}>
+            Character Cards
+          </button>
           <button onClick={() => setShowDev(v => !v)} style={{
             padding: "5px 12px", fontSize: 12,
             background: "#111e2e", color: "#556", border: "1px solid #1e2d3d",
@@ -235,6 +244,8 @@ export default function App() {
           </div>
         )}
       </div>
+
+      {showCharCal && <CharacterCalibrate onClose={() => setShowCharCal(false)} />}
     </GameProvider>
   );
 }
