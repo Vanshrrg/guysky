@@ -1684,6 +1684,48 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
       </div>
       <div style={{ display: "flex", gap: 8, marginBottom: 6, alignItems: "center" }}>
         <span style={{ fontSize: 10, color: "#556", fontFamily: "monospace" }}>build 2025-06-11j</span>
+        {scenario === "month0" && (
+          <button onClick={() => {
+            if (window.confirm("Reset Month 0? This only resets the current practice game, not campaign data.")) {
+              const m0 = makeStorage("m0");
+              setActiveStorage(m0);
+              clearGameState();
+              onMainMenu?.();
+              window.location.reload();
+            }
+          }} style={{ background: "#2a1a1a", border: "1px solid #664444", color: "#cc8888" }}>
+            Reset Month 0
+          </button>
+        )}
+        <button onClick={() => {
+          if (window.confirm("Reset ALL game state including permanent upgrades (mutations, stickers, research stations)?")) {
+            clearGameState();
+            getStorage().remove(LS_CODA_COLOR);
+            getStorage().remove(LS_PANIC_LEVELS);
+            getStorage().remove(LS_DISEASE_NAMES);
+            // Reset campaign-permanent sticker data
+            getStorage().remove(LS_RESEARCH_STICKERS);
+            getStorage().remove(LS_RESEARCH_STICKERS_DESTROYED);
+            getStorage().remove(LS_CARD_STICKERS);
+            // Reset positive mutations and all other permanent upgrades
+            getStorage().remove(LS_MUTATIONS);
+            // Reset research stations to Atlanta only
+            const atlantaOnly = new Set(["atlanta"]);
+            getStorage().set(LS_RESEARCH_STATIONS, JSON.stringify([...atlantaOnly]));
+            // Reset eradicated (all false)
+            getStorage().set(LS_ERADICATED, JSON.stringify([false, false, false, false]));
+            setResearchStations(atlantaOnly);
+            setEradicated([false, false, false, false]);
+            setResearchStickers([]);
+            setResearchStickersDestroyed([]);
+            setCardStickers({});
+            setMutationLevels({});
+            onMainMenu?.();
+            window.location.reload();
+          }
+        }} style={{ background: "#2a1a1a", border: "1px solid #664444", color: "#cc8888" }}>
+          Reset
+        </button>
         {scenario === "calibrate-jan" && (
           <>
             <button onClick={() => {
@@ -1691,32 +1733,6 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
               else setCalibrating(true);
             }}>
               {calibrating ? "Done calibrating" : "Calibrate markers"}
-            </button>
-            <button onClick={() => {
-              if (window.confirm("Reset all game state?")) {
-                clearGameState();
-                getStorage().remove(LS_CODA_COLOR);
-                getStorage().remove(LS_PANIC_LEVELS);
-                getStorage().remove(LS_DISEASE_NAMES);
-                // Reset campaign-permanent sticker data
-                getStorage().remove(LS_RESEARCH_STICKERS);
-                getStorage().remove(LS_RESEARCH_STICKERS_DESTROYED);
-                getStorage().remove(LS_CARD_STICKERS);
-                // Reset research stations to Atlanta only
-                const atlantaOnly = new Set(["atlanta"]);
-                getStorage().set(LS_RESEARCH_STATIONS, JSON.stringify([...atlantaOnly]));
-                // Reset eradicated (all false)
-                getStorage().set(LS_ERADICATED, JSON.stringify([false, false, false, false]));
-                setResearchStations(atlantaOnly);
-                setEradicated([false, false, false, false]);
-                setResearchStickers([]);
-                setResearchStickersDestroyed([]);
-                setCardStickers({});
-                onMainMenu?.();
-                window.location.reload();
-              }
-            }} style={{ background: "#2a1a1a", border: "1px solid #664444", color: "#cc8888" }}>
-              Reset
             </button>
             <button onClick={() => {
               eligibleStickerCities.current = new Set(researchStations);
