@@ -133,10 +133,10 @@ const INFECTION_RATE_VALUES = [2, 2, 2, 3, 3, 4, 4];
 // Order: black, yellow, red, blue (matches DISEASE_COLORS / placedPerColor indices).
 const _allPiles = defaultCubes(); // 96 positions, 24 per color in back→front order
 const _SUPPLY_META = [
-  { color: "black",  fill: "#1a1a1a", src: blackVirusSrc,  iconX: 20.52, iconY: 92.05, labelX: 22.6, labelY: 89.64, stickerX: 20.72, stickerY: 80.54, stickerW: 5.27, codaLabelX: 20.88, codaLabelY: 76.73 },
-  { color: "yellow", fill: "#FFFA73", src: yellowVirusSrc, iconX: 3.21,  iconY: 92.05, labelX: 5.3,  labelY: 89.64, stickerX: 3.51,  stickerY: 80.44, stickerW: 5.27, codaLabelX: 3.54,  codaLabelY: 76.63 },
-  { color: "red",    fill: "#cc1111", src: redVirusSrc,    iconX: 8.97,  iconY: 92.05, labelX: 11.1, labelY: 89.64, stickerX: 9.27,  stickerY: 80.54, stickerW: 5.27, codaLabelX: 9.42,  codaLabelY: 76.63 },
-  { color: "blue",   fill: "#0A00A1", src: blueVirusSrc,   iconX: 14.77, iconY: 92.05, labelX: 16.9, labelY: 89.64, stickerX: 15.09, stickerY: 80.54, stickerW: 5.27, codaLabelX: 15.18, codaLabelY: 76.63 },
+  { color: "black",  fill: "#1a1a1a", src: blackVirusSrc,  iconX: 20.60, iconY: 72.55, iconW: 3.68, labelX: 22.6, labelY: 89.64, stickerX: 20.72, stickerY: 80.54, stickerW: 5.27, codaLabelX: 20.88, codaLabelY: 76.73 },
+  { color: "yellow", fill: "#FFFA73", src: yellowVirusSrc, iconX: 3.71,  iconY: 72.55, iconW: 3.18, labelX: 5.3,  labelY: 89.64, stickerX: 3.51,  stickerY: 80.44, stickerW: 5.27, codaLabelX: 3.54,  codaLabelY: 76.63 },
+  { color: "red",    fill: "#cc1111", src: redVirusSrc,    iconX: 9.38,  iconY: 72.68, iconW: 3.02, labelX: 11.1, labelY: 89.64, stickerX: 9.27,  stickerY: 80.54, stickerW: 5.27, codaLabelX: 9.42,  codaLabelY: 76.63 },
+  { color: "blue",   fill: "#0A00A1", src: blueVirusSrc,   iconX: 15.02, iconY: 72.55, iconW: 2.93, labelX: 16.9, labelY: 89.64, stickerX: 15.09, stickerY: 80.54, stickerW: 5.27, codaLabelX: 15.18, codaLabelY: 76.63 },
 ];
 // SUPPLY_PILES is completed after imports are available (src filled at runtime below component def)
 const SUPPLY_PILES = _SUPPLY_META.map((m, ci) => ({
@@ -153,15 +153,6 @@ const SupplyPiles = memo(function SupplyPiles({ placedPerColor }: { placedPerCol
         const remaining = 24 - Math.min(24, placedPerColor[ci]);
         const pile = SUPPLY_PILES[ci].positions;
         return [
-          <img key={`supply-icon-${color}`} src={src} alt={color} draggable={false} style={{
-            position: "absolute",
-            left: `${SUPPLY_PILES[ci].iconX}%`, top: `${SUPPLY_PILES[ci].iconY}%`,
-            transform: "translate(-50%, -50%)",
-            width: "5%", height: "5%",
-            objectFit: "contain",
-            pointerEvents: "none",
-            zIndex: 4,
-          }} />,
           ...pile.slice(0, remaining).map((pos, i) => (
             <div key={`supply-cube-${color}-${i}`} style={{
               position: "absolute",
@@ -335,10 +326,6 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   const [mutDragTier, setMutDragTier] = useState<1|2|3|4|null>(null);
   const mutGhostRef = useRef<HTMLDivElement>(null);
   const [cityStickerOverrides, setCityStickerOverrides] = useState<Record<string, Partial<StickerPos>>>(() => loadCityStickerOverrides());
-  // Calibrate-jan: draggable positions for virus logos, disease sticker PNG, and COdA label
-  const [virusIconPos, setVirusIconPos] = useState<Record<string, { x: number; y: number }>>(() =>
-    Object.fromEntries(_SUPPLY_META.map(m => [m.color, { x: m.iconX, y: m.iconY }]))
-  );
   const eligibleStickerCities = useRef<Set<string>>(new Set());
   const [stationCapPick, setStationCapPick] = useState<string[] | null>(null); // null = inactive; else cities chosen so far
   const destroyStickerIfAny = (cityId: string) => {
@@ -390,7 +377,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   const [showDiscardPopup, setShowDiscardPopup] = useState(false);
   const [showPlayerDiscardPopup, setShowPlayerDiscardPopup] = useState(false);
   const [showDebugDeck, setShowDebugDeck] = useState(false);
-  const [actionLog, setActionLog] = useState<string[]>([]);
+  const [_actionLog, setActionLog] = useState<string[]>([]);
   const log = (msg: string) => setActionLog(prev => [...prev.slice(-49), msg]);
   const FUND_CARD_NAMES: Record<string, string> = {
     fund1: 'One Quiet Night', fund2: 'Remote Treatment',
@@ -1079,15 +1066,18 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
         return next;
       });
       // Rioting (panic 2-3): destroy any existing research station here // bypass hook
-      const newPanic = (panicLevels[cityId] ?? 0) + 1;
-      if (newPanic === 2 && researchStations.has(cityId)) {
-        const nextRS = new Set(researchStations); nextRS.delete(cityId);
-        setResearchStations(nextRS);
-        getStorage().set(LS_RESEARCH_STATIONS, JSON.stringify([...nextRS]));
-        log(`Research station in ${city.name} destroyed by rioting`);
-      }
-      if (newPanic === 2 && researchStickers.includes(cityId)) {
-        destroyStickerIfAny(cityId);
+      const curPanic = panicLevels[cityId] ?? 0;
+      const newPanic = Math.min(5, curPanic + 1);
+      if (curPanic < 2 && newPanic >= 2) {
+        if (researchStations.has(cityId)) {
+          const nextRS = new Set(researchStations); nextRS.delete(cityId);
+          setResearchStations(nextRS);
+          getStorage().set(LS_RESEARCH_STATIONS, JSON.stringify([...nextRS]));
+          log(`Research station in ${city.name} destroyed by rioting`);
+        }
+        if (researchStickers.includes(cityId)) {
+          destroyStickerIfAny(cityId);
+        }
       }
     }
     const newAlready = new Set([...baseAlready, cityId]);
@@ -1332,7 +1322,13 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
     : (() => {
         const posInRound = totalDealt % activeDealCount;
         const canExpand = totalDealt === activeDealCount && activeDealCount < 4;
-        if (posInRound === 0 && canExpand) return [0, activeDealCount];
+        if (posInRound === 0 && canExpand) {
+          // Round-1 boundary: may grow the table (deal to a new player) or begin
+          // round 2 with P1. But P1's second card (starting round 2) is only legal
+          // once at least 2 players are seated — no one-player games. So with only
+          // P1 dealt, force the next card to P2.
+          return activeDealCount >= 2 ? [0, activeDealCount] : [activeDealCount];
+        }
         return [posInRound];
       })();
 
@@ -1691,13 +1687,6 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                   style={{ background: "#101830", border: "1px solid #3d6cdc", color: "#7bb4ff" }}>
                   {pickingMutation ? "Close mutations" : "Add Mutation"}
                 </button>
-                <button onClick={() => {
-                  const text = _SUPPLY_META.map(m => `${m.color}: { iconX: ${(virusIconPos[m.color]?.x ?? m.iconX).toFixed(2)}, iconY: ${(virusIconPos[m.color]?.y ?? m.iconY).toFixed(2)} }`).join("\n");
-                  const ta = document.createElement('textarea'); ta.value = text;
-                  ta.style.cssText = 'position:fixed;opacity:0';
-                  document.body.appendChild(ta); ta.select(); document.execCommand('copy');
-                  document.body.removeChild(ta); alert('Copied:\n' + text);
-                }}>Copy virus pos</button>
               </>
             )}
             <span style={{ color: "#9ab", fontSize: 12, alignSelf: "center" }}>Drag to move</span>
@@ -1789,42 +1778,6 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
 
         {/* Disease supply piles — static scattered positions, front cubes hidden as placed */}
         <SupplyPiles placedPerColor={placedPerColor} />
-
-        {/* Calibrate-jan: draggable virus logo overlays (sit on top of SupplyPiles icons) */}
-        {calibrating && _SUPPLY_META.map(m => {
-          const pos = virusIconPos[m.color] ?? { x: m.iconX, y: m.iconY };
-          return (
-            <div
-              key={`virus-drag-${m.color}`}
-              onPointerDown={(e: React.PointerEvent<HTMLDivElement>) => {
-                e.stopPropagation(); e.preventDefault();
-                const el = e.currentTarget; el.setPointerCapture(e.pointerId);
-                const r = boardRef.current!.getBoundingClientRect();
-                const sx = e.clientX; const sy = e.clientY;
-                const ox = pos.x; const oy = pos.y;
-                let moved = false;
-                const onMove = (ev: PointerEvent) => {
-                  if (!moved && Math.hypot(ev.clientX - sx, ev.clientY - sy) < 6) return;
-                  moved = true;
-                  setVirusIconPos(prev => ({
-                    ...prev,
-                    [m.color]: { x: ox + (ev.clientX - sx) / r.width * 100, y: oy + (ev.clientY - sy) / r.height * 100 },
-                  }));
-                };
-                const onUp = () => { el.removeEventListener("pointermove", onMove as EventListener); el.removeEventListener("pointerup", onUp); };
-                el.addEventListener("pointermove", onMove as EventListener); el.addEventListener("pointerup", onUp);
-              }}
-              style={{
-                position: "absolute",
-                left: `${pos.x}%`, top: `${pos.y}%`,
-                width: "5%", aspectRatio: "1",
-                transform: "translate(-50%, -50%)",
-                cursor: "grab", zIndex: 10,
-                outline: "1px dashed #3ddc6d",
-              }}
-            />
-          );
-        })}
 
         <CityLayer
           roadblocks={roadblocks}
@@ -2174,8 +2127,9 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
           );
         })()}
 
-        {/* Infection discard ghost — always-present right-click target even when discard is empty */}
+        {/* Infection discard ghost — always-present click/right-click target even when discard is empty */}
         <div
+          onClick={() => { if (!calibrating && infectDiscard.length > 0) setShowDiscardPopup(true); }}
           onContextMenu={e => { e.preventDefault(); e.stopPropagation(); if (setup && epidemicState?.phase !== 'intensify') return; setDiscardMenu({ x: e.clientX, y: e.clientY }); }}
           style={{
             position: "absolute",
@@ -2183,7 +2137,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
             width: `${cardInfectionDiscard.w}%`, aspectRatio: "2.5/3.5",
             transform: "translate(-50%, -50%)",
             zIndex: 8,
-            cursor: "context-menu",
+            cursor: !calibrating && infectDiscard.length > 0 ? "pointer" : "context-menu",
           }}
         />
 
@@ -2509,8 +2463,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
             const next = researchStickersDestroyed.filter(c => c !== id);
             setResearchStickersDestroyed(next); getStorage().set(LS_RESEARCH_STICKERS_DESTROYED, JSON.stringify(next));
           };
-          // Always show one atlanta preview for each type so positions are visible outside calibrate mode
-          const destroyedIds = [...new Set([...researchStickersDestroyed, "atlanta"])];
+          const destroyedIds = [...new Set(researchStickersDestroyed)];
           return (
             <>
               {renderGroup(researchStickers, researchStickerSrc, "Research station sticker", stickerPos, activeHandlers, removeRsSticker)}
@@ -3115,11 +3068,20 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
         const level = panicLevels[cityMenu.cityId] ?? 0;
         const setLevel = (n: number) => {
           const clamped = Math.max(0, Math.min(5, n));
+          const prev = panicLevels[cityMenu.cityId] ?? 0;
           const next = { ...panicLevels, [cityMenu.cityId]: clamped };
           setPanicLevels(next);
           getStorage().set(LS_PANIC_LEVELS, JSON.stringify(next));
-          if (clamped >= 2 && researchStickers.includes(cityMenu.cityId)) {
-            destroyStickerIfAny(cityMenu.cityId);
+          if (prev < 2 && clamped >= 2) {
+            if (researchStations.has(cityMenu.cityId)) {
+              const nextRS = new Set(researchStations); nextRS.delete(cityMenu.cityId);
+              setResearchStations(nextRS);
+              getStorage().set(LS_RESEARCH_STATIONS, JSON.stringify([...nextRS]));
+              log(`Research station in ${city!.name} destroyed by rioting`);
+            }
+            if (researchStickers.includes(cityMenu.cityId)) {
+              destroyStickerIfAny(cityMenu.cityId);
+            }
           }
         };
         const hasStation = researchStations.has(cityMenu.cityId);
@@ -3787,20 +3749,6 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
             if (pendingEventCard) resolveEventCard(pendingEventCard);
           }}
         />
-      )}
-      {/* Action log */}
-      {actionLog.length > 0 && (
-        <div style={{
-          marginTop: 8, padding: "6px 12px",
-          background: "#060c12", border: "1px solid #1a2a3a",
-          borderRadius: 6, fontFamily: "system-ui, sans-serif", fontSize: 11,
-          color: "#889", maxHeight: 120, overflowY: "auto",
-          display: "flex", flexDirection: "column-reverse",
-        }}>
-          {[...actionLog].reverse().map((entry, i) => (
-            <div key={i} style={{ lineHeight: 1.8, color: i === 0 ? "#aac" : "#667" }}>{entry}</div>
-          ))}
-        </div>
       )}
     </div>
   );
