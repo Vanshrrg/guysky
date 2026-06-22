@@ -7,7 +7,8 @@ import { CITIES } from "./board/cities";
 import { shuffle } from "./board/boardGeometry";
 import {
   LS_HAND_CARDS, LS_PLAYER_CITIES, LS_TURN, LS_RESEARCH_STATIONS,
-  LS_PLAYER_DECK, LS_INFECT_DECK, LS_EPIDEMIC_COUNT, LS_PANIC_LEVELS,
+  LS_PLAYER_DECK, LS_INFECT_DECK, LS_INFECT_DISCARD, LS_CITY_INFECTION,
+  LS_EPIDEMIC_COUNT, LS_PANIC_LEVELS,
   clearGameState, clearAllSave, makeStorage, setActiveStorage,
 } from "./board/boardStorage";
 
@@ -79,11 +80,23 @@ export default function App() {
     const hand1 = deck.splice(0, 4);
     const hand2 = deck.splice(0, 4);
 
+    // Pre-seed the 9 initially infected cities (3 cubes × 3, 2 cubes × 3, 1 cube × 3)
+    const infectDeck = shuffle(CITIES.map(c => c.id));
+    const infectedCities = infectDeck.splice(0, 9);
+    const cityInfection: Record<string, Record<string, number>> = {};
+    infectedCities.forEach((cityId, i) => {
+      const city = CITIES.find(c => c.id === cityId)!;
+      const cubes = i < 3 ? 3 : i < 6 ? 2 : 1;
+      cityInfection[cityId] = { [city.color]: cubes };
+    });
+
     dev.set(LS_HAND_CARDS, JSON.stringify({ p1: hand1, p2: hand2, p3: [], p4: [] }));
     dev.set(LS_PLAYER_CITIES, JSON.stringify(["atlanta", "atlanta"]));
     dev.set(LS_RESEARCH_STATIONS, JSON.stringify(["atlanta"]));
     dev.set(LS_PLAYER_DECK, JSON.stringify(deck));
-    dev.set(LS_INFECT_DECK, JSON.stringify(shuffle(CITIES.map(c => c.id))));
+    dev.set(LS_INFECT_DECK, JSON.stringify(infectDeck));
+    dev.set(LS_INFECT_DISCARD, JSON.stringify(infectedCities));
+    dev.set(LS_CITY_INFECTION, JSON.stringify(cityInfection));
     dev.set(LS_EPIDEMIC_COUNT, "0");
     dev.set(LS_TURN, JSON.stringify({
       currentPlayerIndex: 0, actionsRemaining: 4, phase: "actions",
