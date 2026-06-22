@@ -142,6 +142,9 @@ export function PreGamePhase({ playerCount, onBegin, onViewBoard, fundingCards, 
   const roleRefs = useRef<Record<string, HTMLDivElement | null>>({});
   // Character names — only for January; persisted across restarts
   const [characterNames, setCharacterNames] = useState<Record<string, string>>(loadCharacterNames);
+  // Snapshot of names that existed before this session — used to decide read-only.
+  // Names typed THIS session stay editable; only prior-campaign names are locked.
+  const [priorNames] = useState<Record<string, string>>(loadCharacterNames);
   useEffect(() => {
     localStorage.setItem(LS_CHARACTER_NAMES, JSON.stringify(characterNames));
   }, [characterNames, isJan]);
@@ -181,7 +184,7 @@ export function PreGamePhase({ playerCount, onBegin, onViewBoard, fundingCards, 
     const tokenColor = slotMap[role.id] ?? null;
     const placed = placements.some(p => p.roleId === role.id);
     const existingName = characterNames[role.id] ?? '';
-    const isReadOnly = existingName.length > 0; // name is permanent once set
+    const isReadOnly = (priorNames[role.id] ?? '').length > 0; // locked only if named in a prior campaign month
 
     return (
       <div key={role.id} ref={el => { roleRefs.current[role.id] = el; }}
