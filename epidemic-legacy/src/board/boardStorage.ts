@@ -91,6 +91,7 @@ export const LS_DISEASE_NAMES   = "epidemic.disease-names.v1";
 export const LS_MUTATIONS            = "epidemic.mutations.v1";
 export const LS_MUTATION_STICKER_POS = "epidemic.mutation-sticker-pos.v1";
 export const LS_MUTATION_MARKER_POS  = "epidemic.mutation-marker-pos.v1";
+export const LS_CARD_STICKERS        = "epidemic.card-stickers.v1";
 
 // ─── Default positions ────────────────────────────────────────────────────
 export const DEF_CARD_INFECTION: CardState = { x: 75.98, y: 9.04, w: 11.59 };
@@ -139,6 +140,10 @@ export function loadResearchStickers(): string[] {
   const def = ["atlanta"];
   _sa.set(LS_RESEARCH_STICKERS, JSON.stringify(def));
   return def;
+}
+export function loadCardStickers(): Record<string, number> {
+  try { const r = _sa.get(LS_CARD_STICKERS); if (r) return JSON.parse(r); } catch { /* ignore */ }
+  return {};
 }
 export function loadResearchStickersDestroyed(): string[] {
   try { const r = _sa.get(LS_RESEARCH_STICKERS_DESTROYED); if (r) return JSON.parse(r); } catch { /* ignore */ }

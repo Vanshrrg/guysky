@@ -1467,6 +1467,7 @@ export default function App() {
                         }
                       }
                     }
+                    console.log('[DBG] trayDice:', JSON.stringify({r1:trayDice.radio1,r2:trayDice.radio2,r3:trayDice.radio3}), 'vals:', JSON.stringify({r1:values[trayDice.radio1],r2:values[trayDice.radio2],r3:values[trayDice.radio3]}), 'approachDist:', gameState.approachDistance, 'pendingRem:', JSON.stringify(radioPendingRemovals), 'panels:', JSON.stringify(gameState.approachPanels.map(p=>({d:p.d,pl:p.planes}))))
                     const effectivePlanes = (idx, raw) => Math.max(0, raw - (radioPendingRemovals[idx] || 0))
                     const destPlanes = effectivePlanes(0, gameState.approachPanels[0].planes)
                     const planeBtnStyle = { width: 18, height: 16, fontSize: 11, lineHeight: 1, padding: 0, cursor: 'pointer', border: '1px solid #4a6a8a', background: '#2a4a6a', color: '#fff', fontWeight: 'bold' }

@@ -48,10 +48,7 @@ export function CalibrateItem({
 
   const copy = () => {
     const text = `${label}: { x: ${pos.x.toFixed(2)}, y: ${pos.y.toFixed(2)}, w: ${pos.w.toFixed(2)} }`;
-    const ta = document.createElement("textarea"); ta.value = text;
-    ta.style.cssText = "position:fixed;opacity:0";
-    document.body.appendChild(ta); ta.select(); document.execCommand("copy");
-    document.body.removeChild(ta); alert("Copied: " + text);
+    navigator.clipboard.writeText(text).then(() => alert("Copied: " + text));
   };
 
   return (

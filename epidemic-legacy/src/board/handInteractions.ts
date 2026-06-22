@@ -202,8 +202,6 @@ export interface HandCardCtx {
   pendingDriveDiscard: { pawnKey: string; pi: number; targetId: string; color: string; required: number; discarded: number } | null;
   setPendingDriveDiscard: (d: { pawnKey: string; pi: number; targetId: string; color: string; required: number; discarded: number } | null) => void;
   onFundCardDiscard?: (cardId: string, player: string, idx: number) => void;
-  /** Called during the hand-limit discard phase when a fund card is dragged to discard — lets the UI ask "use ability or plain discard?" */
-  onFundDiscardPrompt?: (cardId: string, player: string, idx: number, x: number, y: number) => void;
   handStackOffset: (area: HandArea, count: number) => number;
   snapPawnToCity: (playerKey: string, cityId: string) => void;
   savePlayerCities: (next: string[]) => void;
@@ -217,8 +215,11 @@ export interface HandCardCtx {
   setSelectedHandCards: React.Dispatch<React.SetStateAction<string[]>>;
   setPlayerDiscard: React.Dispatch<React.SetStateAction<string[]>>;
   setPendingDiscardMenu: (m: { cityId: string; player: string; idx: number; x: number; y: number } | null) => void;
+  cardStickers: Record<string, number>;
+  setPendingUnfundMenu: (m: { cityId: string; player: string; idx: number; x: number; y: number } | null) => void;
   canPlayFund?: (cardId: string) => boolean;
   onFlexibleAidComplete?: () => void;
+  onGrassrootsCubeRemoval?: (opts: { color: string }) => void;
   log?: (msg: string) => void;
   cardLabel?: (id: string) => string;
   playerLabel?: (key: string) => string;
@@ -298,6 +299,20 @@ export function makeHandCardPointerDown(
 
       const isDiscardPhase = ctx.turnState.phase === 'discard' || ctx.turnState.phase === 'discard-action';
 
+      // Grassroots Program: discard up to 3 city cards; each grants a pending cube-removal of that card's color.
+      if (nearDiscard && ctx.setup && ctx.eventMode === 'grassroots' && !isFundingHand && cityId !== 'epidemic') {
+        if (ctx.flexibleAidSelected.length < 3) {
+          const cardColor = CITIES.find(c => c.id === cityId)?.color;
+          ctx.saveHandCards({ ...ctx.handCards, [player]: current.filter((_, j) => j !== i) });
+          ctx.setPlayerDiscard(prev => [...prev, cityId]);
+          const next = [...ctx.flexibleAidSelected, cityId];
+          ctx.setFlexibleAidSelected(() => next);
+          ctx.log?.(`${ctx.playerLabel?.(player) ?? player}: discarded ${ctx.cardLabel?.(cityId) ?? cityId} (Grassroots Program ${next.length}/3) — right-click a ${cardColor ?? ''} cube to remove it`);
+          ctx.onGrassrootsCubeRemoval?.({ color: cardColor ?? '' });
+        }
+        return;
+      }
+
       // Flexible Aid selection: city cards only (not fund/epidemic) — go to graveyard immediately; auto-exits at 3.
       if (nearDiscard && ctx.setup && ctx.eventMode === 'flexible-aid' && !isFundingHand && cityId !== 'epidemic') {
         if (ctx.flexibleAidSelected.length < 3) {
@@ -322,11 +337,6 @@ export function makeHandCardPointerDown(
       // Fund event cards: drag to discard to activate — fund8 now goes to graveyard immediately like others
       if (nearDiscard && ctx.setup && isFundingHand && cityId !== 'epidemic' && fundPhaseOk) {
         if (ctx.canPlayFund && !ctx.canPlayFund(cityId)) return;
-        // During hand-limit discard phase: ask whether to use ability or just discard
-        if (isDiscardPhase && ctx.onFundDiscardPrompt) {
-          ctx.onFundDiscardPrompt(cityId, player, i, ev.clientX, ev.clientY);
-          return;
-        }
         ctx.saveHandCards({ ...ctx.handCards, [player]: current.filter((_, j) => j !== i) });
         ctx.setPlayerDiscard(prev => [...prev, cityId]);
         ctx.log?.(`${ctx.playerLabel?.(player) ?? player}: played event card ${ctx.cardLabel?.(cityId) ?? cityId}`);
@@ -356,6 +366,12 @@ export function makeHandCardPointerDown(
           }
           return;
         }
+      }
+
+      // Unfunded Event: city card with sticker dragged to discard → show menu
+      if (nearDiscard && ctx.setup && !isFundingHand && cityId !== 'epidemic' && ctx.cardStickers[cityId] !== undefined) {
+        ctx.setPendingUnfundMenu({ cityId, player, idx: i, x: ev.clientX, y: ev.clientY });
+        return;
       }
 
       if (nearDiscard && ctx.setup && ctx.turnState.phase === "actions") {

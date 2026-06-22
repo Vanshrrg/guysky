@@ -2,12 +2,14 @@ import { useState } from "react";
 import { CITIES } from "./cities";
 import { InfectionCard } from "./InfectionCard";
 
-/** Forecast event: drag to reorder the top infection cards; top is drawn first. */
-export function ForecastPopup({ cards, onReorder, onConfirm, onCancel }: {
+/** Forecast event: drag to reorder the top infection cards; top is drawn first.
+ *  readOnly: show-only mode (Trending Data) — reorder disabled, confirm just closes. */
+export function ForecastPopup({ cards, onReorder, onConfirm, onCancel, readOnly }: {
   cards: string[];
   onReorder: (from: number, to: number) => void;
   onConfirm: () => void;
   onCancel: () => void;
+  readOnly?: boolean;
 }) {
   const [dragIdx, setDragIdx] = useState<number | null>(null);
   return (
@@ -16,27 +18,27 @@ export function ForecastPopup({ cards, onReorder, onConfirm, onCancel }: {
       <div onClick={e => e.stopPropagation()}
         style={{ background: "#0c133599", border: "2px solid #334", borderRadius: 10, padding: 20, backdropFilter: "blur(6px)" }}>
         <div style={{ color: "#aac", fontSize: 12, fontFamily: "monospace", marginBottom: 12 }}>
-          Forecast — drag to reorder, top card drawn first
+          {readOnly ? "Trending Data — top N infection cards (read only)" : "Forecast — drag to reorder, top card drawn first"}
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center" }}>
           {cards.map((cityId, i) => {
             const city = CITIES.find(c => c.id === cityId);
             if (!city) return null;
-            const isDragging = dragIdx === i;
+            const isDragging = !readOnly && dragIdx === i;
             return (
               <div key={cityId}
-                draggable
-                onDragStart={() => setDragIdx(i)}
-                onDragOver={e => e.preventDefault()}
-                onDrop={() => {
+                draggable={!readOnly}
+                onDragStart={readOnly ? undefined : () => setDragIdx(i)}
+                onDragOver={readOnly ? undefined : e => e.preventDefault()}
+                onDrop={readOnly ? undefined : () => {
                   if (dragIdx === null || dragIdx === i) return;
                   onReorder(dragIdx, i);
                   setDragIdx(null);
                 }}
-                onDragEnd={() => setDragIdx(null)}
+                onDragEnd={readOnly ? undefined : () => setDragIdx(null)}
                 style={{
                   opacity: isDragging ? 0.4 : 1,
-                  cursor: "grab",
+                  cursor: readOnly ? "default" : "grab",
                   outline: isDragging ? "2px dashed #88f" : "none",
                   borderRadius: 6,
                 }}>

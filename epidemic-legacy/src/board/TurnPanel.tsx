@@ -11,7 +11,7 @@ type CityColorCounts = Partial<Record<DiseaseColor, number>>;
 type CityInfectionMap = Record<string, CityColorCounts>;
 const INFECTION_RATE_VALUES = [2, 2, 2, 3, 3, 4, 4];
 
-type EventMode = null | "remote-treatment" | "govt-grant" | "resilient-pop" | "airlift" | "flexible-aid";
+type EventMode = null | "remote-treatment" | "govt-grant" | "resilient-pop" | "airlift" | "flexible-aid" | "grassroots";
 
 const ROLE_NAMES: Record<string, string> = {
   medic: "Medic", scientist: "Scientist", researcher: "Researcher",

@@ -1,5 +1,4 @@
 import updateSrc         from "../../object/Jan/update.png";
-import diseaseStickerSrc from "../../object/Jan/disease sticker.png";
 
 const COLOR_LABELS: Record<string, string> = {
   black: "Black", yellow: "Yellow", red: "Red", blue: "Blue",
@@ -46,8 +45,6 @@ export function CodaPopup({ codaColor, candidates, onChoose, onClickOverlay }: {
         {/* Card images */}
         <div style={{ display: "flex", gap: 14, justifyContent: "center" }}>
           <img src={updateSrc} alt="Update" draggable={false}
-            style={{ height: 160, width: "auto", borderRadius: 6, objectFit: "contain" }} />
-          <img src={diseaseStickerSrc} alt="COdA disease sticker" draggable={false}
             style={{ height: 160, width: "auto", borderRadius: 6, objectFit: "contain" }} />
         </div>
 

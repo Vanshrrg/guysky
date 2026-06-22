@@ -19,14 +19,17 @@ export function shuffle<T>(arr: T[]): T[] {
 // Seeded PRNG for deterministic pile positions.
 function pr(seed: number) { const x = Math.sin(seed * 9301 + 49297) * 233280; return x - Math.floor(x); }
 
+/** Pile center positions (% of board) — one per color, order: black, yellow, red, blue. */
+export const PILE_CENTERS = [
+  { x: 20.68, y: 91.03 }, // black
+  { x: 3.13,  y: 91.03 }, // yellow
+  { x: 8.82,  y: 91.03 }, // red
+  { x: 14.77, y: 91.03 }, // blue
+];
+
 /** Deterministic scattered positions for the 96 cube-supply markers (4 colors × 24). */
 export function defaultCubes() {
-  const centers = [
-    { x: 20.52, y: 89.41 }, // black
-    { x: 3.21,  y: 89.41 }, // yellow
-    { x: 8.97,  y: 89.41 }, // red
-    { x: 14.77, y: 89.41 }, // blue
-  ];
+  const centers = PILE_CENTERS;
   const result: { x: number; y: number }[] = [];
   for (let ci = 0; ci < 4; ci++) {
     const { x, y } = centers[ci];

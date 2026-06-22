@@ -15,6 +15,9 @@ import janDiseaseStickerSrc from "../../object/Jan/disease sticker.png";
 import researchSrc from "../../object/research.png";
 import researchStickerSrc from "../../object/Jan/researchstationsticker.png";
 import destroyedResearchStationSrc from "../../object/Jan/destroyedresearchstation.png";
+import unfundUpgrade1Src from "../../object/Jan/unfundupgrade1.png";
+import unfundUpgrade2Src from "../../object/Jan/unfundupgrade2.png";
+import unfundUpgrade3Src from "../../object/Jan/unfundupgrade3.png";
 import mutation1Src from "../../object/Jan/positivemutation1.png";
 import mutation2Src from "../../object/Jan/positivemutation2.png";
 import mutation3Src from "../../object/Jan/positivemutation3.png";
@@ -70,6 +73,7 @@ import {
   LS_MUTATIONS,
   loadMutations,
   LS_CITY_STICKER_OVERRIDES, loadCityStickerOverrides,
+  LS_CARD_STICKERS, loadCardStickers,
   type StickerPos,
   setActiveStorage, getStorage, makeStorage,
 } from "./boardStorage";
@@ -102,6 +106,8 @@ type CityInfectionMap = Record<string, CityColorCounts>;
 const MUT_QUOTA = [0, 3, 3, 2, 1] as const;
 const MUT_NAMES = ["", "Common Structure", "Efficient to Sequence", "Easier Agent", "Suppressed"] as const;
 const MUT_STICKER_SRCS = [mutation1Src, mutation2Src, mutation3Src, mutation4Src];
+const UNFUND_STICKER_SRCS = [unfundUpgrade1Src, unfundUpgrade2Src, unfundUpgrade3Src];
+const UNFUND_NAMES = ["Experimental Program", "Trending Data", "Grassroots Program"];
 // Reverse of COLOR_TO_CURE_IDX: cure-index → disease color
 const CURE_IDX_TO_COLOR: Record<number, DiseaseColor> = { 0: "red", 1: "yellow", 2: "blue", 3: "black" };
 
@@ -314,6 +320,8 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   const [panicLevels, setPanicLevels] = useState<Record<string, number>>(() => loadPanicLevels());
   const [researchStickers, setResearchStickers] = useState<string[]>(() => loadResearchStickers());
   const [researchStickersDestroyed, setResearchStickersDestroyed] = useState<string[]>(() => loadResearchStickersDestroyed());
+  const [cardStickers, setCardStickers] = useState<Record<string, number>>(() => loadCardStickers());
+  const saveCardStickers = (next: Record<string, number>) => { setCardStickers(next); getStorage().set(LS_CARD_STICKERS, JSON.stringify(next)); };
   const [stickerPos, setStickerPos] = useState<StickerPos>(() => loadResearchStickerPos());
   const [destroyedStickerPos, setDestroyedStickerPos] = useState<StickerPos>(() => loadDestroyedStickerPos());
   // Positive mutations: per-disease-color tier level (0–4), persistent across games.
@@ -323,6 +331,11 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   const [upgradePicksRemaining, setUpgradePicksRemaining] = useState(0);
   const [showRSStickerPanel, setShowRSStickerPanel] = useState(false);
   const [pickingMutation, setPickingMutation] = useState(false); // choosing which eradicated disease to mutate
+  const [placingUnfund, setPlacingUnfund] = useState(false);
+  const [selectedUnfund, setSelectedUnfund] = useState<number | null>(null); // sticker index 1-3
+  const [pendingUnfundMenu, setPendingUnfundMenu] = useState<{ cityId: string; player: string; idx: number; x: number; y: number } | null>(null);
+  const [forecastReadOnly, setForecastReadOnly] = useState(false);
+  const [grassrootsPending, setGrassrootsPending] = useState<{ color: string } | null>(null); // pending cube removal color
   const [mutDragTier, setMutDragTier] = useState<1|2|3|4|null>(null);
   const mutGhostRef = useRef<HTMLDivElement>(null);
   const [cityStickerOverrides, setCityStickerOverrides] = useState<Record<string, Partial<StickerPos>>>(() => loadCityStickerOverrides());
@@ -513,7 +526,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   const [selectedHandCards, setSelectedHandCards] = useState<string[]>([]);
   const [cureSelecting, setCureSelecting] = useState(false);
   const [quietNight, setQuietNight] = useState(false);
-  const [eventMode, setEventMode] = useState<null | 'remote-treatment' | 'govt-grant' | 'resilient-pop' | 'airlift' | 'flexible-aid'>(null);
+  const [eventMode, setEventMode] = useState<null | 'remote-treatment' | 'govt-grant' | 'resilient-pop' | 'airlift' | 'flexible-aid' | 'grassroots'>(null);
   const [eventModeRemaining, setEventModeRemaining] = useState(0);
   // Snapshot of cube state when Remote Treatment starts, so cancelling part-way
   // through restores any cubes already removed.
@@ -837,6 +850,12 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
 
   const confirmForecast = () => {
     if (!forecastCards) return;
+    if (forecastReadOnly) {
+      // Trending Data: read-only view — just close, do not modify the deck
+      setForecastCards(null);
+      setForecastReadOnly(false);
+      return;
+    }
     // forecastCards[0] = will be drawn first = goes on top of deck (last element)
     const base = infectDeck.slice(0, infectDeck.length - forecastCards.length);
     const newDeck = [...base, ...forecastCards.slice().reverse()];
@@ -1186,6 +1205,19 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
     const color = forceColor ?? (city.color as DiseaseColor);
     const cur = cityInfection[cityId]?.[color] ?? 0;
     if (cur <= 0) return;
+
+    // Grassroots Program: right-click a cube matching the pending color to remove it
+    if (eventMode === 'grassroots' && grassrootsPending && color === grassrootsPending.color) {
+      const next = { ...cityInfection, [cityId]: { ...cityInfection[cityId], [color]: cur - 1 } };
+      saveCityInfection(next);
+      const ci = COLOR_TO_CURE_IDX[color];
+      if (ci !== undefined && cured[ci] && !eradicated[ci] && totalOfColor(next, color) === 0) {
+        setEradicated(prev => { const n = [...prev]; n[ci] = true; return n; });
+        if (isJan && !diseaseNames[color]) setNamePopupColor(color as DiseaseColor);
+      }
+      setGrassrootsPending(null);
+      return;
+    }
 
     // Remote Treatment: right-click any cube to remove it; resolve after 2 removals
     if (eventMode === 'remote-treatment') {
@@ -2535,6 +2567,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
             handStackOffset, snapPawnToCity, savePlayerCities, saveHandCards,
             saveTurnState, consumeAction, setHandDrag, setHandHover, flexibleAidSelected, setFlexibleAidSelected,
             setSelectedHandCards, setPlayerDiscard, setPendingDiscardMenu,
+            cardStickers, setPendingUnfundMenu,
             log, cardLabel, playerLabel,
             canPlayFund: (cardId: string) => {
               if (cardId === 'fund4') return infectDiscard.length > 0;
@@ -2550,6 +2583,15 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                 getStorage().set(LS_TURN, JSON.stringify(next)); return next;
               });
               setEventMode(null); setFlexibleAidSelected([]);
+            },
+            onGrassrootsCubeRemoval: ({ color }: { color: string }) => {
+              // Triggered when a card is discarded in Grassroots mode — set pending cube removal of that color
+              setGrassrootsPending({ color });
+              // If 3 cards discarded, exit grassroots mode after granting the removal
+              const nextCount = flexibleAidSelected.length + 1;
+              if (nextCount >= 3) {
+                setEventMode(null); setFlexibleAidSelected([]);
+              }
             },
             onFundCardDiscard: (cardId: string, _fundPlayer: string, _fundIdx: number) => {
               if (!setup) return;
@@ -2609,7 +2651,23 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                   boxShadow: isSelected ? "0 0 12px 3px #ffdd44aa" : "none",
                 }}>
                 {city
-                  ? <PlayerCard city={city} width={pxW} />
+                  ? (
+                    <div style={{ position: "relative" }}>
+                      <PlayerCard city={city} width={pxW} />
+                      {cardStickers[cityId] !== undefined && (
+                        <img
+                          src={UNFUND_STICKER_SRCS[(cardStickers[cityId] as number) - 1]}
+                          alt={UNFUND_NAMES[(cardStickers[cityId] as number) - 1]}
+                          draggable={false}
+                          style={{
+                            position: "absolute", top: "50%", left: "50%",
+                            transform: "translate(-50%, -50%)",
+                            width: "100%", pointerEvents: "none", zIndex: 2,
+                          }}
+                        />
+                      )}
+                    </div>
+                  )
                   : isFundingHand
                   ? <div style={{ width: "100%", aspectRatio: "2.5/3.5", overflow: "hidden" }}><img src={FUND_IMGS[cityId]} draggable={false} style={{ width: "100%", height: "100%", objectFit: "fill", display: "block", pointerEvents: "none" }} /></div>
                   : <div style={{ width: "100%", aspectRatio: "2.5/3.5", overflow: "hidden" }}><img src={epidemicCardSrc} alt="Epidemic" draggable={false} style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: "bottom", display: "block", pointerEvents: "none" }} /></div>
@@ -3279,14 +3337,18 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
       {forecastCards && boardPxW > 0 && (
         <ForecastPopup
           cards={forecastCards}
-          onReorder={(from, to) => setForecastCards(prev => {
-            if (!prev) return prev;
-            const next = [...prev];
-            [next[from], next[to]] = [next[to], next[from]];
-            return next;
-          })}
+          readOnly={forecastReadOnly}
+          onReorder={(from, to) => {
+            if (forecastReadOnly) return;
+            setForecastCards(prev => {
+              if (!prev) return prev;
+              const next = [...prev];
+              [next[from], next[to]] = [next[to], next[from]];
+              return next;
+            });
+          }}
           onConfirm={confirmForecast}
-          onCancel={() => setForecastCards(null)}
+          onCancel={() => { setForecastCards(null); setForecastReadOnly(false); }}
         />
       )}
 
@@ -3334,7 +3396,23 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                     onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setDiscardCardMenu({ cityId, x: e.clientX, y: e.clientY }); }}
                     style={{ cursor: "context-menu" }}>
                     {city
-                      ? <PlayerCard city={city} width={110} />
+                      ? (
+                        <div style={{ position: "relative" }}>
+                          <PlayerCard city={city} width={110} />
+                          {cardStickers[cityId] !== undefined && (
+                            <img
+                              src={UNFUND_STICKER_SRCS[(cardStickers[cityId] as number) - 1]}
+                              alt={UNFUND_NAMES[(cardStickers[cityId] as number) - 1]}
+                              draggable={false}
+                              style={{
+                                position: "absolute", top: "50%", left: "50%",
+                                transform: "translate(-50%, -50%)",
+                                width: "100%", pointerEvents: "none", zIndex: 2,
+                              }}
+                            />
+                          )}
+                        </div>
+                      )
                       : isFundPopup
                       ? <div style={{ width: 110, aspectRatio: "2.5/3.5", overflow: "hidden", position: "relative" }}><img src={FUND_IMGS[cityId]} draggable={false} style={{ position: "absolute", bottom: 0, left: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: "bottom", display: "block" }} /></div>
                       : <div style={{ width: 110, aspectRatio: "2.5/3.5", overflow: "hidden" }}><img src={epidemicCardSrc} alt="Epidemic" draggable={false} style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: "bottom", display: "block" }} /></div>
@@ -3440,6 +3518,106 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
             }}>
             {`Build Research Station${researchStations.has(pendingDiscardMenu.cityId) ? " (already here)" : researchStations.size >= 6 ? " (pool empty)" : (panicLevels[pendingDiscardMenu.cityId] ?? 0) >= 2 ? " (rioting)" : ""}`}
           </MenuItem>
+        </ContextMenu>
+      )}
+
+      {/* Unfunded Event context menu */}
+      {pendingUnfundMenu && (
+        <ContextMenu x={pendingUnfundMenu.x} y={pendingUnfundMenu.y} minWidth={200}
+          overlayZIndex={1100} onClose={() => setPendingUnfundMenu(null)}>
+          <MenuItem padding="9px 14px" onClick={() => {
+            const { player, idx, cityId } = pendingUnfundMenu;
+            const stickerN = cardStickers[cityId];
+            const current = (handCards as Record<string,string[]>)[player] ?? [];
+            // Remove card from hand and add to discard
+            saveHandCards({ ...handCards, [player]: current.filter((_, j) => j !== idx) });
+            setPlayerDiscard(prev => [...prev, cityId]);
+            log(`${playerLabel(player)}: played Unfunded Event — ${UNFUND_NAMES[(stickerN as number) - 1]}`);
+            // Trigger the effect
+            if (stickerN === 1) {
+              // Experimental Program: remove 1 cube anywhere (remote-treatment, 1 cube)
+              cubeSnapshotRef.current = cityInfection;
+              setEventMode('remote-treatment');
+              setEventModeRemaining(1);
+            } else if (stickerN === 2) {
+              // Trending Data: show top N infection cards where N = current infection rate (read-only)
+              const n = INFECTION_RATE_VALUES[infectionPos] ?? 2;
+              const topN = infectDeck.slice(-n).reverse();
+              setForecastCards(topN);
+              setForecastReadOnly(true);
+            } else if (stickerN === 3) {
+              // Grassroots Program: discard up to 3 city cards, remove 1 matching-color cube per card
+              setEventMode('grassroots');
+              setFlexibleAidSelected([]);
+            }
+            setPendingUnfundMenu(null);
+          }}>
+            {`Use Unfunded Event: ${UNFUND_NAMES[(cardStickers[pendingUnfundMenu.cityId] as number) - 1]}`}
+          </MenuItem>
+          {/* Normal city options (phase-aware) */}
+          {turnState.phase === "actions" && pendingUnfundMenu.cityId === currentPlayerCityId && (
+            <>
+              <MenuItem padding="9px 14px" onClick={() => {
+                const { player, idx, cityId } = pendingUnfundMenu;
+                if ((panicLevels[cityId] ?? 0) >= 2) { log(`Charter Flight blocked — ${cardLabel(cityId)} is rioting`); setPendingUnfundMenu(null); return; }
+                const current = (handCards as Record<string,string[]>)[player] ?? [];
+                saveHandCards({ ...handCards, [player]: current.filter((_, j) => j !== idx) });
+                setPlayerDiscard(prev => [...prev, cityId]);
+                setHighlightCities(CITIES.map(c => c.id));
+                saveTurnState({ ...turnState, pendingCharter: true });
+                log(`${playerLabel(player)}: discarded ${cardLabel(cityId)} for Charter Flight — choose destination`);
+                setPendingUnfundMenu(null);
+              }}>
+                Charter Flight
+              </MenuItem>
+              <MenuItem padding="9px 14px"
+                disabled={researchStations.has(pendingUnfundMenu.cityId) || researchStations.size >= 6 || (panicLevels[pendingUnfundMenu.cityId] ?? 0) >= 2}
+                onClick={() => {
+                  const { player, idx, cityId } = pendingUnfundMenu;
+                  const current = (handCards as Record<string,string[]>)[player] ?? [];
+                  saveHandCards({ ...handCards, [player]: current.filter((_, j) => j !== idx) });
+                  setPlayerDiscard(prev => [...prev, cityId]);
+                  const next = new Set(researchStations); next.add(cityId);
+                  setResearchStations(next);
+                  getStorage().set(LS_RESEARCH_STATIONS, JSON.stringify([...next]));
+                  const nextTs = consumeAction(turnState);
+                  log(`${playerLabel(player)}: built research station in ${cardLabel(cityId)} (${nextTs.actionsRemaining} actions left)`);
+                  saveTurnState(nextTs);
+                  setPendingUnfundMenu(null);
+                }}>
+                {`Build Research Station${researchStations.has(pendingUnfundMenu.cityId) ? " (already here)" : researchStations.size >= 6 ? " (pool empty)" : (panicLevels[pendingUnfundMenu.cityId] ?? 0) >= 2 ? " (rioting)" : ""}`}
+              </MenuItem>
+            </>
+          )}
+          {turnState.phase === "actions" && pendingUnfundMenu.cityId !== currentPlayerCityId && (
+            <MenuItem padding="9px 14px" onClick={() => {
+              const { player, idx, cityId } = pendingUnfundMenu;
+              if ((panicLevels[cityId] ?? 0) >= 2 || (panicLevels[currentPlayerCityId] ?? 0) >= 2) { log(`Direct Flight blocked — rioting city`); setPendingUnfundMenu(null); return; }
+              const current = (handCards as Record<string,string[]>)[player] ?? [];
+              const nextCities = [...playerCities]; nextCities[turnState.currentPlayerIndex] = cityId;
+              savePlayerCities(nextCities); snapPawnToCity(player, cityId);
+              saveHandCards({ ...handCards, [player]: current.filter((_, j) => j !== idx) });
+              setPlayerDiscard(prev => [...prev, cityId]);
+              const nextTs = consumeAction(turnState);
+              log(`${playerLabel(player)}: Direct Flight to ${cardLabel(cityId)} (${nextTs.actionsRemaining} actions left)`);
+              saveTurnState(nextTs);
+              setPendingUnfundMenu(null);
+            }}>
+              Direct Flight
+            </MenuItem>
+          )}
+          {(turnState.phase === "discard" || turnState.phase === "discard-action") && (
+            <MenuItem padding="9px 14px" onClick={() => {
+              const { player, idx, cityId } = pendingUnfundMenu;
+              const current = (handCards as Record<string,string[]>)[player] ?? [];
+              saveHandCards({ ...handCards, [player]: current.filter((_, j) => j !== idx) });
+              setPlayerDiscard(prev => [...prev, cityId]);
+              log(`${playerLabel(player)}: discarded ${cardLabel(cityId)}`);
+              setPendingUnfundMenu(null);
+            }}>
+              Discard
+            </MenuItem>
+          )}
         </ContextMenu>
       )}
 
@@ -3584,7 +3762,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
       )}
 
       {/* Post-game upgrade selection */}
-      {upgradePicksRemaining > 0 && !showRSStickerPanel && !pickingMutation && (
+      {upgradePicksRemaining > 0 && !showRSStickerPanel && !pickingMutation && !placingUnfund && (
         <UpgradePopup
           picksRemaining={upgradePicksRemaining}
           onPick={(type: UpgradeType) => {
@@ -3593,9 +3771,12 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
               setHighlightCities([...eligibleStickerCities.current]);
             } else if (type === "positive-mutation") {
               setPickingMutation(true);
+            } else if (type === "unfunded-event") {
+              setPlacingUnfund(true);
+              setSelectedUnfund(null);
             }
           }}
-          onClose={calibrating ? () => setUpgradePicksRemaining(0) : undefined}
+          onClose={() => setUpgradePicksRemaining(0)}
         />
       )}
 
@@ -3674,6 +3855,94 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
           }}>← Back</button>
         </div>
       )}
+
+      {/* Unfunded Event placement picker */}
+      {placingUnfund && (() => {
+        const assignedValues = Object.values(cardStickers);
+        const unassignedStickers = [1, 2, 3].filter(n => !assignedValues.includes(n));
+        const eligibleCities = CITIES.filter(c => cardStickers[c.id] === undefined);
+        return (
+          <div style={{
+            position: "fixed", inset: 0, zIndex: 2500,
+            background: "rgba(2,6,14,0.92)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}>
+            <div style={{
+              background: "#0a1320", border: "2px solid #c07a30",
+              borderRadius: 14, padding: "24px 28px",
+              maxWidth: 680, width: "90vw", maxHeight: "85vh",
+              fontFamily: "system-ui, sans-serif", color: "#cfe8ff",
+              display: "flex", flexDirection: "column", gap: 14,
+              overflowY: "auto",
+            }}>
+              <div style={{ fontSize: 16, fontWeight: 700, color: "#e0a050" }}>
+                Unfunded Event — Attach a Sticker to a City Card
+              </div>
+              <div style={{ fontSize: 12, color: "#9ab" }}>
+                Select a sticker, then click a city to attach it permanently.
+              </div>
+              {/* Sticker selector */}
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                {unassignedStickers.map(n => (
+                  <div key={n}
+                    onClick={() => setSelectedUnfund(selectedUnfund === n ? null : n)}
+                    style={{
+                      cursor: "pointer", borderRadius: 8, padding: 8,
+                      border: selectedUnfund === n ? "2px solid #e0a050" : "2px solid #4a3820",
+                      background: selectedUnfund === n ? "#2a1a08" : "#10141c",
+                      display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
+                    }}>
+                    <img src={UNFUND_STICKER_SRCS[n - 1]} alt={UNFUND_NAMES[n - 1]}
+                      draggable={false} style={{ width: 64, height: "auto", objectFit: "contain" }} />
+                    <div style={{ fontSize: 10, color: "#c07a30", textAlign: "center", maxWidth: 80 }}>{UNFUND_NAMES[n - 1]}</div>
+                  </div>
+                ))}
+                {unassignedStickers.length === 0 && (
+                  <div style={{ color: "#556", fontSize: 12 }}>All stickers placed</div>
+                )}
+              </div>
+              {/* City grid */}
+              {selectedUnfund !== null && (
+                <>
+                  <div style={{ fontSize: 12, color: "#9ab" }}>
+                    Click a city to attach "{UNFUND_NAMES[selectedUnfund - 1]}":
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    {eligibleCities.map(city => (
+                      <div key={city.id}
+                        onClick={() => {
+                          if (selectedUnfund === null) return;
+                          saveCardStickers({ ...cardStickers, [city.id]: selectedUnfund });
+                          setUpgradePicksRemaining(n => n - 1);
+                          setSelectedUnfund(null);
+                          const remaining = [1, 2, 3].filter(n => n !== selectedUnfund && !Object.values(cardStickers).includes(n));
+                          if (upgradePicksRemaining <= 1 || remaining.length === 0) setPlacingUnfund(false);
+                        }}
+                        style={{
+                          cursor: "pointer", borderRadius: 6,
+                          border: "1.5px solid #4a3820",
+                          background: "#0f1a2a",
+                          padding: 4,
+                          transition: "border-color 0.1s",
+                        }}
+                        onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.borderColor = "#e0a050"; }}
+                        onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.borderColor = "#4a3820"; }}>
+                        <PlayerCard city={city} width={72} />
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+              <button onClick={() => setPlacingUnfund(false)} style={{
+                alignSelf: "flex-start", marginTop: 4, padding: "5px 14px", fontSize: 11,
+                borderRadius: 6, cursor: "pointer",
+                background: "#10141c", border: "1px solid #334", color: "#778",
+                fontFamily: "system-ui, sans-serif",
+              }}>← Back</button>
+            </div>
+          </div>
+        );
+      })()}
 
       {stationCapPick !== null && (() => {
         const remaining = researchStickers.filter(id => !stationCapPick.includes(id));

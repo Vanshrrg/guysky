@@ -9,7 +9,7 @@ export const PANIC_TRAY_POS: Record<string, { x: number; y: number }> = {
   "new-york":        { x: 36.62, y: 38.01 },
   "washington":      { x: 36.03, y: 42.46 },
   "atlanta":         { x: 24.98, y: 44.12 },
-  "london":          { x: 47.21, y: 26.97 },
+  "london":          { x: 45.45, y: 26.64 },
   "madrid":          { x: 44.85, y: 37.21 },
   "paris":           { x: 50.92, y: 37.56 },
   "essen":           { x: 51.64, y: 26.93 },
@@ -49,6 +49,7 @@ export const PANIC_TRAY_POS: Record<string, { x: number; y: number }> = {
   "bangkok":         { x: 78.61, y: 55.57 },
   "manila":          { x: 92.61, y: 60.18 },
   "jakarta":         { x: 78.68, y: 69.63 },
+  "ho-chi-minh-city": { x: 85.69, y: 60.24 },
   "sydney":          { x: 93.06, y: 84.53 },
 };
 
@@ -63,9 +64,9 @@ export const OBJECTIVE_SLOTS = [
 
 /** The 9 outbreak-track marker positions (index = outbreak count). */
 export const OUTBREAK_TRACK: { x: number; y: number }[] = [
-  { x: 3.87, y: 41.84 }, // 0
-  { x: 6.70, y: 45.22 }, // 1
-  { x: 3.82, y: 48.35 }, // 2
+  { x: 3.93, y: 41.74 }, // 0
+  { x: 6.82, y: 44.93 }, // 1
+  { x: 3.88, y: 47.96 }, // 2
   { x: 6.70, y: 51.66 }, // 3
   { x: 3.88, y: 54.98 }, // 4
   { x: 6.65, y: 58.02 }, // 5
@@ -76,11 +77,11 @@ export const OUTBREAK_TRACK: { x: number; y: number }[] = [
 
 /** The 7 infection-rate-track marker positions (index = infection rate step). */
 export const INFECTION_TRACK: { x: number; y: number }[] = [
-  { x: 72.72, y: 20.62 }, // 0
-  { x: 76.07, y: 20.47 }, // 1
-  { x: 79.46, y: 20.34 }, // 2
-  { x: 82.83, y: 20.33 }, // 3
-  { x: 86.20, y: 20.24 }, // 4
-  { x: 89.63, y: 20.07 }, // 5
+  { x: 72.90, y: 20.33 }, // 0
+  { x: 76.25, y: 20.27 }, // 1
+  { x: 79.58, y: 20.14 }, // 2
+  { x: 83.01, y: 20.23 }, // 3
+  { x: 86.38, y: 20.04 }, // 4
+  { x: 89.69, y: 20.07 }, // 5
   { x: 93.10, y: 20.07 }, // 6
 ];
