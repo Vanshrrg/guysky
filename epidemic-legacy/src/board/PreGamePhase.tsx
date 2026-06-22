@@ -200,37 +200,39 @@ export function PreGamePhase({ playerCount, onBegin, onViewBoard, fundingCards, 
           )}
           {/* Name — sits directly on the printed CHARACTER NAME area of the card image */}
           {(placed || existingName.length > 0) && (
-            isReadOnly ? (
-              <div style={{
-                position: "absolute",
-                top: "calc(6.5% - 4px)", left: "5%", width: "34%",
-                fontFamily: "Georgia, 'Times New Roman', serif",
-                fontWeight: 700, fontSize: "2.8cqw", color: "#0a0500",
-                lineHeight: 1.2, pointerEvents: "none", userSelect: "none",
-                overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis",
-                zIndex: 5,
-              }}>
-                {existingName}
-              </div>
-            ) : (
-              <input
-                type="text"
-                maxLength={20}
-                placeholder="Type name…"
-                autoFocus
-                value={characterNames[role.id] ?? ''}
-                onChange={e => setCharacterNames(prev => ({ ...prev, [role.id]: e.target.value }))}
-                style={{
-                  position: "absolute",
-                  top: "calc(6.5% - 4px)", left: "5%", width: "34%",
-                  background: "transparent", border: "none", outline: "none",
+            <div style={{
+              position: "absolute",
+              top: "calc(6.5% - 4px)", left: "5%", width: "34%",
+              overflow: "hidden", zIndex: 5,
+            }}>
+              {isReadOnly ? (
+                <div style={{
                   fontFamily: "Georgia, 'Times New Roman', serif",
                   fontWeight: 700, fontSize: "2.8cqw", color: "#0a0500",
-                  lineHeight: 1.2, padding: 0, zIndex: 5,
-                  caretColor: "#0a0500", overflow: "hidden",
-                }}
-              />
-            )
+                  lineHeight: 1.2, whiteSpace: "nowrap",
+                  overflow: "hidden", textOverflow: "ellipsis",
+                  pointerEvents: "none", userSelect: "none",
+                }}>
+                  {existingName}
+                </div>
+              ) : (
+                <input
+                  type="text"
+                  maxLength={20}
+                  placeholder="Type name…"
+                  autoFocus
+                  value={characterNames[role.id] ?? ''}
+                  onChange={e => setCharacterNames(prev => ({ ...prev, [role.id]: e.target.value }))}
+                  style={{
+                    width: "100%", boxSizing: "border-box",
+                    background: "transparent", border: "none", outline: "none",
+                    fontFamily: "Georgia, 'Times New Roman', serif",
+                    fontWeight: 700, fontSize: "2.8cqw", color: "#0a0500",
+                    lineHeight: 1.2, padding: 0, caretColor: "#0a0500",
+                  }}
+                />
+              )}
+            </div>
           )}
         </div>
       </div>
