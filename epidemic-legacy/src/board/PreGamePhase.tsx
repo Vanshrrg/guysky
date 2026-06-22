@@ -181,7 +181,7 @@ export function PreGamePhase({ playerCount, onBegin, onViewBoard, fundingCards, 
     const tokenColor = slotMap[role.id] ?? null;
     const placed = placements.some(p => p.roleId === role.id);
     const existingName = characterNames[role.id] ?? '';
-    const isReadOnly = existingName.length > 0 && !placed; // already named in a prior campaign month
+    const isReadOnly = existingName.length > 0; // name is permanent once set
 
     return (
       <div key={role.id} ref={el => { roleRefs.current[role.id] = el; }}
@@ -195,8 +195,8 @@ export function PreGamePhase({ playerCount, onBegin, onViewBoard, fundingCards, 
               <PawnSvg color={tokenColor} size={36} />
             </div>
           )}
-          {/* Name overlay — shown when a token is placed on this role */}
-          {placed && (
+          {/* Name overlay — shown when placed this month OR already named from prior month */}
+          {(placed || existingName.length > 0) && (
             <div style={{
               position: "absolute",
               top: 0, left: 0, right: "50%",  // covers left-half of card (CHARACTER NAME zone)

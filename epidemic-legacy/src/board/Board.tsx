@@ -29,7 +29,6 @@ import panicLevel4Src from "../../object/paniclevel4.png";
 import panicLevel5Src from "../../object/paniclevel5.png";
 const PANIC_LEVEL_SRCS = ["", panicLevel1Src, panicLevel2Src, panicLevel3Src, panicLevel4Src, panicLevel5Src];
 import { CityLayer, loadRoadblocks, saveRoadblocks, type RoadblockState } from "./CityLayer";
-import { CharacterCard, MONTH_NAMES, getCharacterName } from "./CharacterCard";
 import { BoardMarker, type MarkerState } from "./BoardMarker";
 import { CITIES } from "./cities";
 import { InfectionCard } from "./InfectionCard";
@@ -73,6 +72,7 @@ import {
   loadResearchStickers, loadResearchStickersDestroyed, loadResearchStickerPos, loadDestroyedStickerPos,
   LS_MUTATIONS,
   loadMutations,
+  loadCharacterNames,
   LS_CITY_STICKER_OVERRIDES, loadCityStickerOverrides,
   LS_CARD_STICKERS, loadCardStickers,
   type StickerPos,
@@ -3054,12 +3054,36 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
                   zIndex: 600,
                   pointerEvents: "none",
                 }}>
-                  <CharacterCard
-                    roleSrc={roleSrc}
-                    characterName={getCharacterName(roleId ?? '')}
-                    dob={MONTH_NAMES[scenario] ?? scenario}
-                    width={280}
-                  />
+                  <div style={{ position: "relative", display: "inline-block" }}>
+                    <img
+                      src={roleSrc}
+                      draggable={false}
+                      style={{ width: 280, height: "auto", borderRadius: 10, boxShadow: "0 8px 36px #000e", display: "block", userSelect: "none" }}
+                    />
+                    {(() => {
+                      const charName = loadCharacterNames()[roleId ?? ''] ?? '';
+                      return charName ? (
+                        <div style={{
+                          position: "absolute",
+                          top: "7%",
+                          left: "4%",
+                          width: "46%",
+                          fontFamily: "Georgia, 'Times New Roman', serif",
+                          fontWeight: 700,
+                          fontSize: 13,
+                          color: "#0a0500",
+                          lineHeight: 1.2,
+                          pointerEvents: "none",
+                          userSelect: "none",
+                          overflow: "hidden",
+                          whiteSpace: "nowrap",
+                          textOverflow: "ellipsis",
+                        }}>
+                          {charName}
+                        </div>
+                      ) : null;
+                    })()}
+                  </div>
                 </div>
               )}
             </div>
