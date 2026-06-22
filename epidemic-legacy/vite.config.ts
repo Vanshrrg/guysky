@@ -4,6 +4,7 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [react()],
+  base: "/guysky/epidemic-legacy/",
   server: { port: Number(process.env.PORT) || 5174 },
   test: {
     globals: true,
