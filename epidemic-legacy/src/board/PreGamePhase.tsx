@@ -203,7 +203,7 @@ export function PreGamePhase({ playerCount, onBegin, onViewBoard, fundingCards, 
             isReadOnly ? (
               <div style={{
                 position: "absolute",
-                top: "6.5%", left: "5%", width: "42%",
+                top: "calc(6.5% - 4px)", left: "5%", width: "42%",
                 fontFamily: "Georgia, 'Times New Roman', serif",
                 fontWeight: 700, fontSize: 11, color: "#0a0500",
                 lineHeight: 1.2, pointerEvents: "none", userSelect: "none",
@@ -222,7 +222,7 @@ export function PreGamePhase({ playerCount, onBegin, onViewBoard, fundingCards, 
                 onChange={e => setCharacterNames(prev => ({ ...prev, [role.id]: e.target.value }))}
                 style={{
                   position: "absolute",
-                  top: "6.5%", left: "5%", width: "42%",
+                  top: "calc(6.5% - 4px)", left: "5%", width: "42%",
                   background: "transparent", border: "none", outline: "none",
                   fontFamily: "Georgia, 'Times New Roman', serif",
                   fontWeight: 700, fontSize: 11, color: "#0a0500",
