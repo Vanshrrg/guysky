@@ -579,13 +579,12 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
       const board = boardRef.current;
       if (!board) { ghost.style.display = "none"; setMutDragTier(null); return; }
       const br = board.getBoundingClientRect();
-      // Disease tray screen positions (from _SUPPLY_META iconX/iconY)
-      const TRAY: [DiseaseColor, number, number][] = [
-        ["yellow", br.left + 3.21/100 * br.width,  br.top + 89.41/100 * br.height],
-        ["red",    br.left + 8.97/100 * br.width,  br.top + 89.41/100 * br.height],
-        ["blue",   br.left + 14.77/100 * br.width, br.top + 89.41/100 * br.height],
-        ["black",  br.left + 20.52/100 * br.width, br.top + 89.41/100 * br.height],
-      ];
+      // Disease tray screen positions — must match _SUPPLY_META iconX/iconY
+      const TRAY: [DiseaseColor, number, number][] = _SUPPLY_META.map(m => [
+        m.color as DiseaseColor,
+        br.left + m.iconX / 100 * br.width,
+        br.top  + m.iconY / 100 * br.height,
+      ]);
       let applied = false;
       for (const [col, tx, ty] of TRAY) {
         if (Math.hypot(ev.clientX - tx, ev.clientY - ty) > 60) continue;
