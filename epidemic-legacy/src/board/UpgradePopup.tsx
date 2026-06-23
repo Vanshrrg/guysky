@@ -1,8 +1,9 @@
 import researchStickerSrc from "../../object/Jan/researchstationsticker.png";
 import positiveMutationSrc from "../../object/Jan/positivemutation1.png";
 import unfundUpgradeSrc from "../../object/Jan/unfundupgrade1.png";
+import charUpgradeSrc from "../../object/Jan/characterupgrade1.png";
 
-export type UpgradeType = "research-station" | "positive-mutation" | "unfunded-event";
+export type UpgradeType = "research-station" | "positive-mutation" | "unfunded-event" | "character-upgrade";
 
 const TOTAL_RS_STICKERS = 8;
 
@@ -69,8 +70,6 @@ export function ResearchStickerPanel({
     </>
   );
 }
-
-const PLACEHOLDER_LABELS = ["Character Upgrade"];
 
 /**
  * Shown after the win/loss overlay is dismissed. Player picks 2 upgrades
@@ -155,20 +154,19 @@ export function UpgradePopup({ picksRemaining, onPick, onClose }: {
             Unfunded Event
           </button>
 
-          {PLACEHOLDER_LABELS.map(label => (
-            <div key={label}
-              style={{
-                display: "flex", flexDirection: "column", alignItems: "center", gap: 8,
-                padding: "14px 18px", width: 130,
-                background: "#10141c", border: "2px solid #2a3142",
-                borderRadius: 10, color: "#556", opacity: 0.6,
-                fontFamily: "system-ui, sans-serif", fontSize: 12, fontWeight: 600,
-              }}>
-              <div style={{ width: 48, height: 48, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>?</div>
-              {label}
-              <div style={{ fontSize: 10, color: "#445" }}>Coming soon</div>
-            </div>
-          ))}
+          <button
+            onClick={() => onPick("character-upgrade")}
+            style={{
+              display: "flex", flexDirection: "column", alignItems: "center", gap: 8,
+              padding: "14px 18px", width: 130,
+              background: "#0f1e30", border: "2px solid #9a44ff",
+              borderRadius: 10, cursor: "pointer", color: "#cfe8ff",
+              fontFamily: "system-ui, sans-serif", fontSize: 12, fontWeight: 600,
+            }}>
+            <img src={charUpgradeSrc} alt="Character Upgrade" draggable={false}
+              style={{ width: 48, height: 48, objectFit: "contain" }} />
+            Character Upgrade
+          </button>
         </div>
       </div>
     </div>

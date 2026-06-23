@@ -28,17 +28,20 @@ interface ItemDef {
   label: string;
   color: string;
   src?: string;
-  resizeH?: boolean; // whether height is resizable (textbox yes, stickers no)
+  freeResize?: boolean; // true = free W+H (textbox); false = ratio-locked corner (sticker)
+  generalistOnly?: boolean;
 }
 
 const ITEMS: ItemDef[] = [
-  { key: "name",          label: "NAME",           color: "#3ddc6d", src: undefined,   resizeH: true  },
-  { key: "relationship1", label: "RELATIONSHIP 1", color: "#44aaff", src: rel1Src,     resizeH: false },
-  { key: "relationship2", label: "RELATIONSHIP 2", color: "#0077cc", src: rel2Src,     resizeH: false },
-  { key: "upgrade1",      label: "UPGRADE 1",      color: "#ffcc44", src: upgrade1Src, resizeH: false },
-  { key: "upgrade2",      label: "UPGRADE 2",      color: "#ff8844", src: upgrade2Src, resizeH: false },
-  { key: "scar1",         label: "SCAR 1",         color: "#ff4466", src: scar1Src,    resizeH: false },
-  { key: "scar2",         label: "SCAR 2",         color: "#cc44ff", src: scar2Src,    resizeH: false },
+  { key: "name",          label: "NAME",           color: "#3ddc6d", src: undefined,   freeResize: true  },
+  { key: "relationship1", label: "RELATIONSHIP 1", color: "#44aaff", src: rel1Src,     freeResize: false },
+  { key: "relationship2", label: "RELATIONSHIP 2", color: "#0077cc", src: rel2Src,     freeResize: false },
+  { key: "upgrade1",      label: "UPGRADE 1",      color: "#ffcc44", src: upgrade1Src, freeResize: false },
+  { key: "upgrade2",      label: "UPGRADE 2",      color: "#ff8844", src: upgrade2Src, freeResize: false },
+  { key: "upgrade3",      label: "UPGRADE 3",      color: "#cc9900", src: upgrade1Src, freeResize: false, generalistOnly: true },
+  { key: "upgrade4",      label: "UPGRADE 4",      color: "#aa6600", src: upgrade2Src, freeResize: false, generalistOnly: true },
+  { key: "scar1",         label: "SCAR 1",         color: "#ff4466", src: scar1Src,    freeResize: false },
+  { key: "scar2",         label: "SCAR 2",         color: "#cc44ff", src: scar2Src,    freeResize: false },
 ];
 
 // ── Single draggable / resizable overlay item ─────────────────────────────────
@@ -104,7 +107,8 @@ function CalOverlayItem({
     el.addEventListener("pointerup", onUp);
   }, [item, cardRef, onChange]);
 
-  const startResizeBoth = useCallback((e: React.PointerEvent) => {
+  // Free corner resize (textbox — W and H independently)
+  const startResizeFree = useCallback((e: React.PointerEvent) => {
     e.stopPropagation(); e.preventDefault();
     const el = e.currentTarget as HTMLElement;
     el.setPointerCapture(e.pointerId);
@@ -115,6 +119,29 @@ function CalOverlayItem({
       w: Math.max(2, ow + (ev.clientX - sx) / rect.width  * 100),
       h: Math.max(2, oh + (ev.clientY - sy) / rect.height * 100),
     });
+    const onUp = () => {
+      el.removeEventListener("pointermove", onMove as EventListener);
+      el.removeEventListener("pointerup", onUp);
+    };
+    el.addEventListener("pointermove", onMove as EventListener);
+    el.addEventListener("pointerup", onUp);
+  }, [item, cardRef, onChange]);
+
+  // Ratio-locked corner resize (stickers — drag by whichever axis moved more)
+  const startResizeRatio = useCallback((e: React.PointerEvent) => {
+    e.stopPropagation(); e.preventDefault();
+    const el = e.currentTarget as HTMLElement;
+    el.setPointerCapture(e.pointerId);
+    const rect = cardRef.current!.getBoundingClientRect();
+    const sx = e.clientX, sy = e.clientY, ow = item.w, oh = item.h;
+    const ratio = oh / ow; // locked aspect ratio
+    const onMove = (ev: PointerEvent) => {
+      const dw = (ev.clientX - sx) / rect.width  * 100;
+      const dh = (ev.clientY - sy) / rect.height * 100;
+      // Use whichever delta is larger in magnitude
+      const newW = Math.max(2, ow + (Math.abs(dw) >= Math.abs(dh) ? dw : dh / ratio));
+      onChange({ ...item, w: newW, h: newW * ratio });
+    };
     const onUp = () => {
       el.removeEventListener("pointermove", onMove as EventListener);
       el.removeEventListener("pointerup", onUp);
@@ -173,7 +200,7 @@ function CalOverlayItem({
         </div>
       )}
 
-      {/* Right-edge resize handle (width) */}
+      {/* Right-edge handle — width */}
       <div
         onPointerDown={startResizeW}
         style={{
@@ -183,43 +210,41 @@ function CalOverlayItem({
         }}
       />
 
-      {/* Bottom-edge resize handle (height — only for textbox) */}
-      {def.resizeH && (
-        <div
-          onPointerDown={startResizeH}
-          style={{
-            position: "absolute", bottom: 0, left: 0,
-            width: "100%", height: 7,
-            cursor: "s-resize", background: `${c}66`, zIndex: 11,
-          }}
-        />
-      )}
+      {/* Bottom-edge handle — height */}
+      <div
+        onPointerDown={startResizeH}
+        style={{
+          position: "absolute", bottom: 0, left: 0,
+          width: "calc(100% - 10px)", height: 7,
+          cursor: "s-resize", background: `${c}66`, zIndex: 11,
+        }}
+      />
 
-      {/* Bottom-right corner resize (both W+H — only for textbox) */}
-      {def.resizeH && (
-        <div
-          onPointerDown={startResizeBoth}
-          style={{
-            position: "absolute", bottom: 0, right: 0,
-            width: 10, height: 10,
-            cursor: "se-resize", background: c, zIndex: 12,
-          }}
-        />
-      )}
+      {/* Bottom-right corner — free resize (textbox) or ratio-locked (sticker) */}
+      <div
+        onPointerDown={def.freeResize ? startResizeFree : startResizeRatio}
+        style={{
+          position: "absolute", bottom: 0, right: 0,
+          width: 12, height: 12,
+          cursor: "se-resize", background: c, zIndex: 12,
+        }}
+      />
     </div>
   );
 }
 
 // ── One role card with all overlays ──────────────────────────────────────────
 function CalCard({
-  roleSrc, roleName, cal, onChange,
+  roleId, roleSrc, roleName, cal, onChange,
 }: {
+  roleId: string;
   roleSrc: string;
   roleName: string;
   cal: CharacterCalData;
   onChange: (key: keyof CharacterCalData, next: CharCalItem) => void;
 }) {
   const cardRef = useRef<HTMLDivElement>(null);
+  const visibleItems = ITEMS.filter(def => !def.generalistOnly || roleId === "generalist");
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
@@ -236,7 +261,7 @@ function CalCard({
           draggable={false}
           style={{ width: "100%", height: "auto", display: "block", userSelect: "none", pointerEvents: "none" }}
         />
-        {ITEMS.map(def => (
+        {visibleItems.map(def => (
           <CalOverlayItem
             key={def.key}
             item={cal[def.key]}
@@ -303,8 +328,8 @@ export function CharacterCalibrate({ onClose }: Props) {
         {/* Legend */}
         <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
           {ITEMS.map(def => (
-            <span key={def.key} style={{ fontSize: 10, color: def.color, fontWeight: 700 }}>
-              ▪ {def.label}
+            <span key={def.key} style={{ fontSize: 10, color: def.color, fontWeight: 700, opacity: def.generalistOnly ? 0.7 : 1 }}>
+              ▪ {def.label}{def.generalistOnly ? " *" : ""}
             </span>
           ))}
         </div>
@@ -349,6 +374,7 @@ export function CharacterCalibrate({ onClose }: Props) {
           {ROLES.slice(0, 2).map(role => (
             <div key={role.id} style={{ flex: 1 }}>
               <CalCard
+                roleId={role.id}
                 roleSrc={role.src}
                 roleName={role.name}
                 cal={cal}
@@ -361,6 +387,7 @@ export function CharacterCalibrate({ onClose }: Props) {
           {ROLES.slice(2).map(role => (
             <div key={role.id} style={{ flex: 1 }}>
               <CalCard
+                roleId={role.id}
                 roleSrc={role.src}
                 roleName={role.name}
                 cal={cal}
