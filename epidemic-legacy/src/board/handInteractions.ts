@@ -51,6 +51,8 @@ export interface DeckDrawCtx {
   cardLabel?: (id: string) => string;
   /** Resolve a player key ("p1") to a human-readable label ("Medic") */
   playerLabel?: (key: string) => string;
+  /** Hand limit for the current player (default 7; 8 with Archive Access upgrade) */
+  handLimit?: number;
 }
 
 /**
@@ -113,13 +115,14 @@ export function makePlayerDeckDraw(ctx: DeckDrawCtx, cityId: string, faceUp: boo
         const handAfter = hand.length + (!isEpidemic ? 1 : 0);
         const who = ctx.playerLabel?.(ctx.currentPlayerKey) ?? ctx.currentPlayerKey;
         ctx.log?.(`${who}: card draw ${newCount}/2 (${handAfter} in hand)`);
+        const limit = ctx.handLimit ?? 7;
         if (newCount >= 2) {
-          // Both cards drawn — discard if over 7, else infect
-          const phase: TurnPhase = handAfter > 7 ? "discard" : "infect";
+          // Both cards drawn — discard if over hand limit, else infect
+          const phase: TurnPhase = handAfter > limit ? "discard" : "infect";
           ctx.saveTurnState({ ...ctx.turnState, drawCount: newCount, phase, infectCount: 0 });
         } else {
-          // First card drawn — must discard before drawing 2nd if already over 7
-          const phase: TurnPhase = handAfter > 7 ? "discard" : "draw";
+          // First card drawn — must discard before drawing 2nd if already over hand limit
+          const phase: TurnPhase = handAfter > limit ? "discard" : "draw";
           ctx.saveTurnState({ ...ctx.turnState, drawCount: newCount, phase });
         }
       };
@@ -223,6 +226,12 @@ export interface HandCardCtx {
   log?: (msg: string) => void;
   cardLabel?: (id: string) => string;
   playerLabel?: (key: string) => string;
+  /** True if current player has the Pilot upgrade (Direct Flight keeps card) */
+  hasPilotUpgrade?: boolean;
+  /** Per-player count of pending forced discards (scar effects 4,5,8,9) */
+  forcedDiscard?: Record<string, number>;
+  /** Called when any player satisfies one unit of forced discard */
+  onCardDiscarded?: (pk: string) => void;
 }
 
 /**
@@ -240,8 +249,9 @@ export function makeHandCardPointerDown(
   const { player, idx: i, cityId, isFundingHand } = args;
   return (e: React.PointerEvent<HTMLDivElement>) => {
     if (ctx.calibrating) return;
-    // Fund event cards are playable from any player's hand at any time — skip turn/phase checks
-    if (!isFundingHand) {
+    // Fund event cards and unfunded-event sticker cards are playable from any player's hand at any time
+    const isUnfundedEvent = !isFundingHand && cityId !== 'epidemic' && ctx.cardStickers[cityId] !== undefined;
+    if (!isFundingHand && !isUnfundedEvent) {
       // In game phase: only current player can drag their own city/epidemic cards
       if (ctx.setup && player !== ctx.currentPlayerKey) {
         // Exception: designated player must discard after receiving a card over limit
@@ -298,6 +308,25 @@ export function makeHandCardPointerDown(
       );
 
       const isDiscardPhase = ctx.turnState.phase === 'discard' || ctx.turnState.phase === 'discard-action';
+
+      // Forced discard (scar effects 4,5,8,9): if this player owes a card,
+      // any card dragged to the discard pile is treated as a plain discard —
+      // skip all flight/build/event interception. Fund/epidemic cards are also
+      // accepted so the player is never fully blocked.
+      const pendingForced = ctx.forcedDiscard?.[player] ?? 0;
+      if (nearDiscard && ctx.setup && pendingForced > 0 && !isFundingHand) {
+        ctx.saveHandCards({ ...ctx.handCards, [player]: current.filter((_, j) => j !== i) });
+        ctx.setPlayerDiscard(prev => [...prev, cityId]);
+        ctx.onCardDiscarded?.(player);
+        ctx.log?.(`${ctx.playerLabel?.(player) ?? player}: discarded ${ctx.cardLabel?.(cityId) ?? cityId} (forced — ${pendingForced - 1} remaining)`);
+        return;
+      }
+
+      // Unfunded Event: sticker card dragged to discard → show menu (any player, any phase, before any other intercept)
+      if (nearDiscard && ctx.setup && isUnfundedEvent) {
+        ctx.setPendingUnfundMenu({ cityId, player, idx: i, x: ev.clientX, y: ev.clientY });
+        return;
+      }
 
       // Grassroots Program: discard up to 3 city cards; each grants a pending cube-removal of that card's color.
       if (nearDiscard && ctx.setup && ctx.eventMode === 'grassroots' && !isFundingHand && cityId !== 'epidemic') {
@@ -368,12 +397,6 @@ export function makeHandCardPointerDown(
         }
       }
 
-      // Unfunded Event: city card with sticker dragged to discard → show menu
-      if (nearDiscard && ctx.setup && !isFundingHand && cityId !== 'epidemic' && ctx.cardStickers[cityId] !== undefined) {
-        ctx.setPendingUnfundMenu({ cityId, player, idx: i, x: ev.clientX, y: ev.clientY });
-        return;
-      }
-
       if (nearDiscard && ctx.setup && ctx.turnState.phase === "actions") {
         // Game phase: intercept discard for flight/build/direct-flight actions
         const isEpidemicCard = cityId === "epidemic";
@@ -398,9 +421,14 @@ export function makeHandCardPointerDown(
             if (destCity) {
               const nextCities = [...ctx.playerCities]; nextCities[ctx.turnState.currentPlayerIndex] = cityId;
               ctx.savePlayerCities(nextCities); ctx.snapPawnToCity(player, cityId);
-              ctx.saveHandCards({ ...ctx.handCards, [player]: current.filter((_, j) => j !== i) });
-              ctx.setPlayerDiscard(prev => [...prev, cityId]);
-              ctx.log?.(`${ctx.playerLabel?.(player) ?? player}: Direct Flight to ${destCity.name} (discarded ${ctx.cardLabel?.(cityId) ?? cityId})`);
+              if (ctx.hasPilotUpgrade) {
+                // Pilot: keep the card in hand (show and return)
+                ctx.log?.(`${ctx.playerLabel?.(player) ?? player}: Direct Flight to ${destCity.name} — Pilot: kept ${ctx.cardLabel?.(cityId) ?? cityId}`);
+              } else {
+                ctx.saveHandCards({ ...ctx.handCards, [player]: current.filter((_, j) => j !== i) });
+                ctx.setPlayerDiscard(prev => [...prev, cityId]);
+                ctx.log?.(`${ctx.playerLabel?.(player) ?? player}: Direct Flight to ${destCity.name} (discarded ${ctx.cardLabel?.(cityId) ?? cityId})`);
+              }
               ctx.saveTurnState(ctx.consumeAction(ctx.turnState));
               return;
             }

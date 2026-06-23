@@ -1,6 +1,6 @@
 // ScarPopup: drag a scar sticker onto the character card, or shows the tear animation.
 import { useRef, useState, useEffect } from "react";
-import { loadCharacterCal } from "./boardStorage";
+import { loadCharacterCal, SCAR_POOL_MAX } from "./boardStorage";
 import type { ScarEntry, ScarRegion } from "./boardStorage";
 
 import scar1Src from "../../object/Jan/scar1.png";
@@ -40,11 +40,6 @@ export function ScarPickPopup({ roleSrc, placedScars, scarPool, onPlace }: Props
   const [dragging, setDragging] = useState<string | null>(null);
   const [dragPos, setDragPos] = useState({ x: 0, y: 0 });
   const [dropped, setDropped] = useState(false);
-
-  const SCAR_POOL_MAX: Record<string, number> = {
-    scar1: 2, scar2: 2, scar3: 2,
-    scar4: 1, scar5: 1, scar6: 1, scar7: 1, scar8: 1, scar9: 1,
-  };
 
   // Scars still available in pool
   const available = Object.keys(SCAR_POOL_MAX).filter(id => {

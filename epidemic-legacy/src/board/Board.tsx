@@ -664,6 +664,8 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   };
 
   const consumeAction = (ts: TurnStateData): TurnStateData => {
+    // Block actions while the current player has unresolved forced discards.
+    if ((forcedDiscard[currentPlayerKey] ?? 0) > 0) return ts;
     const remaining = ts.actionsRemaining - 1;
     if (remaining <= 0) return { ...ts, actionsRemaining: 0, phase: "draw", drawCount: 0 };
     return { ...ts, actionsRemaining: remaining };
@@ -708,7 +710,16 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
   // ── Scar helpers ──────────────────────────────────────────────────────────
   const getScarRecord = (pk: string) => scars[pk] ?? { scars: [], civilian: false };
   const countScar = (pk: string, id: string) => getScarRecord(pk).scars.filter(s => s.id === id).length;
-  const playerHandLimit = (pk: string) => (hasCharUpgrade(4) ? 8 : 7) - countScar(pk, 'scar1');
+  // Whether a SPECIFIC player's role holds a given upgrade sticker (1–6).
+  // Distinct from hasCharUpgrade(), which only inspects the current player —
+  // using that for another player (e.g. the Share-Knowledge discardPlayer) would
+  // read the wrong role's upgrades.
+  const playerHasUpgrade = (pk: string, n: number) => {
+    const pi = (['p1','p2','p3','p4'] as const).indexOf(pk as 'p1'|'p2'|'p3'|'p4');
+    const r = setup?.playerOrder[pi]?.roleId ?? '';
+    return Object.values(charUpgrades[r] ?? {}).includes(n);
+  };
+  const playerHandLimit = (pk: string) => (playerHasUpgrade(pk, 4) ? 8 : 7) - countScar(pk, 'scar1');
 
   const loseCharacter = (pk: string) => {
     // Immediately kill the player — tear animation, then respawn
@@ -1229,7 +1240,6 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
 
   // Trigger an outbreak: advances marker, marks city as already-outbroken,
   // queues all eligible neighbors as manual cube-placement targets.
-  // TODO Upgrade 1 (Grizzled): players in cityId who have this upgrade do not gain a scar — implement when scar system is built.
   const triggerOutbreak = (cityId: string, color: DiseaseColor, baseAlready: Set<string>) => {
     if (isColorEradicated(color)) return;
     setOutbreakPos(prev => Math.min(OUTBREAK_TRACK.length - 1, prev + 1));
@@ -1266,12 +1276,26 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
         });
       }
     }
-    // Outbreak: any player in this city gains a scar
+    // Outbreak: any player in this city gains a scar (unless they have Grizzled — upgrade 1).
+    // Skip civilians (no character left to scar) and anyone this same outbreak just
+    // killed by pushing the city to panic 5 — otherwise the panic-5 tear and the scar
+    // popup both fire on the same pawn, producing a double tear → respawn loop.
     if (setup) {
       const activePks = (['p1','p2','p3','p4'] as const).slice(0, setup.playerOrder.length);
       const region = regionOf(cityId);
+      const cityJustFell = scenario !== "month0" && (panicLevels[cityId] ?? 0) === 4;
       activePks.forEach((pk, i) => {
-        if (playerCities[i] === cityId) enqueueScar(pk, region);
+        if (playerCities[i] !== cityId) return;
+        if (getScarRecord(pk).civilian) return;
+        if (cityJustFell) return;
+        const pRoleId = setup.playerOrder[i]?.roleId ?? '';
+        const pUpgrades = charUpgrades[pRoleId] ?? {};
+        const hasGrizzled = Object.values(pUpgrades).includes(1);
+        if (hasGrizzled) {
+          log(`${playerLabel(pk)}: Grizzled — no scar from outbreak in ${city.name}`);
+          return;
+        }
+        enqueueScar(pk, region);
       });
     }
     const newAlready = new Set([...baseAlready, cityId]);
@@ -2848,6 +2872,8 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
             cardStickers, setPendingUnfundMenu,
             log, cardLabel, playerLabel,
             hasPilotUpgrade: hasCharUpgrade(6),
+            forcedDiscard,
+            onCardDiscarded,
             canPlayFund: (cardId: string) => {
               if (cardId === 'fund4') return infectDiscard.length > 0;
               if (cardId === 'fund8') return turnState.phase === 'actions' || (turnState.phase === 'draw' && turnState.drawCount === 0) || turnState.phase === 'discard' || turnState.phase === 'discard-action';
@@ -4217,7 +4243,7 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
         </div>
       )}
 
-      {/* Forced discard banner */}
+      {/* Forced discard banner — blocks actions until satisfied; ✕ waives the requirement */}
       {(() => {
         const pending = forcedDiscard[currentPlayerKey] ?? 0;
         if (!setup || pending <= 0) return null;
@@ -4225,11 +4251,21 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
           <div style={{
             position: "fixed", bottom: 80, left: "50%", transform: "translateX(-50%)",
             zIndex: 2800, background: "#1a0a00e0", border: "2px solid #f80",
-            borderRadius: 10, padding: "8px 20px", color: "#fc8",
+            borderRadius: 10, padding: "8px 16px 8px 20px", color: "#fc8",
             fontSize: 13, fontWeight: 700, fontFamily: "system-ui",
-            pointerEvents: "none",
+            display: "flex", alignItems: "center", gap: 14,
+            pointerEvents: "auto",
           }}>
-            Forced discard: right-click a card in your hand and choose Discard ({pending} remaining)
+            <span>Drag a card to the discard pile ({pending} remaining) — actions are blocked</span>
+            <button
+              title="Cancel forced discard"
+              onClick={() => setForcedDiscard(prev => { const next = { ...prev }; delete next[currentPlayerKey]; return next; })}
+              style={{
+                background: "transparent", border: "1px solid #f804", borderRadius: 4,
+                color: "#fc8", fontSize: 16, lineHeight: 1, cursor: "pointer",
+                padding: "1px 6px", fontFamily: "system-ui",
+              }}
+            >✕</button>
           </div>
         );
       })()}
@@ -4289,8 +4325,9 @@ export function Board({ setup, fundingCards: fundingCardsProp, scenario = "month
             setUpgradePicksRemaining(n => n - 1);
           }}
           onDone={() => {
+            // Skip returns to the upgrade picker without spending a pick,
+            // mirroring the Research Station panel's Cancel button.
             setPickingCharUpgrade(false);
-            setUpgradePicksRemaining(n => n - 1);
           }}
         />
       )}
